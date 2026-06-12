@@ -1,0 +1,28 @@
+# Exclude everything that doesn't belong in the Docker build context.
+# CDK uses the repo root as build context for apps/generator/Dockerfile and
+# apps/worker/Dockerfile, so the same .dockerignore applies to both.
+
+# Build outputs
+**/node_modules
+**/.next
+**/dist
+**/build
+**/.turbo
+infra/cdk/cdk.out
+
+# IDE / OS
+.idea
+.vscode
+.DS_Store
+
+# Local secrets — never bake into images
+.env
+.env.local
+.env.*.local
+
+# VCS
+.git
+.gitignore
+
+# Plans / personal
+.claude

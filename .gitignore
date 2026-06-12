@@ -1,0 +1,34 @@
+node_modules/
+dist/
+.next/
+.turbo/
+.tsbuildinfo
+*.tsbuildinfo
+.env
+.env.local
+.env.*.local
+!.env.example
+.DS_Store
+*.log
+coverage/
+.vercel/
+cdk.out/
+.cdk.staging/
+cdk.context.json
+.vercel
+.env*.local
+
+# CF deploy-time substituted wrangler configs (deploy-cf.sh writes these
+# alongside the committed wrangler.jsonc, trap-rm's on exit; gitignored as
+# defense-in-depth in case the script crashes between write + cleanup).
+infra/cloudflare/.wrangler-deploy-*.jsonc
+
+# Operator-local deployment inventory (real server IPs) — never committed.
+infra/bare-metal/hosts.env
+
+# Operator-local secret-scanner patterns (the identifier values themselves).
+packages/shared/scripts/check-secrets.local
+
+# Operator-internal docs — not part of the public repo.
+CLAUDE.md
+docs/plan-tiers.md

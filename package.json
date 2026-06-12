@@ -1,0 +1,29 @@
+{
+  "name": "rpc-perf-dash",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Continuous, regional, non-gameable RPC benchmark dashboard for Solana",
+  "license": "Apache-2.0",
+  "packageManager": "pnpm@9.12.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "prepare": "git config core.hooksPath .githooks || true",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "pnpm -r lint",
+    "test": "pnpm -r test",
+    "dev:generator": "pnpm --filter generator dev",
+    "dev:worker": "pnpm --filter worker dev",
+    "dev:web": "pnpm --filter web dev",
+    "db:migrate": "pnpm --filter @rpcbench/db migrate",
+    "db:generate": "pnpm --filter @rpcbench/db generate",
+    "benchmark": "pnpm --filter generator benchmark"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

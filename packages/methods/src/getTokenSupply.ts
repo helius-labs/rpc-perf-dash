@@ -1,0 +1,121 @@
+/**
+ * getTokenSupply method handlers — HYBRID value method.
+ *
+ * Returns `{ context:{slot}, value:{ amount, decimals, uiAmount, uiAmountString } }`
+ * for a mint. `amount` (raw supply) drifts on mint/burn; `decimals` is
+ * immutable. We hash `{ amount, decimals }` as the value tier — so the default
+ * byte-equal consensus predicate groups voters by supply, a ≥3-voter
+ * value-majority verifies the supply, and when supply churned in-window the
+ * runner falls back to a freshness verdict via `livenessFallback` instead of
+ * dropping. `uiAmount`/`uiAmountString` are dropped (floats; repr varies).
+ * See docs/methodology.md and getBalance.ts for the full Hybrid rationale.
+ */
+
+import {
+  canonicalize,
+  hashProjection,
+  type CanonicalProjection,
+  type ChallengeContext,
+  type Correctness,
+  type MethodHandlers,
+} from "@rpcbench/shared";
+import { TOKEN_PROGRAM_ID } from "./spl.js";
+import { contextSlot, freshnessVerdict } from "./freshness.js";
+import { recentBlock, collectSigners } from "./probe.js";
+
+export const BUCKETS = ["mint"] as const;
+export type GetTokenSupplyBucket = (typeof BUCKETS)[number];
+
+export interface GetTokenSupplyParams {
+  mint: string;
+  options: { commitment: "finalized" };
+}
+
+interface TokenAmount {
+  amount?: string;
+  decimals?: number;
+  uiAmount?: number | null;
+  uiAmountString?: string;
+}
+interface GetTokenSupplyResponse {
+  context?: { slot?: number };
+  value: TokenAmount | null;
+}
+// jsonParsed preflight shape — read the base58 `mint` off the utility endpoint.
+interface ParsedTokenAccountsResponse {
+  value: Array<{ account?: { data?: { parsed?: { info?: { mint?: string } } } } }>;
+}
+
+const OPTIONS: GetTokenSupplyParams["options"] = { commitment: "finalized" };
+
+function projectImpl(response: GetTokenSupplyResponse): CanonicalProjection {
+  const slot = contextSlot(response);
+  const v = response?.value ?? null;
+  const amount = typeof v?.amount === "string" ? v.amount : "";
+  const decimals = typeof v?.decimals === "number" ? v.decimals : -1;
+  // Hash the VALUE only ({amount, decimals}); slot rides in shape.
+  const hash = hashProjection(canonicalize({ amount, decimals }));
+  return { hash, shape: { slot, amount, decimals } };
+}
+
+export async function deriveTokenSupplyChallenge(
+  ctx: ChallengeContext,
+): Promise<{ params: GetTokenSupplyParams; bucket: GetTokenSupplyBucket } | null> {
+  const block = await recentBlock(ctx);
+  if (!block) return null;
+
+  // Source a real mint by reading a recent signer's token accounts (jsonParsed
+  // exposes the base58 mint without decoding raw bytes), then confirm
+  // getTokenSupply returns a well-formed value for it.
+  for (const owner of collectSigners(block)) {
+    let parsed: ParsedTokenAccountsResponse;
+    try {
+      parsed = await ctx.utility.call<ParsedTokenAccountsResponse>("getTokenAccountsByOwner", [
+        owner,
+        { programId: TOKEN_PROGRAM_ID },
+        { encoding: "jsonParsed", commitment: "finalized" },
+      ]);
+    } catch {
+      continue;
+    }
+    for (const e of parsed?.value ?? []) {
+      const mint = e.account?.data?.parsed?.info?.mint;
+      if (typeof mint !== "string") continue;
+      let res: GetTokenSupplyResponse;
+      try {
+        res = await ctx.utility.call<GetTokenSupplyResponse>("getTokenSupply", [mint, OPTIONS]);
+      } catch {
+        continue;
+      }
+      if (res?.value && typeof res.value.decimals === "number" && typeof res.value.amount === "string") {
+        return { params: { mint, options: OPTIONS }, bucket: "mint" };
+      }
+    }
+  }
+  return null;
+}
+
+export const handlers: MethodHandlers<GetTokenSupplyParams, GetTokenSupplyResponse> = {
+  buckets: BUCKETS,
+  async deriveChallenge(ctx: ChallengeContext) {
+    return deriveTokenSupplyChallenge(ctx);
+  },
+  project: projectImpl,
+  classify(projection, reference, providerTipSlot, referenceTipSlot): Correctness {
+    if (buffersEqual(projection.hash, reference.hash)) {
+      if (referenceTipSlot - providerTipSlot > 2n) return "stale";
+      return "correct";
+    }
+    if (providerTipSlot > referenceTipSlot) return "stale";
+    return "incorrect";
+  },
+  livenessFallback(projection, referenceTipSlot): Correctness {
+    return freshnessVerdict(projection, referenceTipSlot);
+  },
+};
+
+function buffersEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.byteLength !== b.byteLength) return false;
+  for (let i = 0; i < a.byteLength; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
