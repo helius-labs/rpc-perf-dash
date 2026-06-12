@@ -8,7 +8,6 @@
   "exports": {
     ".": "./src/index.ts",
     "./providers": "./src/providers.ts",
-    "./quorum": "./src/quorum.ts",
     "./timing": "./src/timing.ts",
     "./canonical": "./src/canonical.ts",
     "./scoring": "./src/scoring.ts",
