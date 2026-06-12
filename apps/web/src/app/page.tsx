@@ -10,6 +10,7 @@ import { type MethodRegionLatency } from "@/components/IndexLeaderboard";
 import { OverviewBoard } from "@/components/OverviewBoard";
 import { fetchActiveGeos, fetchAggregatesForGeo } from "@/lib/leaderboard";
 import { fetchSampleCount, EMPTY_SAMPLE_COUNT } from "@/lib/sampleCount";
+import { DB_ERROR_MESSAGE } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -96,7 +97,8 @@ export default async function OverviewPage({
     }
     methodRegionLatency = mrl;
   } catch (err) {
-    error = (err as Error).message;
+    console.error("[/]", err);
+    error = DB_ERROR_MESSAGE;
   }
 
   const methodCount = ALL_METHODS.length;

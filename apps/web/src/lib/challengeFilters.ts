@@ -8,6 +8,7 @@
 
 import { type Method } from "@rpcbench/shared";
 import { ALL_METHODS } from "@/lib/methods";
+import { WINDOW_VALUES } from "@/lib/windows";
 
 /**
  * Challenge status filter. The DB stores the raw enum (`ready` and `expired`
@@ -77,10 +78,18 @@ export function parseChallengesFilters(
   const status = (ALL_STATUSES as readonly string[]).includes(params.status ?? "")
     ? (params.status as StatusFilter)
     : null;
+  // Snap to the canonical window allowlist (lib/windows.ts) — same contract
+  // as every other surface. Rejecting arbitrary hour counts also bounds the
+  // scan: the max option (720h) equals data retention.
   const windowHours = Number.parseInt(params.window ?? "1", 10);
-  const window = Number.isFinite(windowHours) && windowHours > 0 ? windowHours : 1;
+  const window = WINDOW_VALUES.has(windowHours) ? windowHours : 1;
   // Cap target search to avoid pathological inputs in the ILIKE.
   const target = (params.target ?? "").slice(0, MAX_TARGET_LEN).trim();
-  const offset = Math.max(0, Number.parseInt(params.offset ?? "0", 10) || 0);
+  // Cap deep pagination at 10 pages. OFFSET is expensive in this query — the
+  // per-row LATERAL sample-count join runs for every skipped row (measured
+  // ~15ms/row live: OFFSET 2000 ≈ 30s) — so the cap is deliberately tight.
+  // Replacing OFFSET with keyset pagination (cursor on generated_at) would
+  // lift the limit cheaply if deeper browsing is ever needed.
+  const offset = Math.min(500, Math.max(0, Number.parseInt(params.offset ?? "0", 10) || 0));
   return { method, bucket, status, window, target, offset };
 }

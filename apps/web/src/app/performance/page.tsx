@@ -31,6 +31,7 @@ import {
 } from "@/lib/leaderboard";
 import { fetchProviderHealth, EMPTY_HEALTH } from "@/lib/health";
 import { fetchConsensusRates, type ConsensusRate } from "@/lib/consensus";
+import { DB_ERROR_MESSAGE } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -85,7 +86,9 @@ export default async function PerformancePage({
   const selectedGeo = (GEO_REGIONS as readonly string[]).includes(params.region ?? "")
     ? (params.region as GeoRegion)
     : null;
-  const windowHours = parseInt(params.window ?? "24", 10);
+  const windowHours = WINDOWS.some((w) => w.value === parseInt(params.window ?? "", 10))
+    ? parseInt(params.window!, 10)
+    : 24;
   const connectionMode = (params.mode ?? "cold") as "cold" | "warm";
   const wpRaw = params.wp ?? "all";
   const selectedProvider: string | null = wpRaw === "all" ? null : wpRaw;
@@ -145,7 +148,8 @@ export default async function PerformancePage({
     methodLat = ml;
     recentChallenges = recent;
   } catch (err) {
-    error = (err as Error).message;
+    console.error("[/performance]", err);
+    error = DB_ERROR_MESSAGE;
   }
 
   // Build the per-method & per-region breakdown tables. Columns = benchmarked

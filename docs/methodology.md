@@ -146,8 +146,13 @@ latency we report.
 Every test has a public page at `/raw?challenge=<id>`: the inputs, the commitment
 hash, the revealed seed, each provider's response, the consensus result, and the
 independent reference's verdict. You can recompute the hash yourself and confirm
-the inputs were fixed before anyone answered. When the scoring or comparison
-rules change, we bump the methodology version so past results stay coherent.
+the inputs were fixed before anyone answered: commitment = SHA-256(seed ‖
+canonical-JSON(params)), where canonical-JSON recursively sorts object keys —
+the same canonicalization used for projection hashing. (Challenges generated
+before the canonical-serialization change hashed insertion-order JSON instead;
+recompute those with `JSON.stringify(params)` as stored.) When the scoring or
+comparison rules change, we bump the methodology version so past results stay
+coherent.
 
 ## Operator vs reproducer cost
 

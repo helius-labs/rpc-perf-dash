@@ -22,7 +22,7 @@ import { sql } from "drizzle-orm";
 import Link from "next/link";
 import type { Route } from "next";
 import { unstable_cache } from "next/cache";
-import { db } from "@/lib/db";
+import { db, DB_ERROR_MESSAGE } from "@/lib/db";
 import { type Method } from "@rpcbench/shared";
 import { ALL_METHODS } from "@/lib/methods";
 import { WINDOWS } from "@/lib/windows";
@@ -122,8 +122,8 @@ export default async function ChallengesPage({
       fetchBucketOptions({ method, window }),
     ]);
   } catch (err) {
-    error = (err as Error).message;
     console.error("[/challenges]", err);
+    error = DB_ERROR_MESSAGE;
   }
 
   // ── Render ────────────────────────────────────────────────────────────

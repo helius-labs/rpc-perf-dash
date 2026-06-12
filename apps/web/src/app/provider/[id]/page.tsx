@@ -14,7 +14,7 @@ import {
   type Method,
 } from "@rpcbench/shared";
 import { DEFAULT_WEIGHTS } from "@rpcbench/shared/scoring";
-import { db } from "@/lib/db";
+import { db, DB_ERROR_MESSAGE } from "@/lib/db";
 import { fetchLatencySeries } from "@/lib/chartData";
 import { fetchRankedOverall } from "@/lib/leaderboard";
 import {
@@ -186,7 +186,8 @@ export default async function ProviderPage({ params }: { params: Promise<{ id: s
       fetchRankedOverall(),
     ]);
   } catch (err) {
-    error = (err as Error).message;
+    console.error("[/provider]", err);
+    error = DB_ERROR_MESSAGE;
   }
 
   // Resolve this provider's rank + composite score from the same Overall blend

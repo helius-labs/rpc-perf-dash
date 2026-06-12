@@ -8,7 +8,7 @@ import {
   METHODOLOGY_VERSION,
   score,
 } from "@rpcbench/shared";
-import { db } from "@/lib/db";
+import { db, DB_ERROR_MESSAGE } from "@/lib/db";
 import { BucketTags } from "@/components/BucketTags";
 
 export const dynamic = "force-dynamic";
@@ -136,8 +136,8 @@ export default async function RunPage({ params }: { params: Promise<{ id: string
     `);
     challenges = cRows as unknown as ChallengeRow[];
   } catch (err) {
-    error = (err as Error).message;
     console.error("[/run]", err);
+    error = DB_ERROR_MESSAGE;
   }
 
   if (error) {

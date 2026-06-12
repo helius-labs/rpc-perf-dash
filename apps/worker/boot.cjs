@@ -37,15 +37,56 @@ const state = {
   // endpoint surfaces what tsx actually printed before dying. CF Containers
   // doesn't expose container stdout via wrangler tail, so this is our only
   // observability into the subprocess.
+  //
+  // The healthcheck is internet-reachable (the CF Worker proxies any inbound
+  // request to the container), so two safeguards apply:
+  //   1. Lines are scrubbed at capture time — any occurrence of a
+  //      secret-bearing env VALUE (DB URLs, provider URLs with embedded
+  //      keys) is replaced before it enters the buffer.
+  //   2. recent_output is only included in the response after the worker
+  //      has died (its actual purpose: boot/crash diagnosis). Healthy
+  //      workers prove liveness via DB heartbeats; their logs stay private.
   recent_output: [],
 };
+
+// Secret-bearing env values to scrub from captured lines. Provider URLs can
+// embed keys in the PATH (QuickNode/Alchemy style), so value-based matching
+// is required — `api-key=` pattern regexes alone would miss them. Unset/empty
+// vars are skipped (the CF container env carries only a subset of these).
+const SECRET_ENV_VARS = [
+  "NEON_DATABASE_URL_POOLED",
+  "NEON_DATABASE_URL_DIRECT",
+  "HELIUS_API_KEY",
+  "HELIUS_GATEKEEPER_URL",
+  "TRITON_URL",
+  "ALCHEMY_URL",
+  "QUICKNODE_URL",
+  "UTILITY_RPC_URL",
+  "UTILITY_RPC_URL_2",
+  "UTILITY_RPC_URL_3",
+  "GENERATOR_SECRET",
+];
+const SECRET_VALUES = SECRET_ENV_VARS
+  .map((name) => ({ name, value: process.env[name] }))
+  .filter((s) => typeof s.value === "string" && s.value.length > 0);
+
+function scrub(line) {
+  let out = line;
+  for (const { name, value } of SECRET_VALUES) {
+    while (out.includes(value)) out = out.replace(value, `[redacted:${name}]`);
+  }
+  // Backstop for partial-URL fragments that don't contain a full env value.
+  out = out.replace(/(api-?key=)[^&\s"']+/gi, "$1[redacted]");
+  out = out.replace(/(:\/\/)[^/\s"']*:[^@/\s"']*@/g, "$1[redacted]@");
+  return out;
+}
 
 function recordLine(stream, chunk) {
   const text = chunk.toString();
   process[stream].write(text);
   for (const line of text.split("\n")) {
     if (line) {
-      state.recent_output.push(`[${stream}] ${line}`);
+      state.recent_output.push(scrub(`[${stream}] ${line}`));
       if (state.recent_output.length > 200) state.recent_output.shift();
     }
   }
@@ -54,9 +95,15 @@ function recordLine(stream, chunk) {
 const server = http.createServer((req, res) => {
   res.statusCode = 200;
   res.setHeader("content-type", "application/json");
+  // Expose the output buffer only once the worker is dead — the healthcheck
+  // is public, and crash diagnosis is the buffer's only audience.
+  const { recent_output, ...publicState } = state;
+  const workerDead =
+    state.phase === "worker_exited" || state.phase === "worker_spawn_error";
   res.end(
     JSON.stringify({
-      ...state,
+      ...publicState,
+      ...(workerDead ? { recent_output } : {}),
       uptime_s: Math.round(process.uptime()),
       path: req.url,
     }),

@@ -2,7 +2,7 @@ import { sql } from "drizzle-orm";
 import Link from "next/link";
 import type { Route } from "next";
 import { unstable_cache } from "next/cache";
-import { db } from "@/lib/db";
+import { db, DB_ERROR_MESSAGE } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -70,8 +70,8 @@ export default async function RunsPage() {
   try {
     runs = await fetchRuns();
   } catch (err) {
-    error = (err as Error).message;
     console.error("[/runs]", err);
+    error = DB_ERROR_MESSAGE;
   }
 
   return (

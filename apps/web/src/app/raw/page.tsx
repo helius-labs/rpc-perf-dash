@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
 import Link from "next/link";
 import type { Route } from "next";
-import { db } from "@/lib/db";
+import { db, DB_ERROR_MESSAGE } from "@/lib/db";
 import { Collapsible } from "./Collapsible";
 
 export const dynamic = "force-dynamic";
@@ -215,8 +215,8 @@ export default async function RawPage({
       audit = (aRows as unknown as ConsensusAuditRow[])[0] ?? null;
     }
   } catch (err) {
-    error = (err as Error).message;
     console.error("[/raw]", err);
+    error = DB_ERROR_MESSAGE;
   }
 
   if (error) {
