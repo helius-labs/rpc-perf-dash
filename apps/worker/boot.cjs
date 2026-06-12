@@ -66,14 +66,19 @@ const SECRET_ENV_VARS = [
   "UTILITY_RPC_URL_3",
   "GENERATOR_SECRET",
 ];
+// Minimum value length to scrub: a too-short "secret" (a single character,
+// say) would shred every log line and, worse, could recur inside its own
+// `[redacted:…]` replacement. Real DB URLs / API keys are far longer.
 const SECRET_VALUES = SECRET_ENV_VARS
   .map((name) => ({ name, value: process.env[name] }))
-  .filter((s) => typeof s.value === "string" && s.value.length > 0);
+  .filter((s) => typeof s.value === "string" && s.value.length >= 8);
 
 function scrub(line) {
   let out = line;
   for (const { name, value } of SECRET_VALUES) {
-    while (out.includes(value)) out = out.replace(value, `[redacted:${name}]`);
+    // split/join replaces every occurrence in one pass — no re-scan of the
+    // replacement text, so a value that overlaps "[redacted:…]" can't loop.
+    if (out.includes(value)) out = out.split(value).join(`[redacted:${name}]`);
   }
   // Backstop for partial-URL fragments that don't contain a full env value.
   out = out.replace(/(api-?key=)[^&\s"']+/gi, "$1[redacted]");
