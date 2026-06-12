@@ -10,7 +10,7 @@
   //
   // Surfaces in the leaderboard as worker_provider=cloudflare, region=global,
   // egress_path=cf-containers — rendered separately from the per-geo blend
-  // per docs/methodology.md § Default overall score.
+  // per docs/methodology.md § Region weights.
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "rpc-bench-worker-cf",
   "main": "src/index.ts",
@@ -72,5 +72,5 @@
   }
 
   // Secrets (Neon URLs, RPC keys) provisioned via `wrangler secret put` —
-  // see deploy-cf.sh. Same values as every other vantage per §B2 shared-keys.
+  // see deploy-cf.sh. Same values as every other vantage.
 }

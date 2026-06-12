@@ -2,7 +2,7 @@
  * getSignaturesForAddress method handlers.
  *
  * Bucketing matrix (pruned to cross-camp-agreeable combos — see
- * docs/methodology.md § Quorum):
+ * docs/methodology.md § Consensus decision rules):
  *   activity:     medium | low                — drop `high` (tip-active addresses, camp tip drift dominates)
  *   address_type: program | token_account | user_wallet
  *   cursor:       latest                      — drop `shallow`/`deep`/`window` (anchor sig leaks Camp A semantics into Camp B queries)

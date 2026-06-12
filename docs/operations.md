@@ -36,7 +36,7 @@ order, but you also have to wire env vars through every worker deploy path
 
 ## Env var propagation matrix
 
-A new provider's URL has to land in EIGHT places before workers can query it.
+A new provider's URL has to land in NINE places before workers can query it.
 This is the most error-prone part of the system; we missed CF Worker→Container
 proxying twice during the v=2 cutover.
 
@@ -411,7 +411,7 @@ Why this is safe operationally:
 - Per (provider × method × region × 4h): ~20-300x the eligibility floor (50 samples).
 - Consensus mechanism is per (vantage × mode), unaffected by K.
 - Win-rate aggregates over many challenges; long-window unaffected. Short-window variance increases.
-- Slow lanes (CF/lax) still slightly over capacity at K=3 uniform; Phase 2 weighted sampling would close the residual. Track via `worker_provider × pct_done` in the verifier.
+- Slow lanes (CF/lax) still slightly over capacity at K=3 uniform; weighted K-sampling (see § Roadmap) would close the residual. Track via `worker_provider × pct_done` in the verifier.
 
 Tuning K up or down:
 - Lower K → less worker load, less data density per region. K=2 puts `getProgramAccounts` in 1-vantage regions marginally below the 50-sample floor.

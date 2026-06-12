@@ -74,6 +74,34 @@ largest group that agrees:
 The voting panel is **Helius, Triton, Alchemy, and QuickNode**: four voters on
 every method.
 
+Each test also carries a reference answer fetched from the utility (auditor)
+endpoint at generation time. If the panel majority disagrees with that
+reference, every sample for the test is excluded from scoring
+(`consensus_disputed`) — a tripwire for the case where the majority itself is
+wrong.
+
+## Deferred finality re-verification
+
+Majority consensus is judged live, at the moment of the test. As a second,
+delayed check: about 10 minutes after a test is generated — well past Solana's
+finalization timeline, when the canonical answer is immutable — a periodic job
+re-fetches the same request from the auditor and compares it against the
+stored consensus answer. The result is written to `consensus_audit`, one row
+per test (idempotent), in batches of 25, covering tests less than 24 hours
+old.
+
+Only tests whose answers cannot legitimately change are eligible: the test
+reached consensus (not ambiguous, not a honeypot, reference present), and the
+method/bucket is finalized or immutable in its semantics — `getBlock` on
+non-tip buckets, `getTransaction`, and archival `getSignaturesForAddress`
+(epoch buckets). Tip-active methods like `getSlot` are excluded because their
+correct answers move with the chain.
+
+This catches the failure mode the live vote can't: the panel majority agreeing
+on a wrong answer. The match rate is published as the consensus-accuracy
+metric on the provider health panel, and each test's audit verdict appears on
+its `/raw` page.
+
 ## Scoring
 
 Each provider gets five sub-scores (0–100), combined into one number:
@@ -153,6 +181,36 @@ before the canonical-serialization change hashed insertion-order JSON instead;
 recompute those with `JSON.stringify(params)` as stored.) When the scoring or
 comparison rules change, we bump the methodology version so past results stay
 coherent.
+
+## Anti-gaming defenses
+
+A provider that can recognize benchmark traffic can serve it from a fast path
+and look better than it is. The defenses, all verifiable in this repo:
+
+- **Commit-reveal with a 30-second TTL.** Test parameters are derived from
+  live on-chain state and their hash is locked in before any request is sent;
+  the seed is revealed after the test expires. Providers can't precompute
+  answers, and the operator can't cherry-pick favorable tests after the fact.
+  The short TTL means pre-warming a cache for a specific test is useless.
+- **Honeypots.** About 5% of tests are pre-validated probes with known
+  answers, drawn least-recently-used from a per-method pool. They are
+  indistinguishable from fresh tests (workers read a view that hides the
+  honeypot flag, and the request shape is identical). Appearing on the
+  leaderboard requires a ≥95% honeypot pass rate (Wilson lower bound) — a
+  provider that special-cases benchmark traffic and gets honeypots wrong
+  drops off the board.
+- **Vantage and egress diversity.** The same tests are fired from multiple
+  clouds and egress paths, and every sample is tagged with its egress path —
+  a provider allow-listing or special-casing known benchmark IPs shows up as
+  a per-egress discrepancy.
+- **Auditor tripwire and finality re-verification.** Consensus is
+  cross-checked against an independent reference at test time (§ Consensus
+  decision rules) and re-verified against finalized chain state afterward
+  (§ Deferred finality re-verification).
+- **Disclosed limitations.** Where a provider's tier can't support a defense
+  (for example, a key embedded in the URL that can't be rotated), that is
+  surfaced as a caveat badge on the leaderboard rather than silently ignored.
+  The defense model does not rely on key rotation.
 
 ## Operator vs reproducer cost
 

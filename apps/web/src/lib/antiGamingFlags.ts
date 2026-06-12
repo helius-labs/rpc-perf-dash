@@ -9,7 +9,7 @@
 
 export const ANTI_GAMING_FLAG_EXPLANATIONS: Record<string, string> = {
   non_rotatable_key:
-    "This provider's URL embeds the key, so rotation requires endpoint reissue. Anti-gaming on this leaderboard does not rely on key rotation; the primary defense is randomized queries with on-chain-derived parameters and a 5-min TTL. See methodology § Anti-gaming defenses.",
+    "This provider's URL embeds the key, so rotation requires endpoint reissue. Anti-gaming on this leaderboard does not rely on key rotation; the primary defense is randomized queries with on-chain-derived parameters and a 30-second TTL. See methodology § Anti-gaming defenses.",
 };
 
 export function explainAntiGamingFlags(flags: readonly string[]): string {

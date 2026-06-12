@@ -59,8 +59,9 @@ const TICK_TIMEOUT_MS = 25_000;
  *     expectation).
  *   - Per-(provider × method × region × 4h) sample count drops ~5x, still
  *     ~20-300x the eligibility floor.
- *   - Slow lanes (CF/lax) still mildly over capacity at K=3 uniform; Phase 2
- *     weighted sampling would close the residual.
+ *   - Slow lanes (CF/lax) still mildly over capacity at K=3 uniform;
+ *     weighted K-sampling (docs/operations.md § Roadmap) would close the
+ *     residual.
  *
  * See docs/operations.md § K-sampling for the deeper rationale.
  */
@@ -82,7 +83,7 @@ const BACKPRESSURE_THRESHOLD = 500;
  * egress_path) triples we fan challenges out to is whatever has heartbeated
  * in the last VANTAGE_FRESHNESS_S seconds — no hardcoded list. New vantages
  * bootstrap by deploying their worker; old ones drop out when they stop
- * heartbeating. See plan §B1b.
+ * heartbeating.
  *
  * Cached for the duration of a tick (refreshed at the start of each tick
  * loop iteration) so all per-combo fanouts in one tick agree on the same

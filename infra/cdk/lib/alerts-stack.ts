@@ -70,8 +70,8 @@ export class AlertsStack extends Stack {
       }).addAlarmAction(action);
     }
 
-    // Sample-rate-drop and stale-heartbeat alarms ride on Postgres data via a
-    // dedicated Lambda + custom metrics — implemented in M7's Lambda (left as
-    // a follow-up; the CW alarm wiring above covers the ECS-side health).
+    // Sample-rate-drop and stale-heartbeat alarms would need Postgres data
+    // surfaced as custom CloudWatch metrics (a dedicated Lambda) — not built
+    // yet; the CW alarm wiring above covers the ECS-side health.
   }
 }

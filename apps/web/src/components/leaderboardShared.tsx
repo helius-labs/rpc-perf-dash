@@ -98,7 +98,7 @@ export interface OverallLeaderRow {
 /**
  * Solid text color for a 0–100 composite score. ONLY for the composite `total`
  * — not win-rate (exclusive wins rarely clear 60%) or R/C/Cm rates (cluster at
- * 97–100%); tiering those would mislead. See plan §3.
+ * 97–100%); tiering those would mislead.
  */
 export function scoreColor(score: number): string {
   if (score >= 80) return "#7be0a4"; // good · green

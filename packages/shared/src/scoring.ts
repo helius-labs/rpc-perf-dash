@@ -1,5 +1,5 @@
 /**
- * Scoring formulas — must match `methodology.md` § Score formulas.
+ * Scoring formulas — must match `methodology.md` § Scoring.
  *
  *   L_score = 0.5 · clamp(0..100, best_p50 / provider_p50 * 100)
  *           + 0.5 · clamp(0..100, best_p95 / provider_p95 * 100)
