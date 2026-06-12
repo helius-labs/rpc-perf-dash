@@ -127,6 +127,9 @@ method and how it's checked:
 | Method | Hashed | Equivalence rule |
 |---|---|---|
 
+*The full per-method rules live in `apps/web/src/app/methodology/methods.data.ts`
+and render as the interactive method explorer on the live methodology page.*
+
 ## Latency & freshness
 
 - **Cold**: time to first byte starting from just before the socket connects
@@ -146,11 +149,24 @@ independent reference's verdict. You can recompute the hash yourself and confirm
 the inputs were fixed before anyone answered. When the scoring or comparison
 rules change, we bump the methodology version so past results stay coherent.
 
+## Operator vs reproducer cost
+
+Every provider on the panel is measured symmetrically — same challenges, same
+timeouts, same scoring. The only asymmetry is who pays for the traffic: the
+operator's own provider traffic is internal ($0 at any tier), while a
+third-party reproducer needs paid tiers on every benchmarked provider to
+sustain the shared cadence (for example, the public Helius free tier's ~1M
+credits/mo cap is far below benchmark volume). This affects the cost of
+*reproducing* the benchmark, not the measurements themselves — anyone can run
+the same code against their own keys and recompute every score.
+
 ## POC status
 
 This is an early deployment, so the qualification thresholds above are looser than
 our long-term targets while sample volume builds up. Workers currently run on AWS,
-TeraSwitch, and Cloudflare (with GCP and Latitude staged), the generator runs
+TeraSwitch, Cloudflare, and GCP (with Latitude staged), the generator runs
 active + hot-standby, and the panel is Helius, Triton, Alchemy, and QuickNode.
-Honeypot tests (pre-seeded known answers) and endpoint cycling are built but not
-yet switched on.
+Honeypot tests (pre-seeded known answers) are active and gate leaderboard
+eligibility. Endpoint cycling was removed — each provider runs a single
+endpoint; it would only return if a provider publishes confirmed-equivalent
+alternate endpoints.

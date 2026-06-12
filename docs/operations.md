@@ -200,6 +200,15 @@ for k in WANT:
 
 ## Common recoveries
 
+### Generator saturation
+Symptom: every dispatch tick exceeds its 25s budget, the no-challenges watchdog
+restarts the generator task repeatedly, and the dashboard's challenge feed
+freezes (the web app is fine — the leader is starved). First response: check
+tick-duration logs and the task's CPU allocation (bumped 512→1024 on
+2026-06-11 for exactly this). Known follow-ups if it recurs: move the
+generator's read paths to pooled connections and set a statement_timeout so a
+slow query can't absorb the whole tick.
+
 ### Rollback to v=1
 Code rollback is `git revert` + redeploy generator + workers in the standard order. The DB rollback is forward-only — schema migrations create new tables (`consensus_log`, `consensus_audit`) and drop one column (`providers.quorum_eligible`). The legacy `quorum_log` is preserved, so `/raw` of pre-cutover challenges still renders. No data loss.
 

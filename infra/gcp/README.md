@@ -1,7 +1,7 @@
 # GCP workers
 
 Cloud Run hosting for one rpc-perf-dash worker per GCP region. Adds GCP as a
-worker_provider alongside AWS, TeraSwitch, Cloudflare, and Latitude.
+worker_provider alongside AWS, TeraSwitch, and Cloudflare.
 
 ## What this deploys
 
