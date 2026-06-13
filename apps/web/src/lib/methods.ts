@@ -54,6 +54,8 @@ export const ALL_METHODS: Method[] = [
   "getBlocksWithLimit",
   "getRecentPrioritizationFees",
   "getFeeForMessage",
+  // ── Batch added 2026-06-12 ──────────────────────────────────────────
+  "getTransactionsForAddress",
   // getClusterNodes + getLargestAccounts excluded — dormant (not emitted), like
   // getSupply. See apps/generator/src/index.ts allMethodBucketCombos.
 ];

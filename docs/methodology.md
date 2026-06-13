@@ -67,12 +67,33 @@ largest group that agrees:
 | Condition | Outcome |
 |---|---|
 | Fewer than 3 usable answers (`n < 3`) | **Ambiguous**: too few responses; the test is thrown out |
-| No group of 3 or more agrees (`g < 3`) | **Ambiguous**: thrown out |
+| No group of 3 or more agrees (`g < 3`; floor is 2 on a structurally-3-voter panel, see below) | **Ambiguous**: thrown out |
 | The largest group isn't a clear majority (e.g. a 2–2 tie) | **Ambiguous**: thrown out |
 | A group of 3+ forms a clear majority | That group is **correct**; everyone outside it is a **dissenter** |
 
 The voting panel is **Helius, Triton, Alchemy, and QuickNode**: four voters on
-every method.
+most methods. A provider whose tier structurally can't serve a method
+(declared via `unsupported_methods` in `packages/shared/src/providers.ts`) is
+a **non-voter** there: its samples are marked `tier_method_unsupported` and
+dropped from both the correctness and reliability denominators — disclosed
+limitation, not a failure. Two methods run as 3-voter panels today:
+
+- `simulateBundle` — a Jito extension QuickNode's tier doesn't serve
+  (-32601).
+- `getTransactionsForAddress` — QuickNode serves a **non-comparable variant**
+  (bare-array result instead of the `{data, paginationToken}` envelope,
+  always-full transaction details, slot filter ignored; verified 2026-06-12),
+  so its answers can never match the panel's.
+
+On a structurally-3-voter panel, the "group of 3 or more" floor is lowered to
+a **2-1 strict majority** (it would otherwise demand unanimity, and a lone
+deviator could never be scored). Two byte-equal agreements out of three
+independent providers is decisive — and the auditor cross-check still
+backstops the case where the agreeing pair is wrong. So a provider that
+deviates alone on a 3-voter method (e.g. an empty or incomplete answer) is a
+**dissenter and scores incorrect**, exactly as on the 4-voter panel. The
+`n ≥ 3` usable-voters floor is unchanged: if one of the three doesn't answer
+usably, the test is still thrown out.
 
 Each test also carries a reference answer fetched from the utility (auditor)
 endpoint at generation time. If the panel majority disagrees with that
@@ -157,6 +178,38 @@ method and how it's checked:
 
 *The full per-method rules live in `apps/web/src/app/methodology/methods.data.ts`
 and render as the interactive method explorer on the live methodology page.*
+
+### Custom methods: getTransactionsForAddress
+
+`getTransactionsForAddress` is the first non-standard method in the benchmark
+(an indexer-backed address-history API served by Helius, Triton, and Alchemy;
+QuickNode's variant is non-comparable — see the consensus section). Two design
+choices differ from its standard-method sibling `getSignaturesForAddress`:
+
+- **Slot-pinned challenges.** Every test carries
+  `filters: { slot: { lte: pin } }` with `pin = tip − 5000` (~35 minutes,
+  deeply finalized) and `sortOrder: "desc"`. "The newest ≤limit transactions
+  at or before the pin" is an immutable answer: the finalized-semantics tip
+  drift that forces `getSignaturesForAddress` into a Jaccard tolerance lives
+  entirely at the tip, which the pin excludes. Both buckets therefore use
+  **strict byte-equal** matching — necessary, since a 3-voter panel requires
+  unanimity. Trade-off: live-tip behavior of this method is not measured.
+- **Two buckets, one per detail level.** `signatures` (limit 1000) hashes
+  `{ signature, slot, err }` per entry; `full` (limit 25, json encoding)
+  hashes `{ signature, slot, err, fee, preBalances, postBalances }` per
+  transaction — the same canonical slice as `getTransaction`. Both drop the
+  provider-internal `paginationToken`, `blockTime`, `memo`,
+  `confirmationStatus`, `transactionIndex`, and (full mode) the message body,
+  logs, and `version`. Params stick to the cross-provider common subset: no
+  Helius-only `tokenTransfer` filter, no `processed` commitment, full-mode
+  limit under Alchemy's cap.
+
+Challenge addresses are transaction signers harvested from a block probed
+*below* the pin (guaranteeing at least one transaction inside the filter
+window), filtered to non-high-activity addresses. That filter is load-bearing
+here: high-activity addresses (programs, vote authorities) diverge across
+providers' indexers (vote-transaction indexing differs), and excluding them is
+what makes byte-equal consensus possible.
 
 ## Test ages & archival depth
 

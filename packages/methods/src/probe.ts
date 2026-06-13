@@ -60,6 +60,42 @@ export function collectSigners(block: RecentBlock, max = 120): string[] {
   return out;
 }
 
+/**
+ * Activity classification: query the utility endpoint for limit:100 sigs and
+ * count how many land in the last hour. ≥50 → high, 1–49 → medium, 0 → low.
+ *
+ * Cached for 30 minutes per address to bound preflight cost. Shared by the
+ * address-history methods (getSignaturesForAddress, getTransactionsForAddress);
+ * probes with standard getSignaturesForAddress only, so it works regardless of
+ * whether the utility endpoint serves any custom method.
+ */
+const activityCache = new Map<string, { activity: "high" | "medium" | "low"; expiresAt: number }>();
+
+export async function classifyActivity(
+  ctx: ChallengeContext,
+  address: string,
+): Promise<"high" | "medium" | "low"> {
+  const now = Date.now();
+  const cached = activityCache.get(address);
+  if (cached && cached.expiresAt > now) return cached.activity;
+
+  let sigs: Array<{ blockTime?: number | null }>;
+  try {
+    sigs = await ctx.utility.call<Array<{ blockTime?: number | null }>>(
+      "getSignaturesForAddress",
+      [address, { limit: 100 }],
+    );
+  } catch {
+    return "low";
+  }
+  const oneHourAgo = (Date.now() / 1000) - 3600;
+  const recent = sigs.filter((s) => (s.blockTime ?? 0) > oneHourAgo).length;
+  const activity: "high" | "medium" | "low" =
+    recent >= 50 ? "high" : recent >= 1 ? "medium" : "low";
+  activityCache.set(address, { activity, expiresAt: now + 30 * 60 * 1000 });
+  return activity;
+}
+
 export const SLOTS_PER_EPOCH = 432_000n;
 
 /**

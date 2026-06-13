@@ -22,9 +22,18 @@
  *                                   the 3 are correct" intent)
  *   n=4, split 2-2     → ambiguous (no strict majority)
  *   n=3, split 3-0     → consensus
- *   n=3, split 2-1     → ambiguous (largest=2 < 3 — with only 3 voters all
- *                                   must agree; conservative on the smallest
- *                                   panel)
+ *   n=3, split 2-1     → ambiguous under the default floor (largest=2 < 3).
+ *                        On methods whose STRUCTURAL panel is 3 voters
+ *                        (a provider is declared unsupported_methods, e.g.
+ *                        simulateBundle / getTransactionsForAddress), the
+ *                        caller lowers `minGroup` to 2 and this becomes
+ *                        consensus with one dissenter — two byte-equal
+ *                        agreements out of three independent providers is
+ *                        decisive, and the auditor cross-check still backstops
+ *                        a wrong-pair. Added 2026-06-12; before that, 3-voter
+ *                        methods required unanimity and a lone deviator
+ *                        ambiguated the whole challenge instead of being
+ *                        scored incorrect.
  *   n<3                → ambiguous (too few voters; e.g. ≥3 timeouts)
  *
  * The `match` predicate is method-specific: byte-equal hash for immutable
@@ -117,7 +126,17 @@ export function byteEqualHash(
 export function decideConsensus<R>(
   voters: readonly Voter<R>[],
   match: (a: Voter<R>["projection"], b: Voter<R>["projection"]) => boolean = byteEqualHash,
+  opts?: {
+    /**
+     * Override of the majority-group floor (default MIN_CONSENSUS_GROUP).
+     * Pass 2 for methods whose structural panel is 3 voters so a 2-1 split
+     * decides instead of requiring unanimity. The strict-majority rule and
+     * the MIN_CONSENSUS_VOTERS floor still apply unchanged.
+     */
+    minGroup?: number;
+  },
 ): ConsensusOutcome<R> {
+  const minGroup = opts?.minGroup ?? MIN_CONSENSUS_GROUP;
   const n = voters.length;
   if (n < MIN_CONSENSUS_VOTERS) {
     return {
@@ -130,10 +149,10 @@ export function decideConsensus<R>(
   const largest = groups[0]!;
   const g = largest.length;
 
-  if (g < MIN_CONSENSUS_GROUP) {
+  if (g < minGroup) {
     return {
       kind: "ambiguous",
-      reason: `largest agreement group has ${g} member(s); need >= ${MIN_CONSENSUS_GROUP}`,
+      reason: `largest agreement group has ${g} member(s); need >= ${minGroup}`,
     };
   }
   if (g * 2 <= n) {

@@ -219,7 +219,20 @@ function decideForMode(
     const isUnsupported = cfg?.unsupported_methods?.includes(method) ?? false;
     if (isUnsupported) unsupported.add(r.provider_id);
 
-    const attempt = projectResponse(method, single.body, single.status);
+    // Tier-unsupported providers can never vote, so skip projection entirely —
+    // a provider serving a non-comparable variant (getTransactionsForAddress on
+    // QuickNode) returns real data, potentially multi-MB, and parsing it per
+    // mode per vantage buys nothing. The stub's `outcome` is never consulted:
+    // decideProviderOutcome returns `tier_method_unsupported` before reading it.
+    const attempt: ProjectAttempt = isUnsupported
+      ? {
+          projection: null,
+          result: null,
+          response_hash: Buffer.alloc(0),
+          response_slot: null,
+          outcome: "reliability_failure",
+        }
+      : projectResponse(method, single.body, single.status);
     attempts.set(r.provider_id, attempt);
 
     // Only "ok" attempts on a *supported* method become voters. A provider
@@ -249,7 +262,21 @@ function decideForMode(
     };
   }
 
-  const consensus = decideConsensus(voters, match);
+  // Structural panel size for this method: benchmarked providers whose tier
+  // serves it. On a 3-voter panel (e.g. simulateBundle /
+  // getTransactionsForAddress, where QuickNode is declared unsupported) a 2-1
+  // split decides — requiring the default ≥3 group there means unanimity,
+  // which can never attribute a deviation to the lone dissenter. Two
+  // byte-equal agreements out of three independent providers is decisive,
+  // and the auditor cross-check still backstops a wrong-pair.
+  const methodPanelSize = BENCHMARKED_PROVIDERS.filter(
+    (p) => !(p.unsupported_methods?.includes(method) ?? false),
+  ).length;
+  const consensus = decideConsensus(
+    voters,
+    match,
+    methodPanelSize === 3 ? { minGroup: 2 } : undefined,
+  );
 
   // Hybrid liveness fallback: a real (≥3-voter) panel formed but no value-
   // majority emerged — the value churned across the parallel reads. Score on
@@ -408,7 +435,12 @@ function buildRowsForMode(
       methodology_version: METHODOLOGY_VERSION,
       is_honeypot: input.is_honeypot,
       ranking_eligible: true,
-      raw_response: keepRaw && single.body ? safeParse(single.body) : null,
+      raw_response:
+        keepRaw && single.body
+          ? exclusion_reason === "tier_method_unsupported"
+            ? truncatedTierUnsupportedRaw(single.body)
+            : safeParse(single.body)
+          : null,
     });
   }
 
@@ -688,4 +720,24 @@ function safeParse(s: string): unknown {
   } catch {
     return { unparseable: s.slice(0, 1000) };
   }
+}
+
+/**
+ * Tier-unsupported rows are flagged on EVERY challenge by construction, and a
+ * provider serving a non-comparable variant of a method (QuickNode on
+ * getTransactionsForAddress) returns real data — potentially multi-MB —
+ * rather than simulateBundle's tiny -32601 error body. The verbatim body has
+ * no scoring value (the provider isn't in the panel for the method), so keep
+ * only a debuggability prefix. Small bodies (error envelopes) still parse and
+ * store whole.
+ */
+const TIER_UNSUPPORTED_RAW_PREFIX_CHARS = 2048;
+
+function truncatedTierUnsupportedRaw(s: string): unknown {
+  if (s.length <= TIER_UNSUPPORTED_RAW_PREFIX_CHARS) return safeParse(s);
+  return {
+    truncated: true,
+    original_length: s.length,
+    prefix: s.slice(0, TIER_UNSUPPORTED_RAW_PREFIX_CHARS),
+  };
 }

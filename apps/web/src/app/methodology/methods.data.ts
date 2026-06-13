@@ -882,4 +882,34 @@ export const METHODS: readonly MethodSpec[] = [
       "Byte-equal on the fee: a ≥3-voter value-majority verifies it (the memo fee is a 5000-lamports/sig constant; all-null also groups when expired panel-wide). If the panel splits between the fee and null (expiry timing), the runner falls back to a freshness verdict on context.slot. The auditor uses the lenient value-or-fresh predicate.",
     voters: PANEL,
   },
+
+  // ---- Batch added 2026-06-12 --------------------------------------------
+  {
+    name: "getTransactionsForAddress",
+    technique: "byte-equal",
+    techniqueDetail: "Byte-equal on a slot-pinned window",
+    shape: "Address transaction history (custom method)",
+    input: {
+      draws: "A non-high-activity signer address + a slot pin",
+      from: "transaction signers in a block probed below the pin (pin = tip − 5000 slots ≈ 35 min, deeply finalized); probing below the pin guarantees ≥1 tx inside the filter window",
+      buckets: "2: transactionDetails signatures (limit 1000) | full (limit 25, json encoding); both sortOrder desc with filters.slot.lte pinned",
+      commitment: "finalized",
+    },
+    projection: {
+      keeps:
+        "signatures mode: { signature, slot, err } per entry; full mode: { signature, slot, err, fee, preBalances, postBalances } per tx — both sorted by (slot, signature)",
+      drops:
+        "paginationToken (provider-internal cursor), blockTime, memo, confirmationStatus, transactionIndex (vote-tx counting parity unverified), and in full mode the message body, logs, innerInstructions, loadedAddresses, rewards, and version (Triton omits the field entirely)",
+    },
+    match:
+      "Byte-equal. \"The newest ≤limit txs at or before the pin\" is an immutable answer: the finalized-semantics tip drift that forces getSignaturesForAddress into a Jaccard tolerance lives at the tip, which the pin excludes. Verified live 2026-06-12: 3-provider byte-match on 12/12 signatures-mode and 6/6 full-mode probes.",
+    voters:
+      "3 voters · Helius, Triton, Alchemy (QuickNode serves a non-comparable variant of getTransactionsForAddress → tier_method_unsupported)",
+    notes: [
+      "Custom indexer-backed method (not in the standard Solana JSON-RPC set). Params stick to the cross-provider common subset: no Helius-only tokenTransfer filter, no processed commitment, full-mode limit under Alchemy's cap.",
+      "QuickNode's variant returns a bare array (no {data, paginationToken} envelope), always-full details, and ignores the slot filter (verified 2026-06-12) — non-comparable by construction, so it's a non-voter rather than penalized.",
+      "3-voter panels decide by 2-1 strict majority (the usual ≥3-group floor would demand unanimity): a lone deviator — e.g. Triton's intermittent empty responses — is scored incorrect, and the auditor cross-check backstops the agreeing pair. All three must answer usably or the challenge is thrown out.",
+      "The non-high-activity address filter is load-bearing: vote-authority addresses diverge massively across providers' indexers (vote-tx indexing differs), and filtering them is what makes byte-equal consensus possible.",
+    ],
+  },
 ];

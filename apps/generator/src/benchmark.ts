@@ -91,6 +91,8 @@ const VALID_METHODS: Method[] = [
   "getBlocksWithLimit",
   "getRecentPrioritizationFees",
   "getFeeForMessage",
+  // ── Batch added 2026-06-12 ──────────────────────────────────────────
+  "getTransactionsForAddress",
   // Dormant (not in allMethodBucketCombos) but kept CLI-testable for
   // re-validation — see docs/methodology.md / index.ts.
   "getClusterNodes",

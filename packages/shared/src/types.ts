@@ -60,7 +60,12 @@ export type Method =
   | "getClusterNodes"
   | "getLargestAccounts"
   // Hybrid value (value-majority byte-equal + freshness liveness fallback):
-  | "getFeeForMessage";
+  | "getFeeForMessage"
+  // ── Batch added 2026-06-12. ──
+  // Custom indexer-backed address-history method (Helius/Triton/Alchemy;
+  // QuickNode serves a non-comparable variant → 3-voter panel). Slot-pinned
+  // challenges, strict byte-equal — Archetype A:
+  | "getTransactionsForAddress";
 
 /**
  * Methods scored on LATENCY + RELIABILITY only — correctness is not validated

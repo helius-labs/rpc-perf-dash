@@ -39,7 +39,11 @@ import {
   type MethodHandlers,
 } from "@rpcbench/shared";
 import { jaccardAtLeast } from "./setsim.js";
-import { ARCHIVAL_UTILITY_TIMEOUT_MS, withArchivalSlotRetries } from "./probe.js";
+import {
+  ARCHIVAL_UTILITY_TIMEOUT_MS,
+  classifyActivity,
+  withArchivalSlotRetries,
+} from "./probe.js";
 
 const ACTIVITY = ["medium", "low"] as const;
 const ADDRESS_TYPE = ["program", "token_account", "user_wallet"] as const;
@@ -145,38 +149,8 @@ interface BlockKeysProbe {
   transactions: Array<{ transaction: { accountKeys?: AccountKeyEntry[]; signatures?: string[] } }>;
 }
 
-/**
- * Activity classification: query the utility endpoint for limit:100 sigs and
- * count how many land in the last hour. ≥50 → high, 1–49 → medium, 0 → low.
- *
- * Cached for 30 minutes per address to bound preflight cost.
- */
-const activityCache = new Map<string, { activity: "high" | "medium" | "low"; expiresAt: number }>();
-
-async function classifyActivity(
-  ctx: ChallengeContext,
-  address: string,
-): Promise<"high" | "medium" | "low"> {
-  const now = Date.now();
-  const cached = activityCache.get(address);
-  if (cached && cached.expiresAt > now) return cached.activity;
-
-  let sigs: SigEntry[];
-  try {
-    sigs = await ctx.utility.call<SigEntry[]>("getSignaturesForAddress", [
-      address,
-      { limit: 100 },
-    ]);
-  } catch {
-    return "low";
-  }
-  const oneHourAgo = (Date.now() / 1000) - 3600;
-  const recent = sigs.filter((s) => (s.blockTime ?? 0) > oneHourAgo).length;
-  const activity: "high" | "medium" | "low" =
-    recent >= 50 ? "high" : recent >= 1 ? "medium" : "low";
-  activityCache.set(address, { activity, expiresAt: now + 30 * 60 * 1000 });
-  return activity;
-}
+// Activity classification (classifyActivity + its 30-min cache) lives in
+// probe.ts — shared with getTransactionsForAddress.
 
 /**
  * Archival derivation: harvest an anchor signature + signer address from a

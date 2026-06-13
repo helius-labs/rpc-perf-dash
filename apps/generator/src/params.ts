@@ -164,6 +164,11 @@ export function paramsAsArray(method: Method, p: unknown): unknown[] {
     const x = p as { message: string; options: unknown };
     return [x.message, x.options];
   }
+  // ── Batch added 2026-06-12 ────────────────────────────────────────
+  if (method === "getTransactionsForAddress") {
+    const x = p as { address: string; options: unknown };
+    return [x.address, x.options];
+  }
   // getSignaturesForAddress
   const x = p as { address: string; options: unknown };
   return [x.address, x.options];

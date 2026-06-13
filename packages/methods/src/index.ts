@@ -47,6 +47,8 @@ import * as getRecentPrioritizationFees from "./getRecentPrioritizationFees.js";
 import * as getClusterNodes from "./getClusterNodes.js";
 import * as getLargestAccounts from "./getLargestAccounts.js";
 import * as getFeeForMessage from "./getFeeForMessage.js";
+// ── Batch added 2026-06-12 ──────────────────────────────────────────
+import * as getTransactionsForAddress from "./getTransactionsForAddress.js";
 import * as freshness from "./freshness.js";
 import type { Method, MethodHandlers } from "@rpcbench/shared";
 
@@ -98,6 +100,7 @@ export {
   getClusterNodes,
   getLargestAccounts,
   getFeeForMessage,
+  getTransactionsForAddress,
   freshness,
 };
 
@@ -149,4 +152,5 @@ export const HANDLERS: Record<Method, MethodHandlers<unknown, unknown>> = {
   getClusterNodes: getClusterNodes.handlers as MethodHandlers<unknown, unknown>,
   getLargestAccounts: getLargestAccounts.handlers as MethodHandlers<unknown, unknown>,
   getFeeForMessage: getFeeForMessage.handlers as MethodHandlers<unknown, unknown>,
+  getTransactionsForAddress: getTransactionsForAddress.handlers as MethodHandlers<unknown, unknown>,
 };

@@ -263,6 +263,10 @@ function allMethodBucketCombos(): Array<{ method: Method; bucket: string }> {
     "getBlocksWithLimit",
     "getRecentPrioritizationFees",
     "getFeeForMessage",
+    // ── Batch added 2026-06-12 ──────────────────────────────────────
+    // Custom indexer-backed method; 3-voter panel (QuickNode serves a
+    // non-comparable variant — see providers.ts).
+    "getTransactionsForAddress",
     // getClusterNodes and getLargestAccounts are intentionally NOT emitted
     // (dormant, like getSupply). Dry-run 2026-06-01: getLargestAccounts is
     // served only by QuickNode (Helius 500s, Triton rate-limits, Alchemy
@@ -398,14 +402,28 @@ async function main() {
   // independent of the panel (see methodology.md).
   assertAuditorIndependent();
 
-  const db = createDb({ mode: "direct" });
+  // Two clients, deliberately split (see docs/operations.md § generator
+  // saturation):
+  //   - lockDb (direct, session-pinned): leader election only. The advisory
+  //     lock is session-scoped, so it MUST live on a direct connection — it's
+  //     unreliable through Neon's transaction-mode pooler. Tiny, low-frequency
+  //     load (acquire + heartbeat), so it never contends.
+  //   - db (pooled, max 20): everything else — the per-tick challenge inserts
+  //     (~46 combos in parallel) plus the rollup/leaderboard CTEs and the cron
+  //     jobs. Previously these shared the direct client's 4 connections and
+  //     starved the tick (CPU idle, ticks > 25s, watchdog restarts ~7x/30min)
+  //     even though no query was individually slow. The pooler multiplexes, so
+  //     20 client slots clear the fan-out without connection-acquisition waits.
+  const lockDb = createDb({ mode: "direct" });
+  const db = createDb({ mode: "pooled" });
 
   // Graceful shutdown — release the advisory lock instantly instead of
-  // waiting for Neon's idle-session timeout.
+  // waiting for Neon's idle-session timeout. Runs on lockDb (the session that
+  // holds the lock).
   const shutdown = async (signal: string) => {
     console.log(`[generator] ${signal} received, shutting down`);
     try {
-      await db.execute(sql.raw("SELECT pg_advisory_unlock_all()"));
+      await lockDb.execute(sql.raw("SELECT pg_advisory_unlock_all()"));
     } catch {
       // best effort
     }
@@ -414,11 +432,11 @@ async function main() {
   process.once("SIGTERM", () => shutdown("SIGTERM"));
   process.once("SIGINT", () => shutdown("SIGINT"));
 
-  let isLeader = await acquireLeader(db);
+  let isLeader = await acquireLeader(lockDb);
   while (!isLeader) {
     console.log("[generator] not leader, waiting for stale heartbeat...");
     await new Promise((r) => setTimeout(r, 15_000));
-    isLeader = await evictAndAcquireLeader(db);
+    isLeader = await evictAndAcquireLeader(lockDb);
   }
   console.log(`[generator] acquired leader lock pid=${process.pid}`);
 
@@ -440,7 +458,9 @@ async function main() {
   }, PARTITION_CRON_INTERVAL_MS);
 
   setInterval(() => {
-    writeHeartbeat(db).catch(() => {});
+    // Heartbeat on lockDb — it identifies the leader and pairs with the
+    // advisory-lock session used by evictAndAcquireLeader.
+    writeHeartbeat(lockDb).catch(() => {});
   }, HEARTBEAT_INTERVAL_MS);
 
   setInterval(() => {
@@ -484,7 +504,9 @@ async function main() {
           consec_fails, circuit_state, updated_at
         )
         VALUES (
-          ${s.endpoint_index}, ${s.url_label}, ${s.last_ok_at}, ${s.last_err_at},
+          ${s.endpoint_index}, ${s.url_label},
+          ${s.last_ok_at ? s.last_ok_at.toISOString() : null},
+          ${s.last_err_at ? s.last_err_at.toISOString() : null},
           ${s.last_err_msg}, ${s.consec_fails}, ${s.circuit_state}, now()
         )
         ON CONFLICT (endpoint_index) DO UPDATE SET

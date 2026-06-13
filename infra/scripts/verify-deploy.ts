@@ -39,6 +39,10 @@ const ALL_METHODS = [
   "getTokenLargestAccounts",
   "getLatestBlockhash",
   "getTokenAccountBalance",
+  // NOTE: the 2026-05-31 / 2026-06-01 method batches were never added here —
+  // the "is flowing" check doesn't cover them yet.
+  // ── Batch added 2026-06-12 ──────────────────────────────────────────
+  "getTransactionsForAddress",
 ];
 // LATENCY_ONLY_METHODS is empty under methodology v=2 — every method is
 // correctness-scored. Helper retained as `false` so the per-method block below

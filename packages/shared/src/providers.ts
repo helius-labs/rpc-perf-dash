@@ -200,7 +200,16 @@ export const PROVIDERS: readonly ProviderRow[] = [
     // -32601 (Method not found) for it (verified 2026-05-31). Declaring it
     // unsupported drops QuickNode from that method's panel (3 voters: Helius,
     // Triton, Alchemy) instead of penalizing it on reliability.
-    unsupported_methods: ["simulateBundle"],
+    //
+    // getTransactionsForAddress: QuickNode serves a NON-COMPARABLE variant,
+    // not an error (verified 2026-06-12): bare-array result instead of the
+    // {data, paginationToken} envelope; always full transaction details
+    // (ignores transactionDetails: "signatures"); ignores filters.slot.lte
+    // (returns tip-slot entries past the pin); rejects string commitment with
+    // -32602; requires maxSupportedTransactionVersion even in signatures
+    // mode. Its responses can never byte-match the panel's, so it's a
+    // non-voter by construction.
+    unsupported_methods: ["simulateBundle", "getTransactionsForAddress"],
     notes: "QuickNode endpoint URL embeds the key.",
   },
   // Flux removed from the benchmarked panel (2026-05-29): it was a near-zero

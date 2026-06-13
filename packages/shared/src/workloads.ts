@@ -68,6 +68,8 @@ export const PROFILES: readonly WorkloadProfile[] = [
       getClusterNodes: 0,
       getLargestAccounts: 0,
       getFeeForMessage: 0,
+      // Batch added 2026-06-12 — 0 in every profile mix until per-workload tuned.
+      getTransactionsForAddress: 0,
     },
     archive_heavy: false,
   },
@@ -125,6 +127,8 @@ export const PROFILES: readonly WorkloadProfile[] = [
       getClusterNodes: 0,
       getLargestAccounts: 0,
       getFeeForMessage: 0,
+      // Batch added 2026-06-12 — 0 in every profile mix until per-workload tuned.
+      getTransactionsForAddress: 0,
     },
     archive_heavy: false,
   },
@@ -182,6 +186,8 @@ export const PROFILES: readonly WorkloadProfile[] = [
       getClusterNodes: 0,
       getLargestAccounts: 0,
       getFeeForMessage: 0,
+      // Batch added 2026-06-12 — 0 in every profile mix until per-workload tuned.
+      getTransactionsForAddress: 0,
     },
     archive_heavy: false,
   },
@@ -239,6 +245,8 @@ export const PROFILES: readonly WorkloadProfile[] = [
       getClusterNodes: 0,
       getLargestAccounts: 0,
       getFeeForMessage: 0,
+      // Batch added 2026-06-12 — 0 in every profile mix until per-workload tuned.
+      getTransactionsForAddress: 0,
     },
     archive_heavy: true,
   },
