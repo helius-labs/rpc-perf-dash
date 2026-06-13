@@ -109,9 +109,34 @@ export function RecentChallengesTable({
   // first poll doesn't flash everything as "new".
   const knownIdsRef = useRef<Set<string>>(new Set(initial.map((c) => c.id)));
 
+  // Relative-time ticker. Paused while the tab is hidden — a backgrounded tab
+  // doesn't need its "X ago" labels updated every second. On return to visible
+  // we tick once immediately so labels are fresh before the interval resumes.
   useEffect(() => {
-    const id = setInterval(() => setTick((n) => n + 1), RELATIVE_TIME_TICK_MS);
-    return () => clearInterval(id);
+    let id: ReturnType<typeof setInterval> | null = null;
+    const start = () => {
+      if (id === null) id = setInterval(() => setTick((n) => n + 1), RELATIVE_TIME_TICK_MS);
+    };
+    const stop = () => {
+      if (id !== null) {
+        clearInterval(id);
+        id = null;
+      }
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") {
+        stop();
+      } else {
+        setTick((n) => n + 1);
+        start();
+      }
+    };
+    if (document.visibilityState !== "hidden") start();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      stop();
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, []);
 
   useEffect(() => {
@@ -119,6 +144,11 @@ export function RecentChallengesTable({
     let highlightTimer: ReturnType<typeof setTimeout> | null = null;
 
     const poll = async () => {
+      // Don't hit the network for a backgrounded tab. The interval keeps firing
+      // but each tick is a cheap no-op until the tab is visible again; the
+      // visibilitychange handler below fires an immediate catch-up poll on
+      // return so the table isn't stale for up to POLL_INTERVAL_MS.
+      if (document.visibilityState === "hidden") return;
       try {
         const r = await fetch(`/api/recent-challenges?limit=${limit}`, {
           cache: "no-store",
@@ -160,9 +190,16 @@ export function RecentChallengesTable({
     };
 
     const id = setInterval(poll, POLL_INTERVAL_MS);
+    // On return to a visible tab, poll once immediately rather than waiting out
+    // the remainder of the current interval.
+    const onVisibility = () => {
+      if (document.visibilityState !== "hidden") void poll();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
     return () => {
       cancelled = true;
       clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisibility);
       if (highlightTimer) clearTimeout(highlightTimer);
     };
   }, [limit]);

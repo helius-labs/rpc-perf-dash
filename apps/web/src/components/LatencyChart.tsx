@@ -9,7 +9,7 @@
  * only the crosshair/tooltip layer is interactive.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { BENCHMARKED_PROVIDERS } from "@rpcbench/shared/providers";
 import type { ChartSeries } from "@/lib/chartData";
 import type { ScoreSeries } from "@/lib/leaderboard";
@@ -134,8 +134,6 @@ export function LatencyChart({
   const compact = useMediaQuery("(max-width: 767px)");
   const touch = useMediaQuery("(hover: none)");
   const H = compact ? H_MOBILE : H_DESKTOP;
-  const PLOT_W = W - PAD_L - PAD_R;
-  const PLOT_H = H - PAD_T - PAD_B;
 
   // Percentile toggle (chart filter). The whole pipeline below operates on a
   // single `p95_ms` field for historical reasons; we feed it whichever
@@ -230,7 +228,6 @@ export function LatencyChart({
   const droppedCount = hideOutliers
     ? binned.flatMap((s) => s.points).length - all.length
     : 0;
-  const [hover, setHover] = useState<HoverState | null>(null);
 
   // We render once on the server (UTC, since Vercel functions default to UTC)
   // and then re-render once `mounted` flips to true on the client. After mount,
@@ -386,20 +383,133 @@ export function LatencyChart({
     );
   }
 
-  const tMin = Math.min(...all.map((p) => p.t.getTime()));
-  const tMax = Math.max(...all.map((p) => p.t.getTime()));
-  const yMaxRaw = Math.max(...all.map((p) => p.p95_ms));
-  // Score has a fixed 0-100 domain; latency scales to the data (rounded up).
-  const yMax = isScore ? 100 : Math.max(100, Math.ceil((yMaxRaw * 1.2) / 100) * 100);
-  const yMin = 0;
+  const tzShort = mounted ? shortTzName() : "UTC";
 
-  const x = (ts: number) => PAD_L + ((ts - tMin) / Math.max(1, tMax - tMin)) * PLOT_W;
-  const y = (ms: number) => PAD_T + (1 - (ms - yMin) / (yMax - yMin)) * PLOT_H;
+  return (
+    <div style={{ marginBottom: 16 }}>
+      {controlBar}
+      {(effectiveBin > sourceGrainMin || (hideOutliers && droppedCount > 0)) && (
+        <div className="font-geistmono text-[10px] text-muted tracking-[0.02em] flex flex-wrap gap-x-4 gap-y-1 -mt-1.5 mb-3.5">
+          {effectiveBin > sourceGrainMin && (
+            <span>averaged from {binLabel(sourceGrainMin)} source · approximate {isScore ? "score" : percentile}</span>
+          )}
+          {hideOutliers && droppedCount > 0 && (
+            <span>
+              {droppedCount} point{droppedCount === 1 ? "" : "s"} hidden
+            </span>
+          )}
+        </div>
+      )}
+      <LatencyChartCanvas
+        normalized={normalized}
+        windowHours={windowHours}
+        isScore={isScore}
+        unit={unit}
+        compact={compact}
+        touch={touch}
+        mounted={mounted}
+        tzShort={tzShort}
+      />
+      <div style={{ fontSize: 11, color: "#666", marginTop: 4 }}>
+        {isScore ? (
+          <>
+            overall score (0–100), {connectionMode}, point-in-time per bucket. Each point is scored on
+            that bucket alone (no eligibility gate), so sparse buckets where one provider reported
+            can read ~100. Times shown in <span suppressHydrationWarning>{tzShort}</span>. For the
+            gated, window-aggregated number see the leaderboard.{" "}
+            {touch ? "Tap the chart to pin values." : "Hover the chart for exact values."}
+          </>
+        ) : (
+          <>
+            {percentile} {connectionMode} latency, sample-weighted across buckets per provider. Times shown in{" "}
+            <span suppressHydrationWarning>{tzShort}</span>. Approximation; for exact
+            percentiles see the leaderboard. {touch ? "Tap the chart to pin values." : "Hover the chart for exact values."}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The chart's SVG subtree, split out and memoized. Hover state lives HERE, not
+ * in the parent LatencyChart — so a mousemove only re-renders this subtree,
+ * never the parent's control bar or its heavy CSV/JSON export closures. Within
+ * the subtree, the O(n) geometry (scales, ticks) and the polyline-point strings
+ * are memoized, so a hover re-render only touches the cheap crosshair/tooltip
+ * overlay and per-line opacity attributes. Only mounts when there's data, so
+ * the geometry below never sees an empty series.
+ */
+const LatencyChartCanvas = memo(function LatencyChartCanvas({
+  normalized,
+  windowHours,
+  isScore,
+  unit,
+  compact,
+  touch,
+  mounted,
+  tzShort,
+}: {
+  normalized: { provider_id: string; points: { t: Date; p95_ms: number }[] }[];
+  windowHours: number;
+  isScore: boolean;
+  unit: string;
+  compact: boolean;
+  touch: boolean;
+  mounted: boolean;
+  tzShort: string;
+}) {
+  const [hover, setHover] = useState<HoverState | null>(null);
+
+  const H = compact ? H_MOBILE : H_DESKTOP;
+  const PLOT_W = W - PAD_L - PAD_R;
+  const PLOT_H = H - PAD_T - PAD_B;
+
+  const geom = useMemo(() => {
+    const all = normalized.flatMap((s) => s.points);
+    const tMin = Math.min(...all.map((p) => p.t.getTime()));
+    const tMax = Math.max(...all.map((p) => p.t.getTime()));
+    const yMaxRaw = Math.max(...all.map((p) => p.p95_ms));
+    // Score has a fixed 0-100 domain; latency scales to the data (rounded up).
+    const yMax = isScore ? 100 : Math.max(100, Math.ceil((yMaxRaw * 1.2) / 100) * 100);
+    const yMin = 0;
+    const x = (ts: number) => PAD_L + ((ts - tMin) / Math.max(1, tMax - tMin)) * PLOT_W;
+    const y = (ms: number) => PAD_T + (1 - (ms - yMin) / (yMax - yMin)) * PLOT_H;
+    const yMajorStep = isScore ? 20 : yMax <= 500 ? 100 : yMax <= 2000 ? 250 : 500;
+    const yTicks: number[] = [];
+    for (let v = 0; v <= yMax; v += yMajorStep) yTicks.push(v);
+    const xTickHours = Math.max(1, Math.round(windowHours / (compact ? 3 : 6)));
+    const xTicks: Date[] = [];
+    const startHour = new Date(tMin);
+    startHour.setMinutes(0, 0, 0);
+    for (
+      let d = new Date(startHour);
+      d.getTime() <= tMax;
+      d.setHours(d.getHours() + xTickHours)
+    ) {
+      if (d.getTime() >= tMin - 1) xTicks.push(new Date(d));
+    }
+    return { tMin, tMax, x, y, yTicks, xTicks };
+  }, [normalized, isScore, compact, windowHours, PLOT_W, PLOT_H]);
+  const { tMin, tMax, x, y, yTicks, xTicks } = geom;
+
+  // Polyline point strings — the O(total points) work. Memoized so a hover
+  // re-render (which changes neither normalized nor the scales) reuses them and
+  // only re-applies opacity / stroke-width.
+  const pointStrings = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const s of normalized) {
+      m.set(
+        s.provider_id,
+        s.points.map((p) => `${x(p.t.getTime()).toFixed(1)},${y(p.p95_ms).toFixed(1)}`).join(" "),
+      );
+    }
+    return m;
+  }, [normalized, x, y]);
 
   // Time-of-day formatter. Pre-mount = UTC (matches Vercel server). Post-mount
-  // = browser-local (resolvedOptions().timeZone). Keeps SSR/CSR consistent and
-  // gives the user readable local times the moment React hydrates.
-  const tzShort = mounted ? shortTzName() : "UTC";
+  // = browser-local. `mounted`/`tzShort` are owned by the parent (it also needs
+  // tzShort for the caption) and passed down.
   const fmtHM = (d: Date) =>
     mounted
       ? new Intl.DateTimeFormat([], { hour: "2-digit", minute: "2-digit", hour12: false }).format(d)
@@ -408,27 +518,7 @@ export function LatencyChart({
     mounted
       ? new Intl.DateTimeFormat([], { month: "2-digit", day: "2-digit" }).format(d)
       : `${(d.getUTCMonth() + 1).toString().padStart(2, "0")}/${d.getUTCDate().toString().padStart(2, "0")}`;
-
-  // Value formatter for tooltips/legend — score shows one decimal (0-100),
-  // latency rounds to whole milliseconds with the unit suffix.
   const fmtVal = (v: number) => (isScore ? v.toFixed(1) : `${Math.round(v)}ms`);
-
-  const yMajorStep = isScore ? 20 : yMax <= 500 ? 100 : yMax <= 2000 ? 250 : 500;
-  const yTicks: number[] = [];
-  for (let v = 0; v <= yMax; v += yMajorStep) yTicks.push(v);
-
-  const xTickHours = Math.max(1, Math.round(windowHours / (compact ? 3 : 6)));
-  const xTicks: Date[] = [];
-  const startHour = new Date(tMin);
-  startHour.setMinutes(0, 0, 0);
-  for (
-    let d = new Date(startHour);
-    d.getTime() <= tMax;
-    d.setHours(d.getHours() + xTickHours)
-  ) {
-    if (d.getTime() >= tMin - 1) xTicks.push(new Date(d));
-  }
-
   const providerName = (id: string) =>
     BENCHMARKED_PROVIDERS.find((p) => p.id === id)?.name ?? id;
 
@@ -436,7 +526,6 @@ export function LatencyChart({
   // move (desktop) and touch pin (mobile).
   const computeHover = (sx: number, sy: number): HoverState | null => {
     if (sx < PAD_L || sx > W - PAD_R) return null;
-    // Invert x() → timestamp at cursor
     const cursorTs = tMin + ((sx - PAD_L) / PLOT_W) * Math.max(1, tMax - tMin);
     const rows: HoverState["rows"] = [];
     for (const s of normalized) {
@@ -459,11 +548,7 @@ export function LatencyChart({
         py: y(best.p95_ms),
       });
     }
-    // Order the tooltip best-first: lowest latency, or highest score.
     rows.sort((a, b) => (isScore ? b.p95_ms - a.p95_ms : a.p95_ms - b.p95_ms));
-    // Find the provider whose data point is vertically closest to the cursor.
-    // Drives the dim/highlight treatment of lines + the highlighted row in
-    // the tooltip.
     let nearestProviderId: string | null = null;
     let nearestDy = Infinity;
     for (const r of rows) {
@@ -506,20 +591,7 @@ export function LatencyChart({
   const tipTime = hover && hover.rows.length > 0 ? hover.rows[0]!.t : null;
 
   return (
-    <div style={{ marginBottom: 16 }}>
-      {controlBar}
-      {(effectiveBin > sourceGrainMin || (hideOutliers && droppedCount > 0)) && (
-        <div className="font-geistmono text-[10px] text-muted tracking-[0.02em] flex flex-wrap gap-x-4 gap-y-1 -mt-1.5 mb-3.5">
-          {effectiveBin > sourceGrainMin && (
-            <span>averaged from {binLabel(sourceGrainMin)} source · approximate {isScore ? "score" : percentile}</span>
-          )}
-          {hideOutliers && droppedCount > 0 && (
-            <span>
-              {droppedCount} point{droppedCount === 1 ? "" : "s"} hidden
-            </span>
-          )}
-        </div>
-      )}
+    <>
       <svg
         viewBox={`0 0 ${W} ${H}`}
         style={{
@@ -597,9 +669,7 @@ export function LatencyChart({
             highlighted line stands out without losing the context of where
             the others are. */}
         {normalized.map((s) => {
-          const pts = s.points
-            .map((p) => `${x(p.t.getTime()).toFixed(1)},${y(p.p95_ms).toFixed(1)}`)
-            .join(" ");
+          const pts = pointStrings.get(s.provider_id) ?? "";
           const isNearest = hover && hover.nearestProviderId === s.provider_id;
           const isDimmed = hover && hover.nearestProviderId !== null && !isNearest;
           return (
@@ -808,26 +878,10 @@ export function LatencyChart({
           ))}
         </div>
       )}
-      <div style={{ fontSize: 11, color: "#666", marginTop: 4 }}>
-        {isScore ? (
-          <>
-            overall score (0–100), {connectionMode}, point-in-time per bucket. Each point is scored on
-            that bucket alone (no eligibility gate), so sparse buckets where one provider reported
-            can read ~100. Times shown in <span suppressHydrationWarning>{tzShort}</span>. For the
-            gated, window-aggregated number see the leaderboard.{" "}
-            {touch ? "Tap the chart to pin values." : "Hover the chart for exact values."}
-          </>
-        ) : (
-          <>
-            {percentile} {connectionMode} latency, sample-weighted across buckets per provider. Times shown in{" "}
-            <span suppressHydrationWarning>{tzShort}</span>. Approximation; for exact
-            percentiles see the leaderboard. {touch ? "Tap the chart to pin values." : "Hover the chart for exact values."}
-          </>
-        )}
-      </div>
-    </div>
+    </>
   );
-}
+});
+
 
 function shortTzName(): string {
   // Best-effort short timezone label for chart annotations. Falls back to the
