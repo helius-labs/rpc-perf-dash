@@ -30,6 +30,7 @@ import { FilterPill } from "@/components/FilterPill";
 import { FilterGroup } from "@/components/FilterGroup";
 import { MethodFilter } from "@/components/MethodFilter";
 import { BucketFilter } from "@/components/BucketFilter";
+import { BucketLegend } from "@/components/BucketLegend";
 import { ChallengesTable } from "@/components/ChallengesTable";
 import {
   MAX_TARGET_LEN,
@@ -209,13 +210,16 @@ export default async function ChallengesPage({
         </FilterGroup>
 
         {bucketOptions.length > 0 && (
-          <FilterGroup label="Bucket">
-            <BucketFilter
-              options={bucketOptions}
-              selected={effectiveBucket}
-              hrefFor={(b) => urlWith(params, { bucket: b, offset: null })}
-            />
-          </FilterGroup>
+          <div className="flex items-center gap-1.5 min-w-0 max-md:w-full">
+            <FilterGroup label="Bucket">
+              <BucketFilter
+                options={bucketOptions}
+                selected={effectiveBucket}
+                hrefFor={(b) => urlWith(params, { bucket: b, offset: null })}
+              />
+            </FilterGroup>
+            <BucketLegend />
+          </div>
         )}
 
         <FilterGroup label="Status">

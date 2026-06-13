@@ -19,6 +19,7 @@ import { ProviderHealth } from "@/components/ProviderHealth";
 import { FloatingTooltip } from "@/components/FloatingTooltip";
 import { MethodRegionTabs } from "@/components/MethodRegionTabs";
 import { RecentChallengesTable } from "@/components/RecentChallengesTable";
+import { BucketLegend } from "@/components/BucketLegend";
 import { fetchRecentChallenges, type RecentChallenge } from "@/lib/recentChallenges";
 import {
   fetchActiveGeos,
@@ -380,7 +381,10 @@ export default async function PerformancePage({
       <section className="home-extra">
         <div className="prov-section">
           <div className="prov-section-head">
-            <span className="section-kicker">Recent challenges · sampled</span>
+            <span className="inline-flex items-center gap-1.5">
+              <span className="section-kicker">Recent challenges · sampled</span>
+              <BucketLegend />
+            </span>
             <span className="prov-section-count">
               last {recentChallenges.length} ·{" "}
               <Link href="/challenges" className="section-link-arrow">
