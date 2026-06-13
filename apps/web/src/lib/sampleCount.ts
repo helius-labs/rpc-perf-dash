@@ -7,15 +7,15 @@
  *   - ratePerSec: recent samples/sec — last hour if active, else the 24h average
  *     (smoother and more resilient to brief gaps), from the 1h rollup.
  *
- * Both are scoped to the pooled-infra sentinel (`__all__`) so each sample is
- * counted once (not once per infra), and to the current methodology version.
- * The frontend extrapolates total at ratePerSec so the number ticks up live
- * between the ~30s re-syncs.
+ * Scoped to the pooled-infra sentinel (`__all__`) so each sample is counted
+ * once (not once per infra). All samples count, regardless of when they were
+ * recorded — a sample is a sample. The frontend extrapolates total at
+ * ratePerSec so the number ticks up live between the ~30s re-syncs.
  */
 
 import { sql } from "drizzle-orm";
 import { unstable_cache } from "next/cache";
-import { METHODOLOGY_VERSION, POOLED_INFRA } from "@rpcbench/shared";
+import { POOLED_INFRA } from "@rpcbench/shared";
 import { db } from "@/lib/db";
 
 export interface SampleCount {
@@ -33,16 +33,16 @@ async function fetchSampleCountImpl(): Promise<SampleCount> {
       (SELECT coalesce(sum(sample_count_total), 0)::bigint
          FROM leaderboard_agg_1d
         WHERE worker_provider = ${POOLED_INFRA}
-          AND methodology_version = ${METHODOLOGY_VERSION})                       AS total,
+          AND provider_id IN (SELECT id FROM providers WHERE benchmarked = true)) AS total,
       (SELECT coalesce(sum(sample_count_total), 0)::bigint
          FROM leaderboard_agg_1h
         WHERE worker_provider = ${POOLED_INFRA}
-          AND methodology_version = ${METHODOLOGY_VERSION}
+          AND provider_id IN (SELECT id FROM providers WHERE benchmarked = true)
           AND window_start > now() - interval '60 minutes')                       AS last_hour,
       (SELECT coalesce(sum(sample_count_total), 0)::bigint
          FROM leaderboard_agg_1h
         WHERE worker_provider = ${POOLED_INFRA}
-          AND methodology_version = ${METHODOLOGY_VERSION}
+          AND provider_id IN (SELECT id FROM providers WHERE benchmarked = true)
           AND window_start > now() - interval '24 hours')                         AS last_day
   `);
   const r = (rows as unknown as Array<{ total: string | number; last_hour: string | number; last_day: string | number }>)[0];

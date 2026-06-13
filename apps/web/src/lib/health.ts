@@ -34,6 +34,7 @@ async function fetchProviderHealthImpl(): Promise<ProviderHealthSnapshot> {
       max(started_at)                                      AS latest
     FROM samples
     WHERE started_at > now() - interval '15 min'
+      AND provider_id IN (SELECT id FROM providers WHERE benchmarked = true)
     GROUP BY provider_id
   `);
   // Auditor (utility endpoint) health: how recently any endpoint succeeded,

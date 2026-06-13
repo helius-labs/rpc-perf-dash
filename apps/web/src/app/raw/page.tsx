@@ -243,7 +243,6 @@ export default async function RawPage({
     ["Bucket", <code key="b">{challenge.bucket}</code>],
     ["Honeypot", challenge.is_honeypot ? "yes" : "no"],
     ["Status", <code key="s">{challenge.status}</code>],
-    ["Methodology version", challenge.methodology_version],
     ["Generated", toIso(challenge.generated_at)],
     ["Expires", toIso(challenge.expires_at)],
     ["Commitment hash", <code key="c">{bytesToHex(challenge.commitment_hash)}</code>, true],

@@ -5,7 +5,6 @@ import { notFound, redirect } from "next/navigation";
 import {
   GEO_REGIONS,
   GEO_REGION_LABELS,
-  METHODOLOGY_VERSION,
   POOLED_INFRA,
   benchmarkedProviderByRouteParam,
   cloudRegionsForGeo,
@@ -80,7 +79,6 @@ async function fetchFailureBreakdownImpl(providerId: string): Promise<FailureBre
     FROM leaderboard_failures_1h
     WHERE provider_id = ${providerId}
       AND worker_provider = ${POOLED_INFRA}
-      AND methodology_version = ${METHODOLOGY_VERSION}
       AND window_start > now() - interval '24 hours'
     GROUP BY failure_category
     ORDER BY n DESC
@@ -130,7 +128,6 @@ async function fetchMethodBreakdownImpl(providerId: string): Promise<MethodRow[]
       sum(honeypot_pass_count) FILTER (WHERE connection_mode='cold')::int   AS honeypot_pass_count
     FROM rollups_1h
     WHERE provider_id = ${providerId}
-      AND methodology_version = ${METHODOLOGY_VERSION}
       AND window_start > now() - interval '24 hours'
     GROUP BY method, bucket
     ORDER BY method, bucket

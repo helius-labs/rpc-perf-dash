@@ -10,7 +10,6 @@ import { sql } from "drizzle-orm";
 import { unstable_cache } from "next/cache";
 import {
   GEO_REGIONS,
-  METHODOLOGY_VERSION,
   POOLED_INFRA,
   geoRegionOf,
   leaderboardChallengesTableForWindow,
@@ -205,9 +204,7 @@ async function fetchAggregatesFromPrecompute(
       WHERE geo = ${opts.geoRegion}
         AND worker_provider = ${wpKey}
         AND method = ${opts.method}
-        AND connection_mode = ${opts.connectionMode}
-        AND methodology_version = ${METHODOLOGY_VERSION}
-        AND window_start > now() - make_interval(hours => ${opts.windowHours})
+        AND connection_mode = ${opts.connectionMode}        AND window_start > now() - make_interval(hours => ${opts.windowHours})
       GROUP BY provider_id
     ),
     chal AS (
@@ -216,9 +213,7 @@ async function fetchAggregatesFromPrecompute(
       WHERE geo = ${opts.geoRegion}
         AND worker_provider = ${wpKey}
         AND method = ${opts.method}
-        AND connection_mode = ${opts.connectionMode}
-        AND methodology_version = ${METHODOLOGY_VERSION}
-        AND window_start > now() - make_interval(hours => ${opts.windowHours})
+        AND connection_mode = ${opts.connectionMode}        AND window_start > now() - make_interval(hours => ${opts.windowHours})
     ),
     fails AS (
       -- Per-provider failure breakdown for the SAME filter, summed across time
@@ -233,9 +228,7 @@ async function fetchAggregatesFromPrecompute(
         WHERE geo = ${opts.geoRegion}
           AND worker_provider = ${wpKey}
           AND method = ${opts.method}
-          AND connection_mode = ${opts.connectionMode}
-          AND methodology_version = ${METHODOLOGY_VERSION}
-          AND window_start > now() - make_interval(hours => ${opts.windowHours})
+          AND connection_mode = ${opts.connectionMode}          AND window_start > now() - make_interval(hours => ${opts.windowHours})
         GROUP BY provider_id, failure_category
       ) f
       GROUP BY provider_id
@@ -346,7 +339,7 @@ async function fetchMethodLatencyImpl(opts: { windowHours: number }): Promise<Me
             / NULLIF(sum(sample_count_valid) FILTER (WHERE latency_p95_correct IS NOT NULL), 0))::int AS p95
     FROM ${aggTable}
     WHERE worker_provider = ${POOLED_INFRA}
-      AND methodology_version = ${METHODOLOGY_VERSION}
+      AND provider_id IN (SELECT id FROM providers WHERE benchmarked = true)
       AND window_start > now() - make_interval(hours => ${opts.windowHours})
     GROUP BY method, provider_id, connection_mode
   `);
@@ -432,9 +425,7 @@ async function fetchScoreSeriesImpl(opts: ScoreQuery): Promise<ScoreSeries[]> {
     WHERE r.geo IN (${geoLiteral})
       AND r.worker_provider = ${wpKey}
       AND r.method = ${opts.method}
-      AND r.connection_mode = ${opts.connectionMode}
-      AND r.methodology_version = ${METHODOLOGY_VERSION}
-      AND r.window_start > now() - make_interval(hours => ${opts.windowHours})
+      AND r.connection_mode = ${opts.connectionMode}      AND r.window_start > now() - make_interval(hours => ${opts.windowHours})
       AND r.latency_p50_correct IS NOT NULL
       AND r.latency_p95_correct IS NOT NULL
   `)) as unknown as Array<{
@@ -457,9 +448,7 @@ async function fetchScoreSeriesImpl(opts: ScoreQuery): Promise<ScoreSeries[]> {
     WHERE geo IN (${geoLiteral})
       AND worker_provider = ${wpKey}
       AND method = ${opts.method}
-      AND connection_mode = ${opts.connectionMode}
-      AND methodology_version = ${METHODOLOGY_VERSION}
-      AND window_start > now() - make_interval(hours => ${opts.windowHours})
+      AND connection_mode = ${opts.connectionMode}      AND window_start > now() - make_interval(hours => ${opts.windowHours})
     GROUP BY window_start, geo
   `)) as unknown as Array<{
     window_start: Date | string;

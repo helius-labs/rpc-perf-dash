@@ -11,7 +11,7 @@
 
 import { sql } from "drizzle-orm";
 import { unstable_cache } from "next/cache";
-import { METHODOLOGY_VERSION, rollupTableForWindow, type Method } from "@rpcbench/shared";
+import { rollupTableForWindow, type Method } from "@rpcbench/shared";
 import { db } from "./db";
 
 const CACHE_TTL_S = 30;
@@ -87,7 +87,6 @@ async function fetchLatencySeriesImpl(opts: ChartQuery): Promise<ChartSeries[]> 
     FROM ${sourceTable} r
     JOIN providers p ON p.id = r.provider_id AND p.benchmarked = true
     WHERE r.connection_mode = ${mode}
-      AND r.methodology_version = ${METHODOLOGY_VERSION}
       AND (r.worker_provider, r.region) IN (${pairLiteral})
       AND r.method IN (${methodsLiteral})
       AND r.window_start > now() - make_interval(hours => ${opts.windowHours})

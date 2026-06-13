@@ -5,7 +5,6 @@ import { notFound } from "next/navigation";
 import {
   BENCHMARKED_PROVIDERS,
   DEFAULT_WEIGHTS,
-  METHODOLOGY_VERSION,
   score,
 } from "@rpcbench/shared";
 import { db, DB_ERROR_MESSAGE } from "@/lib/db";
@@ -100,7 +99,7 @@ export default async function RunPage({ params }: { params: Promise<{ id: string
           percentile_cont(0.95) WITHIN GROUP (ORDER BY s.freshness_lag) FILTER (WHERE s.correctness='correct')::int AS freshness_p95_lag
         FROM samples s
         WHERE s.challenge_id IN (SELECT id FROM challenges WHERE run_id = ${id}::uuid)
-          AND s.methodology_version = ${METHODOLOGY_VERSION}
+          AND s.provider_id IN (SELECT id FROM providers WHERE benchmarked = true)
         GROUP BY s.provider_id
       ),
       -- One winner per challenge: lowest-latency correct cold sample. Scoped to
@@ -109,7 +108,7 @@ export default async function RunPage({ params }: { params: Promise<{ id: string
         SELECT DISTINCT ON (s.challenge_id) s.challenge_id, s.provider_id
         FROM samples s
         WHERE s.challenge_id IN (SELECT id FROM challenges WHERE run_id = ${id}::uuid)
-          AND s.methodology_version = ${METHODOLOGY_VERSION}
+          AND s.provider_id IN (SELECT id FROM providers WHERE benchmarked = true)
           AND s.connection_mode = 'cold'
           AND s.correctness = 'correct'
         ORDER BY s.challenge_id, s.latency_ms ASC
