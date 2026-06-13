@@ -5,7 +5,7 @@
  *   size:        small (≤2 instructions)         | large (≥10 instructions)
  *   complexity:  simple (system/token only)      | program_heavy (≥3 distinct programs)
  *   version:     legacy                          | versioned (v0 with ALTs)
- *   age:         recent (<1h)                    | archival (>1 epoch)
+ *   age:         recent (<1h)                    | archival (1–2 years back)
  *
  * Projection: same per-tx shape as getBlock — signatures + meta.{err, fee,
  * preBalances, postBalances}, kept together.
@@ -19,6 +19,7 @@ import {
   type Correctness,
   type MethodHandlers,
 } from "@rpcbench/shared";
+import { ARCHIVAL_UTILITY_TIMEOUT_MS, withArchivalSlotRetries } from "./probe.js";
 
 const SIZE = ["small", "large"] as const;
 const COMPLEXITY = ["simple", "program_heavy"] as const;
@@ -105,18 +106,36 @@ export async function deriveTransactionChallenge(
   const tip = ctx.recentSlots.length ? ctx.recentSlots[ctx.recentSlots.length - 1]! : 0n;
   if (tip === 0n) return null;
 
-  const ageSlot = age === "recent"
-    ? tip - BigInt(1 + Math.floor(Math.random() * 9000))
-    : tip - 432_000n * BigInt(1 + Math.floor(Math.random() * 9));
-
   let block: BlockProbe;
-  try {
-    block = await ctx.utility.call<BlockProbe>("getBlock", [
-      Number(ageSlot),
-      { encoding: "json", transactionDetails: "full", maxSupportedTransactionVersion: 0, rewards: false },
-    ]);
-  } catch {
-    return null;
+  if (age === "recent") {
+    const ageSlot = tip - BigInt(1 + Math.floor(Math.random() * 9000));
+    try {
+      block = await ctx.utility.call<BlockProbe>("getBlock", [
+        Number(ageSlot),
+        { encoding: "json", transactionDetails: "full", maxSupportedTransactionVersion: 0, rewards: false },
+      ]);
+    } catch {
+      return null;
+    }
+  } else {
+    // Archival (1–2 years back): skipped slots are common, so a cheap
+    // signatures-probe gates each draw; the expensive full fetch (large
+    // 2024-era blocks, cold archive read) happens once, with a longer
+    // per-call timeout. Both run inside the derive budget.
+    const found = await withArchivalSlotRetries(tip, async (s) => {
+      const probe = await ctx.utility.call<{ signatures?: string[] }>("getBlock", [
+        Number(s),
+        { encoding: "json", transactionDetails: "signatures", maxSupportedTransactionVersion: 0, rewards: false },
+      ]);
+      if (!probe?.signatures?.length) return null;
+      return ctx.utility.call<BlockProbe>(
+        "getBlock",
+        [Number(s), { encoding: "json", transactionDetails: "full", maxSupportedTransactionVersion: 0, rewards: false }],
+        { timeoutMs: ARCHIVAL_UTILITY_TIMEOUT_MS },
+      );
+    });
+    if (!found) return null;
+    block = found.value;
   }
   if (!block?.transactions?.length) return null;
 

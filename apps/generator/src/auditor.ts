@@ -22,6 +22,21 @@ import { HANDLERS } from "@rpcbench/methods";
 import type { Method } from "@rpcbench/shared";
 import type { MultiEndpointRpcClient } from "./utility-client.js";
 
+/**
+ * Per-call utility timeout for ARCHIVAL-bucket reference fetches (cold
+ * archive reads, multi-MB getBlock-full bodies). 12s — paired with the 12s
+ * archival derive budget so a tickCombo's derive + auditor worst case stays
+ * ≈ 24s under the generator's 25s tick ceiling. Non-archival buckets keep
+ * the client's 5s default.
+ */
+export const AUDITOR_ARCHIVAL_TIMEOUT_MS = 12_000;
+
+export function auditorCallOptsForBucket(bucket: string): { timeoutMs: number } | undefined {
+  return bucket === "honeypot" || bucket.includes("archival")
+    ? { timeoutMs: AUDITOR_ARCHIVAL_TIMEOUT_MS }
+    : undefined;
+}
+
 export interface AuditorReference {
   /** Raw RPC response payload. Stored on challenges.reference_response. */
   response: unknown;
@@ -44,10 +59,11 @@ export async function fetchAuditorReference(
   method: Method,
   params: readonly unknown[],
   tipSlot: bigint,
+  opts?: { timeoutMs?: number },
 ): Promise<AuditorReference | null> {
   let response: unknown;
   try {
-    response = await utility.call(method, params as unknown[]);
+    response = await utility.call(method, params as unknown[], opts);
   } catch {
     return null;
   }

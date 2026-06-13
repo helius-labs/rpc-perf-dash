@@ -1,12 +1,12 @@
 /** Minimal JSON-RPC client used by generator (preflight + quorum + slot). */
-import type { RpcClient } from "@rpcbench/shared";
+import type { RpcCallOptions, RpcClient } from "@rpcbench/shared";
 
 export function createRpcClient(url: string, timeoutMs = 5000): RpcClient {
   let id = 0;
   return {
-    async call<T>(method: string, params: unknown[]): Promise<T> {
+    async call<T>(method: string, params: unknown[], opts?: RpcCallOptions): Promise<T> {
       const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+      const timer = setTimeout(() => ctrl.abort(), opts?.timeoutMs ?? timeoutMs);
       try {
         const res = await fetch(url, {
           method: "POST",

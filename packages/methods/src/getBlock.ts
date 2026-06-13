@@ -34,6 +34,7 @@ import {
   type Correctness,
   type MethodHandlers,
 } from "@rpcbench/shared";
+import { pickArchivalSlot, withArchivalSlotRetries } from "./probe.js";
 
 export const BUCKETS = [
   "tip_minus_5__high",
@@ -130,25 +131,37 @@ export async function deriveBlockChallenge(
   const tip = ctx.recentSlots.length ? ctx.recentSlots[ctx.recentSlots.length - 1]! : 0n;
   if (tip === 0n) return null;
 
-  const slot = pickSlotForAge(tip, age);
-  if (slot === null) return null;
-
   // Probe block size with utility endpoint to confirm tx-count band.
   // Use confirmed commitment so the probe doesn't race finalization for
   // tip_minus_5 slots — same commitment we'll use in the real challenge.
-  let signatureCount: number;
-  try {
+  const probeBand = async (s: bigint): Promise<bigint | null> => {
     const probe = await ctx.utility.call<{ signatures?: string[] }>("getBlock", [
-      Number(slot),
+      Number(s),
       { encoding: "json", transactionDetails: "signatures", maxSupportedTransactionVersion: 0, rewards: false, commitment: "confirmed" },
     ]);
-    signatureCount = probe?.signatures?.length ?? 0;
-  } catch {
-    return null;
+    const isHigh = (probe?.signatures?.length ?? 0) >= 1500;
+    if (txband === "high" && !isHigh) return null;
+    if (txband === "low" && isHigh) return null;
+    return s;
+  };
+
+  let slot: bigint;
+  if (age === "archival") {
+    // Skipped slots and band mismatches are common at 1–2yr depth; retry a
+    // few fresh draws within the derive budget instead of skipping the tick.
+    const found = await withArchivalSlotRetries(tip, probeBand);
+    if (!found) return null;
+    slot = found.slot;
+  } else {
+    const picked = pickSlotForAge(tip, age);
+    if (picked === null) return null;
+    try {
+      if ((await probeBand(picked)) === null) return null;
+    } catch {
+      return null;
+    }
+    slot = picked;
   }
-  const isHigh = signatureCount >= 1500;
-  if (txband === "high" && !isHigh) return null;
-  if (txband === "low" && isHigh) return null;
 
   // Per-challenge randomization of transactionDetails between "full" and
   // "accounts". The projection (blockhash / parentSlot / previousBlockhash +
@@ -179,7 +192,6 @@ function pickSlotForAge(
   // Solana ~2.5 slots/sec.
   const slotsPerHour = 9000n;
   const slotsPerDay = slotsPerHour * 24n;
-  const slotsPerEpoch = 432_000n;
   const rand = (lo: bigint, hi: bigint) => {
     if (hi <= lo) return null;
     const range = Number(hi - lo);
@@ -195,7 +207,7 @@ function pickSlotForAge(
     case "last_24h":
       return rand(tip - slotsPerDay, tip - slotsPerHour);
     case "archival":
-      return rand(tip - slotsPerEpoch * 10n, tip - slotsPerEpoch);
+      return pickArchivalSlot(tip);
   }
 }
 

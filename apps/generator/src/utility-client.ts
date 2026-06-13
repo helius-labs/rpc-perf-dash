@@ -25,7 +25,7 @@
  * The quorum and worker code paths keep their existing per-call clients.
  */
 
-import type { RpcClient } from "@rpcbench/shared";
+import type { RpcCallOptions, RpcClient } from "@rpcbench/shared";
 import { createRpcClient } from "./rpc.js";
 
 const FAILS_TO_OPEN = 5;
@@ -114,7 +114,7 @@ export function createUtilityClient(
     }
   }
 
-  async function call<T>(method: string, params: unknown[]): Promise<T> {
+  async function call<T>(method: string, params: unknown[], opts?: RpcCallOptions): Promise<T> {
     const now = Date.now();
     // Try closed endpoints first, then half-open (the probe), then nothing.
     const order = [
@@ -131,7 +131,7 @@ export function createUtilityClient(
     let lastErr: unknown = null;
     for (const slot of order) {
       try {
-        const out = await slot.client.call<T>(method, params);
+        const out = await slot.client.call<T>(method, params, opts);
         recordOk(slot, Date.now());
         return out;
       } catch (err) {

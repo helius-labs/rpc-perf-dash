@@ -200,14 +200,14 @@ function decideForMode(
   auditorProjection: CanonicalProjection | null,
 ): DecidedMode {
   const method = input.method;
-  const match = matchPredicateForMethod(method);
+  const match = matchPredicateForMethod(method, input.bucket);
   // Auditor cross-check uses a SEPARATE predicate because the auditor's
   // projection is captured at challenge generation (t=0) and the panel's
   // consensus is captured at worker fanout (t+δ). For getSlot specifically,
   // the network legitimately advances ~2.5 slots/s during δ, so reusing the
   // tight consensus tolerance guarantees a false "disputed" verdict. Most
   // methods are time-stable and reuse the consensus predicate as-is.
-  const auditorMatch = auditorMatchPredicateForMethod(method);
+  const auditorMatch = auditorMatchPredicateForMethod(method, input.bucket);
 
   const attempts = new Map<string, ProjectAttempt>();
   const unsupported = new Set<string>();
@@ -338,6 +338,7 @@ function buildRowsForMode(
 
     const { correctness, exclusion_reason } = decideProviderOutcome({
       method: input.method,
+      bucket: input.bucket,
       mode,
       provider_id: r.provider_id,
       single,
@@ -375,6 +376,7 @@ function buildRowsForMode(
       correctness,
       exclusion_reason,
       freshness_lag: freshnessLag ?? 0n,
+      timeout_ms: single.timeout_ms,
     });
 
     rows.push({
@@ -415,6 +417,7 @@ function buildRowsForMode(
 
 interface DecideOutcomeInput {
   method: Method;
+  bucket: string;
   mode: "cold" | "warm";
   provider_id: string;
   single: SingleResult;
@@ -458,6 +461,7 @@ function decideProviderOutcome(
   if (d.isHoneypot) {
     return classifyWithFreshness({
       method: d.method,
+      bucket: d.bucket,
       projection,
       reference_hash_or_shape: d.honeypotOrConsensus!,
       reference_response_for_shape: d.reference_response_for_shape,
@@ -496,6 +500,7 @@ function decideProviderOutcome(
   //    dashboard can surface the audit-coverage gap.
   const result = classifyWithFreshness({
     method: d.method,
+    bucket: d.bucket,
     projection,
     reference_hash_or_shape: d.honeypotOrConsensus!,
     reference_response_for_shape: undefined,
@@ -522,6 +527,7 @@ function decideProviderOutcome(
 
 function classifyWithFreshness(args: {
   method: Method;
+  bucket: string;
   projection: CanonicalProjection;
   reference_hash_or_shape: { hash: Uint8Array; shape: unknown };
   /** For honeypots: re-project from the stored payload to populate reference.shape. */
@@ -542,6 +548,7 @@ function classifyWithFreshness(args: {
 
   const correctness = classifyAgainstReference({
     method: args.method,
+    bucket: args.bucket,
     projection: args.projection,
     reference,
     reference_tip_slot: args.reference_tip_slot,
@@ -585,8 +592,16 @@ function projectAuditorReference(
  */
 function matchPredicateForMethod(
   method: Method,
+  bucket: string,
 ): (a: CanonicalProjection, b: CanonicalProjection) => boolean {
-  if (method === "getSignaturesForAddress") return sigsMod.sigsProjectionsMatch;
+  if (method === "getSignaturesForAddress") {
+    // Archival frozen windows are immutable — any divergence is a real
+    // archive gap, so consensus is strict byte-equal. Tip-anchored windows
+    // keep the Jaccard trim match (inter-camp finalization drift).
+    return bucket.startsWith("archival")
+      ? (byteEqualHash as (a: CanonicalProjection, b: CanonicalProjection) => boolean)
+      : sigsMod.sigsProjectionsMatch;
+  }
   if (method === "getSlot") return slotMod.slotProjectionsMatch;
   // Time-advancing scalars: consensus on the returned context.slot (their
   // projection shape carries `slot`, so getSlot's slot-tolerance predicate
@@ -632,6 +647,7 @@ function matchPredicateForMethod(
  */
 function auditorMatchPredicateForMethod(
   method: Method,
+  bucket: string,
 ): (a: CanonicalProjection, b: CanonicalProjection) => boolean {
   if (method === "getSlot") return slotMod.slotProjectionsMatchAuditor;
   // Time-advancing scalars need the wide auditor tolerance for the same reason
@@ -663,7 +679,7 @@ function auditorMatchPredicateForMethod(
   // own intra-side churn; immutable methods (block / transaction / accountInfo
   // / programAccounts / tokenAccountsByOwner) are time-stable. Reuse the
   // consensus predicate.
-  return matchPredicateForMethod(method);
+  return matchPredicateForMethod(method, bucket);
 }
 
 function safeParse(s: string): unknown {

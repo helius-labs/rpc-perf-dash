@@ -18,6 +18,23 @@ import { lookup } from "node:dns/promises";
 
 const TIMEOUT_MS = 5000;
 
+/**
+ * Bucket-aware fanout budget. Archival buckets (1–2yr-deep getBlock /
+ * getTransaction / frozen sigs windows) and honeypots (10–1000-epoch-deep
+ * params) hit cold archive storage; at the 5s default they'd mass-timeout,
+ * starving the consensus panel below 3 voters and hollowing the bucket out
+ * to `no_consensus`. Latency/win-rate comparisons are within-bucket, so the
+ * raised budget doesn't skew cross-bucket numbers; timeouts still count
+ * against Reliability. `.includes` catches both bucket shapes:
+ * `archival__high` (getBlock) and `…__archival` (getTransaction).
+ */
+export const ARCHIVAL_FANOUT_TIMEOUT_MS = 10_000;
+export function fanoutTimeoutForBucket(bucket: string): number {
+  return bucket === "honeypot" || bucket.includes("archival")
+    ? ARCHIVAL_FANOUT_TIMEOUT_MS
+    : TIMEOUT_MS;
+}
+
 // Gate per-provider stderr lines. On CF we lose wrangler-tail visibility
 // into container output, so these are how we see latency-distribution per
 // provider when debugging. On AWS/TSW they're redundant with sample-level
@@ -52,6 +69,8 @@ export interface SingleResult {
   error_code: string | null;
   /** Raw response body string (parsed by caller for projection). */
   body: string | null;
+  /** Client timeout budget this call ran under (for failure_detail labels). */
+  timeout_ms: number;
 }
 
 // DNS cache with TTL. Without expiry, IP rotations on provider edges (Cloudflare
@@ -125,7 +144,7 @@ async function drainWithFirstByte(
   return { buffer: Buffer.concat(chunks), first_byte_ms: firstByte };
 }
 
-async function warmCallBenchmark(originUrl: string, body: string): Promise<SingleResult> {
+async function warmCallBenchmark(originUrl: string, body: string, timeoutMs: number): Promise<SingleResult> {
   // Serialize per origin so we don't get head-of-line blocking distortion in
   // the latency measurement. The slot-probe call deliberately bypasses this
   // lock (separate pool) so it doesn't add wait time to subsequent benchmarks.
@@ -136,7 +155,7 @@ async function warmCallBenchmark(originUrl: string, body: string): Promise<Singl
   WARM_LOCKS.set(originUrl, new Promise((r) => (resolveLock = r)));
 
   try {
-    return await doWarmRequest(warmPoolFor(originUrl), originUrl, body);
+    return await doWarmRequest(warmPoolFor(originUrl), originUrl, body, timeoutMs);
   } finally {
     resolveLock();
     WARM_LOCKS.delete(originUrl);
@@ -144,16 +163,17 @@ async function warmCallBenchmark(originUrl: string, body: string): Promise<Singl
 }
 
 async function warmCallSlot(originUrl: string, body: string): Promise<SingleResult> {
-  // No lock — uses a side pool so it doesn't block benchmark calls.
-  return await doWarmRequest(slotPoolFor(originUrl), originUrl, body);
+  // No lock — uses a side pool so it doesn't block benchmark calls. Always
+  // runs at the default budget; the tip probe has no archival exposure.
+  return await doWarmRequest(slotPoolFor(originUrl), originUrl, body, TIMEOUT_MS);
 }
 
-async function doWarmRequest(pool: Pool, originUrl: string, body: string): Promise<SingleResult> {
+async function doWarmRequest(pool: Pool, originUrl: string, body: string, timeoutMs: number): Promise<SingleResult> {
   const u = new URL(originUrl);
   const path = u.pathname + u.search;
   const t0 = performance.now();
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     const res = await pool.request({
       path,
@@ -172,6 +192,7 @@ async function doWarmRequest(pool: Pool, originUrl: string, body: string): Promi
       http_status: res.statusCode,
       error_code: null,
       body: buffer.toString("utf8"),
+      timeout_ms: timeoutMs,
     };
   } catch (err) {
     const latency = Math.round(performance.now() - t0);
@@ -182,13 +203,14 @@ async function doWarmRequest(pool: Pool, originUrl: string, body: string): Promi
       http_status: null,
       error_code: (err as Error).message,
       body: null,
+      timeout_ms: timeoutMs,
     };
   } finally {
     clearTimeout(timer);
   }
 }
 
-async function coldCall(originUrl: string, body: string): Promise<SingleResult> {
+async function coldCall(originUrl: string, body: string, timeoutMs: number): Promise<SingleResult> {
   const u = new URL(originUrl);
   try {
     const ip = await resolveDns(u.hostname);
@@ -196,7 +218,7 @@ async function coldCall(originUrl: string, body: string): Promise<SingleResult> 
       url: u,
       body,
       headers: {},
-      timeoutMs: TIMEOUT_MS,
+      timeoutMs,
       resolvedIp: ip,
     });
     return {
@@ -205,15 +227,17 @@ async function coldCall(originUrl: string, body: string): Promise<SingleResult> 
       http_status: r.http_status,
       error_code: null,
       body: r.body,
+      timeout_ms: timeoutMs,
     };
   } catch (err) {
     const msg = (err as Error).message;
     return {
-      latency_ms: TIMEOUT_MS,
+      latency_ms: timeoutMs,
       status: msg === "timeout" ? "timeout" : "error",
       http_status: null,
       error_code: msg,
       body: null,
+      timeout_ms: timeoutMs,
     };
   }
 }
@@ -222,7 +246,9 @@ async function coldCall(originUrl: string, body: string): Promise<SingleResult> 
 export async function fanout(
   method: Method,
   params: unknown[],
+  opts?: { timeoutMs?: number },
 ): Promise<{ results: ProviderCallResult[]; provider_tip_slots: Map<string, bigint> }> {
+  const timeoutMs = opts?.timeoutMs ?? TIMEOUT_MS;
   const reqBody = JSON.stringify({ jsonrpc: "2.0", id: 1, method, params });
   const slotBody = JSON.stringify({
     jsonrpc: "2.0",
@@ -242,12 +268,12 @@ export async function fanout(
       // provider publishes confirmed-equivalent alternates.
       const url = resolveEndpointUrl(p.endpoints[0]!);
       if (!url) {
-        const empty: SingleResult = { latency_ms: 0, status: "error", http_status: null, error_code: "no_url", body: null };
+        const empty: SingleResult = { latency_ms: 0, status: "error", http_status: null, error_code: "no_url", body: null, timeout_ms: timeoutMs };
         return { provider_id: p.id, endpoint_used: "", cold: empty, warm: empty };
       }
       const [cold, warm, slotRes] = await Promise.all([
-        coldCall(url, reqBody).then(traced(p.id, "cold")),
-        warmCallBenchmark(url, reqBody).then(traced(p.id, "warm")),
+        coldCall(url, reqBody, timeoutMs).then(traced(p.id, "cold")),
+        warmCallBenchmark(url, reqBody, timeoutMs).then(traced(p.id, "warm")),
         warmCallSlot(url, slotBody)
           .then(traced(p.id, "slot"))
           .catch((e) => {

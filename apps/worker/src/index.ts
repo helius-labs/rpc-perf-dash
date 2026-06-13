@@ -9,7 +9,7 @@ import { status as earlyStatus } from "./early-bind.js";
 import { sql } from "drizzle-orm";
 import { createDb, insertConsensusLog, insertSamples } from "@rpcbench/db";
 import { loadEnv, type Method } from "@rpcbench/shared";
-import { fanout, buildSampleRowsV2, shouldArchive } from "@rpcbench/runner";
+import { fanout, fanoutTimeoutForBucket, buildSampleRowsV2, shouldArchive } from "@rpcbench/runner";
 import { claimNext, markDone } from "./claim.js";
 import { hostname } from "node:os";
 
@@ -102,7 +102,9 @@ async function processOne(db: ReturnType<typeof createDb>): Promise<boolean> {
   const method = claimed.method as Method;
   const tFanout0 = Date.now();
   trace("fanout_start", `id=${claimed.challenge_id}`);
-  const { results, provider_tip_slots } = await fanout(method, params);
+  const { results, provider_tip_slots } = await fanout(method, params, {
+    timeoutMs: fanoutTimeoutForBucket(claimed.bucket),
+  });
   trace("fanout_done", `id=${claimed.challenge_id} dt=${Date.now() - tFanout0}ms n_results=${results.length}`);
 
   const built = buildSampleRowsV2({

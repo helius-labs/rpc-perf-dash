@@ -13,6 +13,10 @@ export interface CategorizeFailureInput {
   correctness: Correctness;
   exclusion_reason: string | null;
   freshness_lag: bigint;
+  /** Client timeout budget that applied to this call (bucket-aware: 5s
+   * default, 10s for archival/honeypot buckets). Used only for the
+   * failure_detail label. */
+  timeout_ms?: number;
 }
 
 export interface CategorizeFailureOutput {
@@ -37,7 +41,8 @@ export function categorizeFailure(input: CategorizeFailureInput): CategorizeFail
 
   // Rule 2 — network timeout.
   if (input.status === "timeout") {
-    return { failure_category: "network_timeout", failure_detail: "client_timeout_5s" };
+    const seconds = Math.round((input.timeout_ms ?? 5000) / 1000);
+    return { failure_category: "network_timeout", failure_detail: `client_timeout_${seconds}s` };
   }
 
   // Rule 3 — network error (no HTTP response).
@@ -235,6 +240,9 @@ export function projectResponse(
 
 export interface ClassifyAgainstReferenceInput {
   method: Method;
+  /** Challenge bucket — handlers with bucket-dependent match strictness
+   * (sigs archival) read it; all others ignore it. */
+  bucket: string;
   projection: CanonicalProjection;
   reference: { hash: Uint8Array; shape: unknown };
   reference_tip_slot: bigint;
@@ -256,5 +264,6 @@ export function classifyAgainstReference(
     input.reference,
     input.provider_tip_slot,
     input.reference_tip_slot,
+    input.bucket,
   );
 }

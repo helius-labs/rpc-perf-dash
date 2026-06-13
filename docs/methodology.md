@@ -158,6 +158,35 @@ method and how it's checked:
 *The full per-method rules live in `apps/web/src/app/methodology/methods.data.ts`
 and render as the interactive method explorer on the live methodology page.*
 
+## Test ages & archival depth
+
+Most tests draw from live, recent chain state (the last seconds to hours). The
+methods whose answers are immutable history — `getBlock`, `getTransaction`,
+`getBlockTime`, `getBlocks`, `getBlocksWithLimit`, `getBlockCommitment`, and
+`getSignaturesForAddress` — also carry an **archival** bucket that samples a
+uniform-random slot **182–365 epochs back (≈1–2 years)**. That depth sits well
+past every provider's recent-ledger retention and warm storage, so archival
+buckets measure real archive reads (cold deep-history lookups), not caches.
+Every archival input is freshly drawn per test — nothing is reused, so
+providers can't pre-warm the answers.
+
+Two archival-specific rules:
+
+- **Frozen signature windows are byte-equal.** The `getSignaturesForAddress`
+  archival bucket pins its query strictly `before` a 1–2-year-old anchor
+  signature, making the expected result immutable. Consensus there is strict
+  byte-equality — any divergence is a real archive gap, so the similarity
+  tolerance used for tip-anchored windows doesn't apply.
+- **Archival calls get a 10s client budget** instead of the 5s default, since
+  cold archive reads are slower. Latency comparisons are always within-bucket,
+  so this doesn't skew any cross-bucket numbers, and a timeout still counts
+  against Reliability.
+
+Methods whose deep history isn't reliably served by validators (leader
+schedules: `getSlotLeaders`, `getLeaderSchedule`) deliberately have no archival
+bucket, and account-state methods can't have one — Solana RPC has no
+point-in-time account reads.
+
 ## Latency & freshness
 
 - **Cold**: time to first byte starting from just before the socket connects

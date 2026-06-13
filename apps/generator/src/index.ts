@@ -17,7 +17,7 @@ import { paramsAsArray } from "./params.js";
 import { createDb, createReadyChallenge, stashSeed } from "@rpcbench/db";
 import { createUtilityClient, type MultiEndpointRpcClient } from "./utility-client.js";
 import { SlotObserver } from "./observe.js";
-import { fetchAuditorReference } from "./auditor.js";
+import { auditorCallOptsForBucket, fetchAuditorReference } from "./auditor.js";
 import { drawHoneypot, shouldInjectHoneypot } from "./honeypot.js";
 import { commitmentHash, generateSeed } from "./commit-reveal.js";
 import {
@@ -344,7 +344,13 @@ async function tickCombo(opts: {
   // still dispatch the challenge — the worker marks each sample's
   // exclusion_reason as auditor_unavailable so the dashboard can surface the
   // audit-coverage gap, but scoring continues on consensus alone.
-  const auditor = await fetchAuditorReference(opts.utility, method, params, opts.observer.tipSlot());
+  const auditor = await fetchAuditorReference(
+    opts.utility,
+    method,
+    params,
+    opts.observer.tipSlot(),
+    auditorCallOptsForBucket(derived.bucket),
+  );
 
   const challengeId = await createReadyChallenge(
     opts.db,

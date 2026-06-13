@@ -8,6 +8,12 @@
  *   cursor:       latest                      — drop `shallow`/`deep`/`window` (anchor sig leaks Camp A semantics into Camp B queries)
  *   limit:        1000                        — drop `10`/`100` (too few sigs; tip drift > overlap)
  *
+ * Plus one archival bucket outside the matrix: `archival__frozen__l100` — a
+ * window pinned strictly `before` a 1–2-year-old anchor signature. Everything
+ * before the anchor is immutable, so the tip-drift problem that forced the
+ * cursor prune cannot occur; consensus for this bucket is strict byte-equal
+ * (see classify) and it measures real archive depth, not caches.
+ *
  * Yields 2 × 3 × 1 × 1 = 6 buckets. The full 3 × 3 × 4 × 3 = 108-bucket matrix
  * was structurally unmeasurable across the three "finalized" camps measured on
  * the v=1-era panel (Helius/Triton; Alchemy/QN/Flux; SF Public): >99% of
@@ -33,17 +39,27 @@ import {
   type MethodHandlers,
 } from "@rpcbench/shared";
 import { jaccardAtLeast } from "./setsim.js";
+import { ARCHIVAL_UTILITY_TIMEOUT_MS, withArchivalSlotRetries } from "./probe.js";
 
 const ACTIVITY = ["medium", "low"] as const;
 const ADDRESS_TYPE = ["program", "token_account", "user_wallet"] as const;
 const CURSOR = ["latest"] as const;
 const LIMIT = ["1000"] as const;
 
-export const BUCKETS = ACTIVITY.flatMap((act) =>
-  ADDRESS_TYPE.flatMap((typ) =>
-    CURSOR.flatMap((cur) => LIMIT.map((lim) => `${act}__${typ}__${cur}__l${lim}`)),
+/** Frozen deep-history window (1–2 years back); see header + classify. */
+export const SIGS_ARCHIVAL_BUCKET = "archival__frozen__l100";
+const SIGS_ARCHIVAL_LIMIT = 100;
+/** Minimum sigs the pre-anchor window must hold for a non-degenerate challenge. */
+const SIGS_ARCHIVAL_MIN_WINDOW = 5;
+
+export const BUCKETS = [
+  ...ACTIVITY.flatMap((act) =>
+    ADDRESS_TYPE.flatMap((typ) =>
+      CURSOR.flatMap((cur) => LIMIT.map((lim) => `${act}__${typ}__${cur}__l${lim}`)),
+    ),
   ),
-);
+  SIGS_ARCHIVAL_BUCKET,
+];
 
 export interface GetSigsParams {
   address: string;
@@ -87,6 +103,13 @@ const DROP_KEYS = new Set(["blockTime", "memo"]);
  * Trade-off: small windows lose more relative coverage (limit=10 → 8 entries
  * hashed; limit=100 → 80; limit=1000 → 800). For limit=1 or tiny lists we
  * keep at least 1 entry rather than degenerating to nothing.
+ *
+ * INVARIANT (archival frozen-window bucket): the trim is a pure function of
+ * the returned list — on a `before`-anchored immutable window every
+ * archive-complete provider returns the identical list, trims identically,
+ * and hashes identically, so the archival bucket's strict byte-equal
+ * consensus works *through* this trim without any bucket-aware projection
+ * plumbing. Don't make the trim depend on anything outside `response`.
  */
 function projectImpl(response: SigEntry[]): CanonicalProjection {
   const sortedByAge = [...response].sort((a, b) => a.slot - b.slot);
@@ -119,7 +142,7 @@ interface AccountKeyEntry {
   writable?: boolean;
 }
 interface BlockKeysProbe {
-  transactions: Array<{ transaction: { accountKeys?: AccountKeyEntry[] } }>;
+  transactions: Array<{ transaction: { accountKeys?: AccountKeyEntry[]; signatures?: string[] } }>;
 }
 
 /**
@@ -155,10 +178,59 @@ async function classifyActivity(
   return activity;
 }
 
+/**
+ * Archival derivation: harvest an anchor signature + signer address from a
+ * 1–2-year-old block, then pin the challenge window strictly `before` the
+ * anchor. The pre-check guarantees the window is non-degenerate (≥5 sigs) so
+ * the reference is never empty/trivial. Activity classification is skipped —
+ * last-hour activity is irrelevant to a frozen deep window.
+ */
+async function deriveArchivalSigsChallenge(
+  ctx: ChallengeContext,
+): Promise<{ params: GetSigsParams; bucket: string } | null> {
+  const tip = ctx.recentSlots.length ? ctx.recentSlots[ctx.recentSlots.length - 1]! : 0n;
+  if (tip === 0n) return null;
+
+  const found = await withArchivalSlotRetries(tip, async (slot) => {
+    const block = await ctx.utility.call<BlockKeysProbe>(
+      "getBlock",
+      [Number(slot), { encoding: "json", transactionDetails: "accounts", maxSupportedTransactionVersion: 0, rewards: false }],
+      { timeoutMs: ARCHIVAL_UTILITY_TIMEOUT_MS },
+    );
+    // One pre-check call per candidate tx, few candidates per draw — keeps
+    // each probe well inside the derive budget.
+    for (const tx of (block?.transactions ?? []).slice(0, 3)) {
+      const anchor = tx.transaction.signatures?.[0];
+      const signer = tx.transaction.accountKeys?.find((k) => k?.signer === true)?.pubkey;
+      if (!anchor || !signer) continue;
+      const window = await ctx.utility.call<SigEntry[]>(
+        "getSignaturesForAddress",
+        [signer, { limit: SIGS_ARCHIVAL_LIMIT, before: anchor, commitment: "finalized" }],
+        { timeoutMs: ARCHIVAL_UTILITY_TIMEOUT_MS },
+      );
+      if (Array.isArray(window) && window.length >= SIGS_ARCHIVAL_MIN_WINDOW) {
+        return { address: signer, anchor };
+      }
+    }
+    return null;
+  });
+  if (!found) return null;
+
+  return {
+    params: {
+      address: found.value.address,
+      options: { limit: SIGS_ARCHIVAL_LIMIT, before: found.value.anchor, commitment: "finalized" },
+    },
+    bucket: SIGS_ARCHIVAL_BUCKET,
+  };
+}
+
 export async function deriveSigsChallenge(
   ctx: ChallengeContext,
   bucket: string,
 ): Promise<{ params: GetSigsParams; bucket: string } | null> {
+  if (bucket.startsWith("archival")) return deriveArchivalSigsChallenge(ctx);
+
   const [activity, _addrType, cursor, limitStr] = bucket.split("__") as [
     "high" | "medium" | "low",
     "program" | "token_account" | "user_wallet",
@@ -358,7 +430,15 @@ export const handlers: MethodHandlers<GetSigsParams, SigEntry[]> = {
     return deriveSigsChallenge(ctx, ctx.bucket);
   },
   project: projectImpl,
-  classify(projection, reference, providerTipSlot, referenceTipSlot): Correctness {
+  classify(projection, reference, providerTipSlot, referenceTipSlot, bucket): Correctness {
+    // Archival frozen window: the list is immutable, so any divergence is a
+    // real archive gap — strict byte-equal, no Jaccard tolerance (0.8 would
+    // mask a provider missing up to ~15% of deep history).
+    if (bucket?.startsWith("archival")) {
+      if (!buffersEqual(projection.hash, reference.hash)) return "incorrect";
+      if (referenceTipSlot - providerTipSlot > 2n) return "stale";
+      return "correct";
+    }
     // Prefer shape-based Jaccard comparison when the reference has a shape
     // populated (the worker re-projects reference_response before calling
     // classify). Falls back to hash equality if shape is missing — preserves

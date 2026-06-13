@@ -16,7 +16,7 @@ import {
   type Correctness,
   type MethodHandlers,
 } from "@rpcbench/shared";
-import { pickFinalizedSlot } from "./probe.js";
+import { pickFinalizedSlot, withArchivalSlotRetries } from "./probe.js";
 
 export const BUCKETS = ["recent_finalized", "archival"] as const;
 export type GetBlockTimeBucket = (typeof BUCKETS)[number];
@@ -36,13 +36,25 @@ export async function deriveBlockTimeChallenge(
   ctx: ChallengeContext,
   bucket: GetBlockTimeBucket,
 ): Promise<{ params: GetBlockTimeParams; bucket: GetBlockTimeBucket } | null> {
+  // Confirm the slot was produced (not skipped) so the challenge has a real,
+  // deterministic answer.
+  const producedCheck = async (s: bigint): Promise<bigint | null> => {
+    const t = await ctx.utility.call<number | null>("getBlockTime", [Number(s)]);
+    return typeof t === "number" ? s : null;
+  };
+  if (bucket === "archival") {
+    // Skipped slots are common at 1–2yr depth; retry fresh draws within the
+    // derive budget instead of skipping the tick.
+    const tip = ctx.recentSlots.length ? ctx.recentSlots[ctx.recentSlots.length - 1]! : 0n;
+    if (tip === 0n) return null;
+    const found = await withArchivalSlotRetries(tip, producedCheck);
+    if (!found) return null;
+    return { params: { slot: Number(found.slot) }, bucket };
+  }
   const slot = pickFinalizedSlot(ctx, bucket);
   if (slot === null) return null;
-  // Confirm the slot was produced (not skipped) so the challenge has a real,
-  // deterministic answer; otherwise retry next tick.
   try {
-    const t = await ctx.utility.call<number | null>("getBlockTime", [Number(slot)]);
-    if (typeof t !== "number") return null;
+    if ((await producedCheck(slot)) === null) return null;
   } catch {
     return null;
   }

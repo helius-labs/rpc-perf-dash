@@ -678,9 +678,9 @@ async function reverifyFinalizedChallenges(
       AND c.generated_at < now() - make_interval(mins => ${FINALITY_RECHECK_AGE_MIN})
       AND c.generated_at > now() - interval '24 hours'
       AND (
-        (c.method = 'getBlock' AND c.bucket != 'tip_minus_5')
+        (c.method = 'getBlock' AND c.bucket NOT LIKE 'tip_minus_5%')
         OR c.method = 'getTransaction'
-        OR (c.method = 'getSignaturesForAddress' AND c.bucket LIKE '%epoch%')
+        OR (c.method = 'getSignaturesForAddress' AND c.bucket LIKE 'archival%')
       )
     ORDER BY c.generated_at ASC
     LIMIT ${FINALITY_RECHECK_BATCH}
@@ -700,7 +700,10 @@ async function reverifyFinalizedChallenges(
     let error: string | null = null;
     try {
       const params = Array.isArray(r.params) ? (r.params as unknown[]) : [r.params];
-      const response = await utility.call(method, params);
+      // Re-fetches can be deep cold archive reads (archival getBlock-full);
+      // 15s is fine here — the recheck runs on its own interval, not inside
+      // the generator tick.
+      const response = await utility.call(method, params, { timeoutMs: 15_000 });
       const projection = HANDLERS[method].project(response);
       canonicalHash = Buffer.from(projection.hash);
       matched = canonicalHash.equals(consensusHash);

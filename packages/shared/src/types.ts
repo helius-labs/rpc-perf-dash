@@ -338,6 +338,12 @@ export interface MethodHandlers<P = unknown, R = unknown> {
     reference: CanonicalProjection,
     providerTipSlot: bigint,
     referenceTipSlot: bigint,
+    /**
+     * Challenge bucket, for the rare handler whose match strictness is
+     * bucket-dependent (getSignaturesForAddress: frozen archival windows are
+     * byte-equal; tip-anchored windows use the Jaccard trim match).
+     */
+    bucket?: Bucket,
   ) => Correctness;
   buckets: readonly Bucket[];
   /**
@@ -361,8 +367,13 @@ export interface ChallengeContext {
   bucket: Bucket;
 }
 
+export interface RpcCallOptions {
+  /** Override the client's construction-time timeout for this one call. */
+  timeoutMs?: number;
+}
+
 export interface RpcClient {
-  call: <T>(method: string, params: unknown[]) => Promise<T>;
+  call: <T>(method: string, params: unknown[], opts?: RpcCallOptions) => Promise<T>;
 }
 
 export interface CanonicalProjection {

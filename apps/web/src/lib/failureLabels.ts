@@ -22,7 +22,7 @@ export interface FailureDescription {
 export const FAILURE_LABELS: Record<string, FailureDescription> = {
   network_timeout: {
     label: "Timed out",
-    hint: "No response within the 5s client budget.",
+    hint: "No response within the client budget (5s default; 10s for archival/honeypot buckets).",
   },
   network_error: {
     label: "Network error",
@@ -84,8 +84,6 @@ export function describeFailure(
   if (!detail) return base;
 
   switch (detail) {
-    case "client_timeout_5s":
-      return base; // already "Timed out / 5s budget"
     case "http_429":
       return { label: "Rate limited", hint: "Provider returned HTTP 429 (too many requests)." };
     case "body_rate_limit":
@@ -107,6 +105,10 @@ export function describeFailure(
   }
 
   // Dynamic details.
+  const timeoutMatch = /^client_timeout_(\d+)s$/.exec(detail);
+  if (timeoutMatch) {
+    return { label: "Timed out", hint: `No response within the ${timeoutMatch[1]}s client budget.` };
+  }
   const httpMatch = /^http_(\d{3})$/.exec(detail);
   if (httpMatch) {
     return { label: `HTTP ${httpMatch[1]}`, hint: `Provider returned HTTP status ${httpMatch[1]}.` };

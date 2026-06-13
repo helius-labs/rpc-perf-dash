@@ -9,6 +9,7 @@
  *   pnpm benchmark
  *   pnpm benchmark --challenges 100
  *   pnpm benchmark --methods getBlock,getTransaction
+ *   pnpm benchmark --buckets archival
  *   pnpm benchmark --concurrency 5
  *   pnpm benchmark --json
  *   pnpm benchmark --no-write
@@ -32,7 +33,8 @@ import {
 import { HANDLERS } from "@rpcbench/methods";
 import { paramsAsArray } from "./params.js";
 import { createDb, insertConsensusLog, insertSamples } from "@rpcbench/db";
-import { fanout, buildSampleRowsV2, shouldArchive } from "@rpcbench/runner";
+import { fanout, fanoutTimeoutForBucket, buildSampleRowsV2, shouldArchive } from "@rpcbench/runner";
+import { auditorCallOptsForBucket } from "./auditor.js";
 import { createRpcClient } from "./rpc.js";
 import { SlotObserver } from "./observe.js";
 import { commitmentHash, generateSeed } from "./commit-reveal.js";
@@ -104,6 +106,8 @@ interface CliArgs {
   concurrency: number;
   json: boolean;
   noWrite: boolean;
+  /** Substring filter on bucket names (e.g. "archival") — canary targeting. */
+  buckets: string | null;
 }
 
 function parseCliArgs(): CliArgs {
@@ -116,6 +120,7 @@ function parseCliArgs(): CliArgs {
       concurrency: { type: "string", default: "3" },
       json: { type: "boolean", default: false },
       "no-write": { type: "boolean", default: false },
+      buckets: { type: "string" },
     },
   });
 
@@ -142,12 +147,24 @@ function parseCliArgs(): CliArgs {
   } else {
     methods = [...VALID_METHODS];
   }
+  let buckets = values.buckets ?? null;
+  if (buckets !== null) {
+    buckets = buckets.trim();
+    // Drop methods with no bucket matching the filter so derivation attempts
+    // aren't wasted on combos that can never match.
+    methods = methods.filter((m) => HANDLERS[m].buckets.some((b) => b.includes(buckets!)));
+    if (methods.length === 0) {
+      console.error(`--buckets "${buckets}" matches no buckets on the selected methods`);
+      process.exit(2);
+    }
+  }
   return {
     challenges,
     methods,
     concurrency,
     json: values.json === true,
     noWrite: values["no-write"] === true,
+    buckets,
   };
 }
 
@@ -175,9 +192,10 @@ async function runOneChallenge(opts: {
   methods: readonly Method[];
   noWrite: boolean;
   runId: string;
+  bucketsFilter: string | null;
   collectedRows: { rows: import("@rpcbench/db").SampleRow[] };
 }): Promise<ChallengeOutcome> {
-  const { db, observer, utility, secret, methods, noWrite, runId, collectedRows } = opts;
+  const { db, observer, utility, secret, methods, noWrite, runId, bucketsFilter, collectedRows } = opts;
 
   // Pick a (method, bucket) combo. Retry derivation up to 3 times if the
   // handler returns null for the picked bucket.
@@ -185,7 +203,10 @@ async function runOneChallenge(opts: {
   let chosenMethod: Method | null = null;
   for (let attempt = 0; attempt < MAX_DERIVATION_RETRIES; attempt++) {
     const m = methods[Math.floor(Math.random() * methods.length)]!;
-    const buckets = HANDLERS[m].buckets;
+    const buckets = bucketsFilter
+      ? HANDLERS[m].buckets.filter((x) => x.includes(bucketsFilter))
+      : HANDLERS[m].buckets;
+    if (buckets.length === 0) continue;
     const b = buckets[Math.floor(Math.random() * buckets.length)]!;
     const r = await HANDLERS[m].deriveChallenge({
       recentSlots: observer.recentSlots(),
@@ -216,7 +237,7 @@ async function runOneChallenge(opts: {
   // hiccup will simply land in the "auditor_unavailable" branch.
   const auditorRef = await (async () => {
     try {
-      const response = await utility.call(method, params);
+      const response = await utility.call(method, params, auditorCallOptsForBucket(derived.bucket));
       const projection = HANDLERS[method].project(response);
       return {
         response,
@@ -234,7 +255,7 @@ async function runOneChallenge(opts: {
     tip_slot: observer.tipSlot(),
   };
 
-  // Insert ready challenge (v=2: no pending_quorum phase). Direct SQL because
+  // Insert ready challenge (consensus model: no pending_quorum phase). Direct SQL because
   // the CLI is single-process and doesn't go through the createReadyChallenge
   // fan-out path (no assignments — the CLI is its own vantage).
   const [row] = (await db.execute(sql`
@@ -258,8 +279,10 @@ async function runOneChallenge(opts: {
   if (!row) throw new Error("insert ready challenge: no id");
   const challenge_id = row.id;
 
-  // Fanout to benchmarked providers.
-  const { results, provider_tip_slots } = await fanout(method, params);
+  // Fanout to benchmarked providers (bucket-aware timeout, same as workers).
+  const { results, provider_tip_slots } = await fanout(method, params, {
+    timeoutMs: fanoutTimeoutForBucket(derived.bucket),
+  });
 
   const built = buildSampleRowsV2({
     challenge_id,
@@ -410,7 +433,7 @@ function printText(opts: {
 }): void {
   const sep = "=".repeat(80);
   console.log("");
-  console.log("Solana RPC Benchmark — one-shot run (methodology_version 2)");
+  console.log("Solana RPC Benchmark — one-shot run");
   console.log(sep);
   console.log(`Run started: ${opts.startedAt.toISOString()}`);
   console.log(
@@ -558,7 +581,7 @@ async function main() {
   const runId = randomUUID();
   if (!args.json) {
     console.error(
-      `[benchmark] run_id=${runId}\n[benchmark] running ${args.challenges} challenges across ${args.methods.join("+")} at concurrency=${args.concurrency} (methodology_version=${METHODOLOGY_VERSION}) ...`,
+      `[benchmark] run_id=${runId}\n[benchmark] running ${args.challenges} challenges across ${args.methods.join("+")} at concurrency=${args.concurrency} ...`,
     );
   }
 
@@ -588,6 +611,7 @@ async function main() {
           methods: args.methods,
           noWrite: args.noWrite,
           runId,
+          bucketsFilter: args.buckets,
           collectedRows,
         })
           .then((outcome) => {

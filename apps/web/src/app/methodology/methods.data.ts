@@ -107,7 +107,7 @@ export const METHODS: readonly MethodSpec[] = [
     shape: "Immutable block (read at confirmed)",
     input: {
       draws: "A specific slot",
-      from: "the generator's live recent-slot window; archival buckets reach back ~4.3M slots",
+      from: "the generator's live recent-slot window; archival buckets reach back 182–365 epochs (tip−78.6M…157.7M slots, ≈1–2 years — true archive depth, not warm storage)",
       buckets:
         "8: slot-age (tip−5 / last hour / last 24h / archival) × tx-count band (high ≥1500 / low)",
       commitment:
@@ -131,7 +131,7 @@ export const METHODS: readonly MethodSpec[] = [
     shape: "Immutable transaction (finalized)",
     input: {
       draws: "A specific transaction signature",
-      from: "a probed block at the bucket's age (recent <1h, or archival via tip−432k×N)",
+      from: "a probed block at the bucket's age (recent <1h, or archival 182–365 epochs back ≈1–2 years)",
       buckets:
         "16: size (small ≤2 ix / large ≥10) × complexity (simple / program-heavy ≥3 programs) × version (legacy / v0) × age (recent / archival)",
       commitment: "finalized",
@@ -187,7 +187,7 @@ export const METHODS: readonly MethodSpec[] = [
       "Byte-equal hash. Set-membership churn at a newer tip → stale, else incorrect.",
     voters: PANEL,
     notes: [
-      "Activated for correctness under v=2: the panel itself is now the reference, so enumeration methods get full scoring (v=1's neutral pool couldn't agree on the SPL Token program).",
+      "Activated for correctness with the consensus model: the panel itself is now the reference, so enumeration methods get full scoring (the earlier neutral pool couldn't agree on the SPL Token program).",
     ],
   },
   {
@@ -220,9 +220,9 @@ export const METHODS: readonly MethodSpec[] = [
     shape: "Append-only signature log",
     input: {
       draws: "A signer address",
-      from: "transaction signers in a probed recent block, classified by activity",
+      from: "transaction signers in a probed recent block, classified by activity — or, for the archival bucket, a signer + anchor signature harvested from a block 182–365 epochs (≈1–2 years) back",
       buckets:
-        "6: activity (medium / low; high is pruned for cross-camp tip drift) × address type (program / token-account / user-wallet); latest cursor, limit 1000",
+        "7: activity (medium / low; high is pruned for cross-camp tip drift) × address type (program / token-account / user-wallet) with latest cursor, limit 1000 — plus 1 archival frozen window (limit 100, pinned strictly before a 1–2-year-old anchor signature)",
       commitment: "finalized",
     },
     projection: {
@@ -231,10 +231,11 @@ export const METHODS: readonly MethodSpec[] = [
       drops: "blockTime, memo, and the freshest 20% of entries before hashing",
     },
     match:
-      "Fast path byte-equal; else tip-anchored Jaccard ≥ 0.8: sigs newer than min(maxSlot) − 32 (~13s) are dropped first, so the panel's two 'finalized' camps ({Helius, Triton} vs {Alchemy, QuickNode}) compare on a window everyone has settled. Falls back to full-set Jaccard when the trim leaves <3 sigs.",
+      "Fast path byte-equal; else tip-anchored Jaccard ≥ 0.8: sigs newer than min(maxSlot) − 32 (~13s) are dropped first, so the panel's two 'finalized' camps ({Helius, Triton} vs {Alchemy, QuickNode}) compare on a window everyone has settled. Falls back to full-set Jaccard when the trim leaves <3 sigs. The archival frozen window is strict byte-equal — everything before the anchor is immutable, so any divergence is a real archive gap (Jaccard tolerance would mask a provider missing up to 15% of deep history).",
     voters: PANEL,
     notes: [
       "An empty list (e.g. a provider past its retention horizon) abstains rather than dissenting, so it can't force a no-consensus.",
+      "Archival-bucket calls (here and on the other archival methods) run under a 10s client timeout instead of the 5s default — cold archive reads are slower; latency comparisons stay within-bucket, and timeouts still count against Reliability.",
     ],
   },
   {
@@ -438,7 +439,7 @@ export const METHODS: readonly MethodSpec[] = [
     shape: "Immutable block timestamp",
     input: {
       draws: "A finalized slot",
-      from: "the recent-slot window (recent_finalized tip−150..9000, or archival 1–10 epochs back); probed to confirm the slot was produced",
+      from: "the recent-slot window (recent_finalized tip−150..9000, or archival 182–365 epochs ≈1–2 years back); probed to confirm the slot was produced",
       buckets: "2: recent_finalized / archival",
     },
     projection: { keeps: "{ blockTime }", drops: "—" },
@@ -452,7 +453,7 @@ export const METHODS: readonly MethodSpec[] = [
     shape: "Settled commitment + total stake",
     input: {
       draws: "A finalized slot",
-      from: "the recent-slot window (recent_finalized / archival)",
+      from: "the recent-slot window (recent_finalized) / 182–365 epochs ≈1–2 years back (archival)",
       buckets: "2: recent_finalized / archival",
     },
     projection: {
@@ -469,7 +470,7 @@ export const METHODS: readonly MethodSpec[] = [
     shape: "Immutable produced-slot set",
     input: {
       draws: "A finalized start slot",
-      from: "the recent-slot window; window is a fixed 20-slot span [start, start+20]",
+      from: "the recent-slot window (recent_finalized) / 182–365 epochs ≈1–2 years back (archival); window is a fixed 20-slot span [start, start+20]",
       buckets: "2: recent_finalized / archival",
     },
     projection: { keeps: "sorted set of produced slots in range", drops: "—" },
@@ -811,7 +812,7 @@ export const METHODS: readonly MethodSpec[] = [
     shape: "Pinned produced-slot list",
     input: {
       draws: "A finalized start slot + a fixed limit (20)",
-      from: "the recent-slot window (recent_finalized) / 1–10 epochs back (archival)",
+      from: "the recent-slot window (recent_finalized) / 182–365 epochs ≈1–2 years back (archival)",
       buckets: "2: recent_finalized / archival",
     },
     projection: { keeps: "{ slots } sorted", drops: "—" },
