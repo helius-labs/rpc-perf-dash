@@ -24,9 +24,17 @@ interface SearchParams {
 // users re-weight via the workload-persona presets client-side.
 const OVERVIEW_METHOD: Method = "getTransaction";
 const OVERVIEW_MODE = "cold" as const;
-// Geos + methods surfaced in each expanded row's latency grid (our two
-// best-covered geos × the high-signal core methods).
-const GRID_GEOS: readonly GeoRegion[] = ["na-east", "eu-central"];
+// Geos + methods surfaced in each expanded row's latency grid. All six
+// benchmarked regions × the high-signal core methods — the expanded row shows
+// two geos at a time and a chevron cycles through the rest (see GEO_PAIRS).
+const GRID_GEOS: readonly GeoRegion[] = [
+  "na-east",
+  "eu-central",
+  "ap-northeast",
+  "na-west",
+  "eu-west",
+  "ap-southeast",
+];
 const GRID_METHODS: readonly Method[] = [
   "getTransaction",
   "getAccountInfo",
@@ -52,9 +60,9 @@ export default async function OverviewPage({
     const activeGeos = await fetchActiveGeos();
 
     // Leaderboard ranking: per-active-geo getTransaction/cold aggregates, blended
-    // Overall client-side. Plus the expanded-row latency grid: the two showcase
-    // geos × the core methods (cold). getTransaction × {na-east, eu-central}
-    // overlaps the leaderboard fetches' cache keys, so it's not double work.
+    // Overall client-side. Plus the expanded-row latency grid: all six geos ×
+    // the core methods (cold). getTransaction × each active geo overlaps the
+    // leaderboard fetches' cache keys, so those calls aren't double work.
     const [perGeoRaw, gridRaw, sampleData] = await Promise.all([
       Promise.all(
         activeGeos.map(async (g) => {

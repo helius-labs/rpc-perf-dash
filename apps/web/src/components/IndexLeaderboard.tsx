@@ -65,8 +65,8 @@ export interface LatencyCell {
 
 /**
  * provider id → method → geo → latency. Assembled server-side (page.tsx) for
- * the expanded-row method×region grid. Only the OVERVIEW_METHODS × OVERVIEW_GEOS
- * cells are populated.
+ * the expanded-row method×region grid. Only the OVERVIEW_METHODS × the geos in
+ * GEO_PAIRS (all six benchmarked regions) cells are populated.
  */
 export type MethodRegionLatency = Record<string, Record<string, Record<string, LatencyCell>>>;
 
@@ -77,8 +77,16 @@ const OVERVIEW_METHODS: ReadonlyArray<Method> = [
   "getTokenAccountsByOwner",
 ];
 
-/** Geos surfaced in the expanded-row latency grid — our two best-covered. */
-const OVERVIEW_GEOS: ReadonlyArray<GeoRegion> = ["na-east", "eu-central"];
+/**
+ * Geos surfaced in the expanded-row latency grid, shown two at a time. The
+ * chevron next to the second header cycles through these pairs (and the cycle
+ * is synced across all expanded rows — see `pairIdx` in IndexLeaderboard).
+ */
+const GEO_PAIRS: ReadonlyArray<readonly [GeoRegion, GeoRegion]> = [
+  ["na-east", "eu-central"],
+  ["ap-northeast", "na-west"],
+  ["eu-west", "ap-southeast"],
+];
 
 interface IndexRow {
   id: string;
@@ -120,6 +128,8 @@ const IndexLeaderboardRow = memo(function IndexLeaderboardRow({
   selectedGeo,
   weights,
   latency,
+  geos,
+  onCycle,
   toggle,
 }: {
   row: IndexRow;
@@ -130,6 +140,10 @@ const IndexLeaderboardRow = memo(function IndexLeaderboardRow({
   weights: ScoringWeights;
   /** Per-provider method→geo→p50/p95 slice for the expanded grid. */
   latency: Record<string, Record<string, LatencyCell>> | undefined;
+  /** The region pair currently shown in the grid (from GEO_PAIRS[pairIdx]). */
+  geos: readonly [GeoRegion, GeoRegion];
+  /** Advance to the next region pair (synced across all rows). */
+  onCycle: () => void;
   toggle: (id: string) => void;
 }) {
   const p = row;
@@ -257,9 +271,9 @@ const IndexLeaderboardRow = memo(function IndexLeaderboardRow({
           }
         >
         <div className={"idx-detail" + (isLeader ? " idx-detail-leader" : "")}>
-          {/* Cold-start latency by method × region — the two best-covered
-              geos. Pooled across each geo's vantages (incl. Newark/EWR
-              and Frankfurt/FRA). */}
+          {/* Cold-start latency by method × region — two geos at a time, the
+              chevron cycles through all six (GEO_PAIRS). Pooled across each
+              geo's vantages (incl. Newark/EWR and Frankfurt/FRA). */}
           <div className="idx-mr">
             <div className="idx-mr-cap">Cold-start latency · p50 / p95 ms</div>
             <div className="idx-mr-scroll">
@@ -267,9 +281,33 @@ const IndexLeaderboardRow = memo(function IndexLeaderboardRow({
                 <thead>
                   <tr>
                     <th />
-                    {OVERVIEW_GEOS.map((g) => (
+                    {geos.map((g) => (
                       <th key={g}>{GEO_REGION_LABELS[g]}</th>
                     ))}
+                    {/* Cycle control lives in its own trailing column so it sits
+                        beside — not inside — the right region column. */}
+                    <th className="idx-mr-cyclecol">
+                      <button
+                        type="button"
+                        className="idx-mr-cycle"
+                        aria-label="Show next regions"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onCycle();
+                        }}
+                      >
+                        <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">
+                          <path
+                            d="M9 6l6 6-6 6"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            fill="none"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      </button>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -278,7 +316,7 @@ const IndexLeaderboardRow = memo(function IndexLeaderboardRow({
                       <td className="idx-mr-method">
                         <code>{m}</code>
                       </td>
-                      {OVERVIEW_GEOS.map((g) => {
+                      {geos.map((g) => {
                         const cell = latency?.[m]?.[g];
                         const has = cell && (cell.p50 != null || cell.p95 != null);
                         return (
@@ -295,6 +333,8 @@ const IndexLeaderboardRow = memo(function IndexLeaderboardRow({
                           </td>
                         );
                       })}
+                      {/* Spacer under the cycle column to keep alignment. */}
+                      <td className="idx-mr-cyclecol" aria-hidden="true" />
                     </tr>
                   ))}
                 </tbody>
@@ -458,6 +498,16 @@ export function IndexLeaderboard({
     [],
   );
 
+  // Which GEO_PAIRS entry the expanded grids show. Held here (not per-row) so
+  // the chevron cycles every open row's regions in sync. cyclePair is
+  // referentially stable (functional update, empty deps) so memoized rows only
+  // re-render when pairIdx actually flips.
+  const [pairIdx, setPairIdx] = useState(0);
+  const cyclePair = useCallback(
+    () => setPairIdx((i) => (i + 1) % GEO_PAIRS.length),
+    [],
+  );
+
   if (ordered.length === 0) {
     return (
       <section className="lb-index">
@@ -482,6 +532,8 @@ export function IndexLeaderboard({
             selectedGeo={selectedGeo}
             weights={weights}
             latency={methodRegionLatency[p.id]}
+            geos={GEO_PAIRS[pairIdx]!}
+            onCycle={cyclePair}
             toggle={toggle}
           />
         ))}
