@@ -152,8 +152,10 @@ The "Overall" view blends regions with these default weights:
 |---|---|
 | NA East | 0.35 |
 | EU Central | 0.35 |
-| AP Northeast | 0.20 |
-| NA West | 0.10 |
+| AP Northeast | 0.15 |
+| NA West | 0.05 |
+| EU West | 0.05 |
+| AP Southeast | 0.05 |
 
 For each provider the weights are re-normalized over only the regions where it
 qualifies, so a provider that isn't in a region isn't penalized for it.

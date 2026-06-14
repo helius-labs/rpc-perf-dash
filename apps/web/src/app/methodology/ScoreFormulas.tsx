@@ -5,8 +5,9 @@
  * the default 50/45/5 mass distribution visible at a glance.
  *
  * Static (no interactivity): the methodology page documents the model; actual
- * weight tuning happens on the leaderboard via URL params. Figures are
- * code-true to packages/shared/src/scoring.ts (DEFAULT_WEIGHTS + computeScore).
+ * weight tuning happens on the leaderboard via the preset chips / sliders on the
+ * Overview. Figures are code-true to packages/shared/src/scoring.ts
+ * (DEFAULT_WEIGHTS + computeScore).
  */
 
 type Category = "speed" | "quality" | "freshness";
@@ -149,7 +150,7 @@ export default function ScoreFormulas() {
         <span className="text-fg">
           w<sub>L</sub>·L + w<sub>W</sub>·W + w<sub>R</sub>·R + w<sub>C</sub>·C + w<sub>F</sub>·F
         </span>
-        <span className="text-muted"> · clamped 0–100, blended across geos by region weight · tunable via URL params</span>
+        <span className="text-muted"> · clamped 0–100, blended across geos by region weight</span>
       </div>
     </div>
   );

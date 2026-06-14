@@ -46,20 +46,22 @@ export const DEFAULT_WEIGHTS: ScoringWeights = {
  * Per-geo-region weight used when blending per-region provider scores into a
  * single "overall" leaderboard ranking. Defaults bias toward EU Central and
  * NA East, which is where the largest share of Solana RPC traffic terminates.
- * Users can override via URL params (r_ne/r_eu/r_an/r_nw/r_ew/r_as).
+ * Weights sum to 1.0. `blendRegionScores` renormalizes over the regions where
+ * each provider actually has data, so a provider absent from a region is not
+ * penalized for it.
  */
 export type RegionWeights = Record<GeoRegion, number>;
 
 export const DEFAULT_REGION_WEIGHTS: RegionWeights = {
   "na-east": 0.35,
   "eu-central": 0.35,
-  "ap-northeast": 0.2,
-  "na-west": 0.1,
-  // No vantages deployed in these geos yet. Setting them to 0 keeps the
-  // weights form summing to exactly 1.0 over the active subset. If vantages
-  // come online here later, rebalance to give them a meaningful share.
-  "eu-west": 0,
-  "ap-southeast": 0,
+  "ap-northeast": 0.15,
+  "na-west": 0.05,
+  // All six geos now have live vantages (though not every cloud runs workers in
+  // every geo). eu-west / ap-southeast carry small weights — meaningful but
+  // light, since their vantage coverage is thinner than the primaries.
+  "eu-west": 0.05,
+  "ap-southeast": 0.05,
 };
 
 export interface ProviderMetrics {
