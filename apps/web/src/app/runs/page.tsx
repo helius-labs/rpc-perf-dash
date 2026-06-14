@@ -82,7 +82,7 @@ export default async function RunsPage() {
       </p>
 
       {error && (
-        <div className="badge bad" style={{ display: "block", padding: 12 }}>
+        <div className="badge bad block p-3">
           DB error: {error}
         </div>
       )}
@@ -94,7 +94,7 @@ export default async function RunsPage() {
       {runs.length > 0 && (
         <>
           {/* Desktop: wide table */}
-          <div className="hidden md:block" style={{ overflow: "auto" }}>
+          <div className="hidden md:block overflow-auto">
             <table>
               <thead>
                 <tr>
@@ -133,7 +133,7 @@ export default async function RunsPage() {
           </div>
 
           {/* Mobile: stacked cards */}
-          <div className="md:hidden" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div className="md:hidden flex flex-col gap-2">
             {runs.map((r) => {
               const started = new Date(r.started_at);
               const ended = new Date(r.ended_at);
@@ -154,7 +154,7 @@ export default async function RunsPage() {
                     textDecoration: "none",
                   }}
                 >
-                  <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 6 }}>
+                  <div className="flex items-baseline gap-2 mb-1.5">
                     <code style={{ fontSize: 12, color: "#eaeaea" }}>{r.run_id.slice(0, 8)}</code>
                     <span style={{ marginLeft: "auto", fontSize: 11, color: "#888", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}>
                       {started.toISOString().replace("T", " ").slice(0, 19)}Z

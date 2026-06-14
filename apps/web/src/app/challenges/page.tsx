@@ -251,7 +251,7 @@ export default async function ChallengesPage({
       </div>
 
       {/* Target search — server-rendered form GETs back to /challenges */}
-      <form action="/challenges" method="get" style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 16 }}>
+      <form action="/challenges" method="get" className="flex items-center gap-2 mb-4">
         {/* Preserve other filters across submits via hidden inputs. */}
         {method && <input type="hidden" name="method" value={method} />}
         {effectiveBucket && <input type="hidden" name="bucket" value={effectiveBucket} />}
@@ -259,7 +259,7 @@ export default async function ChallengesPage({
         <input type="hidden" name="window" value={String(window)} />
         <label
           htmlFor="target-search"
-          style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 0.6 }}
+          className="font-geistmono text-[11px] text-muted uppercase tracking-[0.6px]"
         >
           Parameter filter
         </label>
@@ -298,7 +298,7 @@ export default async function ChallengesPage({
         {target && (
           <Link
             href={urlWith(params, { target: null, offset: null }) as Route}
-            style={{ fontSize: 11, color: "var(--muted)", textDecoration: "underline" }}
+            className="text-[11px] text-muted underline"
           >
             clear
           </Link>

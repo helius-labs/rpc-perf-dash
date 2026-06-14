@@ -1,6 +1,25 @@
 @import "tailwindcss";
 
 /* =========================================================
+   Styling conventions — when to reach for what (keep the
+   codebase from drifting back into ad-hoc CSS):
+
+   • Tailwind utilities — the default. Layout, spacing, static
+     color, responsive. Colors come from the bridged tokens
+     below (text-fg, bg-surface, border-line, text-accent,
+     text-muted, font-geistmono) — never re-hardcode a hex that
+     already has a token.
+   • Semantic class in this file — only for complex or repeated
+     components that utilities express poorly: multi-column
+     grids, ::before/::after pseudo-elements, ::-webkit-scrollbar,
+     container queries, @keyframes, and the unlayered nav @media
+     hack. These are documented inline where they live.
+   • Inline style={{}} — only for runtime-dynamic values:
+     computed widths/dimensions, SVG geometry, injected CSS vars,
+     and one-off brand/semantic colors with no matching token.
+   ========================================================= */
+
+/* =========================================================
    Theme tokens — "Index, dark" design system (Claude Design
    handoff zrFa6mSpqJpIKrntxfhEyg). Pitch-black editorial dark
    with a Helius-orange accent and Geist / Geist Mono type.
@@ -78,10 +97,6 @@ code { font-family: var(--font-mono); }
 .badge.warn { background: #2a1a08; color: #ffb84d; border-color: #5a3a18; }
 .badge.bad  { background: #2a0a0a; color: #ff6b6b; border-color: #5a2020; }
 .badge.good { background: #08200a; color: #6bf08c; border-color: #1a4a20; }
-.preliminary {
-  background: #2a1a08; padding: 8px 16px; border-left: 3px solid #ffb84d;
-  margin-bottom: 16px; font-size: 13px;
-}
 
 /* Hide the scrollbar on horizontally scrollable filter strips on mobile. */
 .scrollbar-hide {
@@ -501,7 +516,6 @@ summary:has(.rcc-caret)::-webkit-details-marker { display: none; }
   color: var(--muted);
   margin-left: 2px;
 }
-.idx-kicker-pending { color: var(--muted); }
 @media (max-width: 720px) {
   .idx-row { gap: 10px; font-size: clamp(22px, 7vw, 34px); padding: 8px 0 6px; }
   .idx-row-leader { font-size: clamp(30px, 9.5vw, 52px); padding: 10px 0 8px; }
@@ -588,8 +602,6 @@ summary:has(.rcc-caret)::-webkit-details-marker { display: none; }
 .prov-table tbody tr:hover { background: color-mix(in oklch, var(--text) 3%, transparent); }
 .prov-ch-method { font-family: var(--font-mono); font-size: 12px; color: var(--text); }
 .prov-ch-when { font-family: var(--font-mono); font-size: 11.5px; color: var(--muted); white-space: nowrap; }
-.prov-ch-action a { font-family: var(--font-mono); font-size: 11.5px; color: var(--muted); transition: color 0.15s ease; }
-.prov-ch-action a:hover { color: var(--accent); text-decoration: none; }
 .prov-amb-day { font-family: var(--font-mono); font-size: 12px; color: var(--text); }
 .prov-empty {
   padding: 18px 0;
@@ -692,15 +704,6 @@ summary:has(.rcc-caret)::-webkit-details-marker { display: none; }
   color: var(--text);
   font-weight: 500;
 }
-.prov-row-sub {
-  display: block;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--muted);
-  letter-spacing: 0.02em;
-  font-weight: 400;
-  margin-top: 4px;
-}
 .prov-row-bar { height: 4px; background: var(--border-2); border-radius: 2px; overflow: hidden; display: block; }
 .prov-row-bar-fill {
   display: block;
@@ -724,20 +727,6 @@ summary:has(.rcc-caret)::-webkit-details-marker { display: none; }
 }
 .prov-row-val i { font-style: normal; font-size: 12px; color: var(--muted); margin-left: 2px; font-weight: 400; }
 
-/* Failure breakdown — extra count column, red worst */
-.prov-row-fail { grid-template-columns: minmax(180px, 1.5fr) 1fr auto auto; gap: 22px; }
-.prov-row-cnt {
-  font-family: var(--font-mono);
-  font-size: 12.5px;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-  min-width: 70px;
-}
-.prov-row-fail.is-worst .prov-row-bar-fill { background: #DC2626; opacity: 0.85; }
-.prov-row-fail.is-worst .prov-row-val { color: #DC2626; }
-.prov-row-fail.is-worst { color: var(--text); }
-
 @media (max-width: 720px) {
   .prov-row { grid-template-columns: 1fr auto; gap: 12px; font-size: 17px; }
   .prov-row-bar { display: none; }
@@ -749,7 +738,6 @@ summary:has(.rcc-caret)::-webkit-details-marker { display: none; }
    ========================================================= */
 .status-header { margin: 4px 0 20px; }
 .status-title { font-size: 22px; font-weight: 600; letter-spacing: -0.01em; color: var(--text); }
-.status-sub { margin-top: 6px; font-size: 13.5px; color: var(--muted); max-width: 70ch; line-height: 1.5; }
 .status-page { display: flex; flex-direction: column; gap: 22px; }
 
 .status-banner {

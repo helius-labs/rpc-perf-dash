@@ -126,7 +126,7 @@ export function ChallengesTable({
   }, [url]);
 
   if (rows.length === 0) {
-    return <p style={{ fontSize: 13, color: "var(--muted)", padding: 12 }}>{emptyText}</p>;
+    return <p className="text-[13px] text-muted p-3">{emptyText}</p>;
   }
 
   const rowClass = (id: string) => (newIds.has(id) ? "recent-row-flash" : undefined);

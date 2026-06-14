@@ -161,7 +161,7 @@ export default async function RawPage({
     return (
       <div>
         <RawHeader title="Raw inspector" />
-        <div className="badge bad mt-6" style={{ display: "block", padding: 12 }}>
+        <div className="badge bad mt-6 block p-3">
           Invalid challenge ID: must be a UUID. Got: <code>{id}</code>
         </div>
       </div>
@@ -223,7 +223,7 @@ export default async function RawPage({
     return (
       <div>
         <RawHeader title="Raw inspector" />
-        <div className="badge bad mt-6" style={{ display: "block", padding: 12 }}>DB error: {error}</div>
+        <div className="badge bad mt-6 block p-3">DB error: {error}</div>
       </div>
     );
   }

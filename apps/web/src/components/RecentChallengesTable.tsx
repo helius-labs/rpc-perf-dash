@@ -206,7 +206,7 @@ export function RecentChallengesTable({
 
   if (challenges.length === 0) {
     return (
-      <p style={{ fontSize: 13, color: "var(--muted)", padding: 12 }}>
+      <p className="text-[13px] text-muted p-3">
         No challenges generated in the last hour. The generator may be down; check ECS.
       </p>
     );
