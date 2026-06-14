@@ -54,7 +54,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             <MobileMenu />
           </div>
         </header>
-        <main className="max-w-[1240px] w-full mx-auto px-10 pt-3 pb-16 max-[640px]:px-5 max-[640px]:pt-0 max-[640px]:pb-12">
+        <main className="max-w-[1240px] w-full mx-auto px-10 pt-3 pb-8 max-[640px]:px-5 max-[640px]:pt-0 max-[640px]:pb-8">
           {children}
         </main>
       </body>

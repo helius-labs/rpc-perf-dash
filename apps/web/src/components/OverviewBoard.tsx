@@ -195,7 +195,7 @@ export function OverviewBoard({
 
         {/* Control bar — preset chips (always one line) + a toggle that reveals
             the manual weight sliders. */}
-        <div className="flex flex-col gap-3 py-3 border-y border-line">
+        <div className="flex flex-col py-3 border-y border-line">
           <div className="flex items-center gap-2 sm:gap-3">
             <span className="font-geistmono text-[10.5px] tracking-[0.14em] uppercase text-muted shrink-0 hidden sm:inline">
               Optimize for
@@ -236,37 +236,6 @@ export function OverviewBoard({
                 ▼
               </span>
             </button>
-
-            {/* Compact info — explains the leaderboard's scope without taking a row. */}
-            <FloatingTooltip
-              title="How providers are ranked"
-              trigger={
-                <span
-                  className="shrink-0 inline-flex h-4 w-4 items-center justify-center cursor-help text-muted transition-colors hover:text-fg2"
-                  aria-label="How are these ranked?"
-                >
-                  <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.4">
-                    <circle cx="8" cy="8" r="6.5" />
-                    <path d="M8 7.3v3.4" strokeLinecap="round" />
-                    <circle cx="8" cy="5" r="0.6" fill="currentColor" stroke="none" />
-                  </svg>
-                </span>
-              }
-            >
-              <div className="text-left font-normal normal-case tracking-normal leading-normal">
-                <p className="text-neutral-300">
-                  Ranked on <code>getTransaction</code>, cold start, last 24h, blended across
-                  regions.
-                </p>
-                <p className="mt-1.5 text-neutral-400">
-                  All methods, modes, and windows are on{" "}
-                  <Link href="/performance" className="text-accent hover:underline">
-                    Performance
-                  </Link>
-                  .
-                </p>
-              </div>
-            </FloatingTooltip>
           </div>
 
           {/* Manual weights — hidden behind the toggle, slides open. */}
@@ -277,7 +246,7 @@ export function OverviewBoard({
             }
           >
             <div className="overflow-hidden">
-              <div className="flex items-center gap-x-4 gap-y-2 pt-1 flex-wrap">
+              <div className="flex items-center gap-x-4 gap-y-2 pt-3 flex-wrap">
                 {AXIS_ORDER.map((k) => (
                   <label key={k} className="inline-flex items-center gap-1.5 font-geistmono text-[10.5px] text-fg2">
                     <FloatingTooltip
@@ -315,6 +284,13 @@ export function OverviewBoard({
             </div>
           </div>
         </div>
+
+      {/* Scope of the ranking — stated in plain sight, not a tooltip.
+          Scores reflect getTransaction only; full matrix on /performance. */}
+      <p className="mt-1.5 -mb-5 font-geistmono text-[9.5px] sm:text-[10px] tracking-[0.12em] uppercase text-muted leading-snug">
+        <code className="font-geistmono normal-case tracking-normal text-[11px] text-muted">getTransaction</code>
+        {" · cold start · last 24h · all regions"}
+      </p>
 
       <IndexLeaderboard
         rawPerGeo={rawPerGeo}
