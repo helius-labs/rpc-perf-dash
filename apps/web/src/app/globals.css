@@ -7,6 +7,10 @@
    ========================================================= */
 :root {
   color-scheme: dark;
+  /* Paint the root element so the whole viewport canvas is var(--bg),
+     regardless of content height. Without this, a content-shorter-than-
+     viewport page leaves a lighter UA dark band below body. */
+  background: var(--bg);
 
   --bg:        #0A0B0E;
   --surface:   #11131A;
