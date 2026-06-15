@@ -322,7 +322,7 @@ export function DensityChart({ series }: ChartProps) {
 
 const BOX_ROW_H = 46;
 const BOX_TOP = 30; // headroom above the first row
-const BOX_LABEL_X = PAD_L - 8; // provider names right-aligned in the left gutter
+const BOX_LABEL_X = 3; // provider names left-aligned in the gutter (avoids clipping long names like "QuickNode" off the left edge)
 
 interface BoxHover {
   pIdx: number;
@@ -399,7 +399,7 @@ export function BoxChart({ series }: ChartProps) {
             {/* highlighted marker (the one the tooltip is showing) */}
             {active && <circle cx={hover!.x} cy={cy} r={4.5} fill="#0f0f0f" stroke={s.color} strokeWidth={2.5} />}
             {/* provider name — in the left gutter, outside the plot */}
-            <text x={BOX_LABEL_X} y={cy + 4} fontSize={10} fill="#e6e8ec" fontWeight={600} textAnchor="end">{s.name}</text>
+            <text x={BOX_LABEL_X} y={cy + 4} fontSize={9} fill="#e6e8ec" fontWeight={600}>{s.name}</text>
           </g>
         );
       })}
