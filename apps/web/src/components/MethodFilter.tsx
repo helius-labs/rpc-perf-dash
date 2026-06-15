@@ -25,9 +25,16 @@ export interface MethodOption {
 interface Props {
   options: readonly MethodOption[];
   selected: string;
+  /**
+   * Trigger styling. "pill" (default) is the filled chip used on /performance.
+   * "inline" renders the trigger as monospace text that sits inside a running
+   * caption line (e.g. the Overview scope note), so the method name reads as
+   * part of the sentence rather than a button.
+   */
+  variant?: "pill" | "inline";
 }
 
-export function MethodFilter({ options, selected }: Props) {
+export function MethodFilter({ options, selected, variant = "pill" }: Props) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -47,6 +54,16 @@ export function MethodFilter({ options, selected }: Props) {
     };
   }, [open]);
 
+  const triggerClass =
+    variant === "inline"
+      ? "cursor-pointer select-none inline-flex items-center gap-1 align-baseline " +
+        "font-geistmono normal-case tracking-normal text-[11px] text-muted " +
+        "underline decoration-dotted decoration-line2 underline-offset-[3px] " +
+        "transition-colors hover:text-fg"
+      : "cursor-pointer select-none inline-flex items-center gap-1.5 " +
+        "px-[11px] py-[5px] rounded-full text-[12px] font-geistmono " +
+        "tracking-[0.01em] border bg-fg text-bg border-fg";
+
   return (
     <div ref={ref} className="relative inline-block">
       <button
@@ -54,14 +71,10 @@ export function MethodFilter({ options, selected }: Props) {
         onClick={() => setOpen((o) => !o)}
         aria-haspopup="listbox"
         aria-expanded={open}
-        className={
-          "cursor-pointer select-none inline-flex items-center gap-1.5 " +
-          "px-[11px] py-[5px] rounded-full text-[12px] font-geistmono " +
-          "tracking-[0.01em] border bg-fg text-bg border-fg"
-        }
+        className={triggerClass}
       >
         <span>{selected}</span>
-        <span aria-hidden className="text-[10px] opacity-70">▾</span>
+        <span aria-hidden className={variant === "inline" ? "text-[8px] opacity-70" : "text-[10px] opacity-70"}>▾</span>
       </button>
 
       {open && (

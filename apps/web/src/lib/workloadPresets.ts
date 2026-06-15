@@ -6,15 +6,17 @@
  * board re-rank. Each preset is just a set of L/W/R/C/F scoring weights that
  * feed the existing client-side re-score in IndexLeaderboard (no refetch).
  *
- * Every `weights` vector sums to 1.0. Balanced === DEFAULT_WEIGHTS, so the
- * default landing view matches the documented methodology exactly.
+ * Every `weights` vector sums to 1.0. The default landing weighting is
+ * DEFAULT_WEIGHTS (matching the documented methodology); it intentionally
+ * isn't a preset chip — the live weights panel is always visible, so there's
+ * no need for a "Balanced" chip that just re-applies the defaults.
  *
- * NOTE: the non-Balanced vectors are starting points, not measured optima.
- * They're meant to move the board in the persona's named direction; tune them
- * if a preset doesn't rank the way its label promises.
+ * NOTE: these vectors are starting points, not measured optima. They're meant
+ * to move the board in the persona's named direction; tune them if a preset
+ * doesn't rank the way its label promises.
  */
 
-import { DEFAULT_WEIGHTS, type ScoringWeights } from "@rpcbench/shared/scoring";
+import { type ScoringWeights } from "@rpcbench/shared/scoring";
 
 export interface WorkloadPreset {
   id: string;
@@ -27,13 +29,6 @@ export interface WorkloadPreset {
 }
 
 export const WORKLOAD_PRESETS: readonly WorkloadPreset[] = [
-  {
-    id: "balanced",
-    label: "Balanced",
-    short: "Balanced",
-    caption: "Even weighting across speed, reliability, and correctness.",
-    weights: DEFAULT_WEIGHTS, // 0.25 L / 0.25 W / 0.25 R / 0.20 C / 0.05 F
-  },
   {
     id: "trading-bot",
     label: "Trading bot",
@@ -56,8 +51,6 @@ export const WORKLOAD_PRESETS: readonly WorkloadPreset[] = [
     weights: { latency: 0.3, winRate: 0.1, reliability: 0.45, correctness: 0.1, freshness: 0.05 },
   },
 ] as const;
-
-export const DEFAULT_PRESET_ID = "balanced";
 
 /** Find the preset whose weights match `w` exactly (so the UI can highlight the
  *  active pill when weights came from a preset rather than the raw sliders). */

@@ -65,13 +65,15 @@ export interface LatencyCell {
 
 /**
  * provider id → method → geo → latency. Assembled server-side (page.tsx) for
- * the expanded-row method×region grid. Only the OVERVIEW_METHODS × the geos in
- * GEO_PAIRS (all six benchmarked regions) cells are populated.
+ * the expanded-row method×region grid. Only the grid methods (see
+ * `gridMethods` prop) × the geos in GEO_PAIRS (all six benchmarked regions)
+ * cells are populated.
  */
 export type MethodRegionLatency = Record<string, Record<string, Record<string, LatencyCell>>>;
 
-/** Methods surfaced in the expanded-row latency grid (the high-signal core). */
-const OVERVIEW_METHODS: ReadonlyArray<Method> = [
+/** Default methods surfaced in the expanded-row latency grid (the high-signal
+ *  core), used when the caller doesn't pass an explicit `gridMethods` set. */
+const DEFAULT_GRID_METHODS: ReadonlyArray<Method> = [
   "getTransaction",
   "getAccountInfo",
   "getTokenAccountsByOwner",
@@ -128,6 +130,7 @@ const IndexLeaderboardRow = memo(function IndexLeaderboardRow({
   selectedGeo,
   weights,
   latency,
+  gridMethods,
   geos,
   onCycle,
   toggle,
@@ -140,6 +143,9 @@ const IndexLeaderboardRow = memo(function IndexLeaderboardRow({
   weights: ScoringWeights;
   /** Per-provider method→geo→p50/p95 slice for the expanded grid. */
   latency: Record<string, Record<string, LatencyCell>> | undefined;
+  /** Methods (rows) shown in the expanded grid; the first is the method the
+   *  leaderboard is currently ranking by. */
+  gridMethods: ReadonlyArray<Method>;
   /** The region pair currently shown in the grid (from GEO_PAIRS[pairIdx]). */
   geos: readonly [GeoRegion, GeoRegion];
   /** Advance to the next region pair (synced across all rows). */
@@ -311,7 +317,7 @@ const IndexLeaderboardRow = memo(function IndexLeaderboardRow({
                   </tr>
                 </thead>
                 <tbody>
-                  {OVERVIEW_METHODS.map((m) => (
+                  {gridMethods.map((m) => (
                     <tr key={m}>
                       <td className="idx-mr-method">
                         <code>{m}</code>
@@ -341,8 +347,9 @@ const IndexLeaderboardRow = memo(function IndexLeaderboardRow({
               </table>
             </div>
             <div className="idx-mr-note">
-              Showing 3 examples of the {ALL_METHODS.length} benchmarked methods. The
-              score and stats above only represent getTransaction.
+              Showing {gridMethods.length} of the {ALL_METHODS.length} benchmarked
+              methods. The score and stats above only represent{" "}
+              <code>{gridMethods[0]}</code>.
             </div>
           </div>
           {/* Secondary line: the overall relative metrics for this view. */}
@@ -386,6 +393,7 @@ export function IndexLeaderboard({
   selectedGeo,
   weights,
   methodRegionLatency = {},
+  gridMethods = DEFAULT_GRID_METHODS,
 }: {
   rawPerGeo: RawGeoOutcome[];
   selectedGeo: GeoRegion | null;
@@ -393,6 +401,9 @@ export function IndexLeaderboard({
   weights: ScoringWeights;
   /** Expanded-row latency grid data (provider → method → geo → p50/p95). */
   methodRegionLatency?: MethodRegionLatency;
+  /** Methods (rows) shown in each expanded-row grid; first = the method the
+   *  board ranks by. Defaults to the high-signal core set. */
+  gridMethods?: ReadonlyArray<Method>;
 }) {
   // Weights are controlled by OverviewBoard (workload presets). Re-scoring runs
   // client-side off the raw per-geo aggregates, so changing a preset re-ranks
@@ -532,6 +543,7 @@ export function IndexLeaderboard({
             selectedGeo={selectedGeo}
             weights={weights}
             latency={methodRegionLatency[p.id]}
+            gridMethods={gridMethods}
             geos={GEO_PAIRS[pairIdx]!}
             onCycle={cyclePair}
             toggle={toggle}

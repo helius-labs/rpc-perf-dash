@@ -7,6 +7,7 @@ import {
 import { ALL_METHODS } from "@/lib/methods";
 import { WINDOWS } from "@/lib/windows";
 import { type MethodRegionLatency } from "@/components/IndexLeaderboard";
+import { type MethodOption } from "@/components/MethodFilter";
 import { OverviewBoard } from "@/components/OverviewBoard";
 import { fetchActiveGeos, fetchAggregatesForGeo } from "@/lib/leaderboard";
 import { fetchSampleCount, EMPTY_SAMPLE_COUNT } from "@/lib/sampleCount";
@@ -16,13 +17,31 @@ export const dynamic = "force-dynamic";
 
 interface SearchParams {
   window?: string;
+  method?: string;
 }
 
-// The Overview is fixed to the high-signal defaults; deeper slicing (region,
-// infra, connection mode, method) lives on /performance. The leaderboard ranks
-// the Overall (all-active-geo) blend, cold getTransaction, default weights —
-// users re-weight via the workload-persona presets client-side.
-const OVERVIEW_METHOD: Method = "getTransaction";
+// Build an Overview URL preserving the current params with `override` applied
+// (null clears a key). Used to make the method dropdown navigate in place.
+function urlWith(
+  params: SearchParams,
+  override: Partial<Record<keyof SearchParams, string | null>>,
+): string {
+  const merged: Record<string, string> = {};
+  for (const [k, v] of Object.entries(params)) if (v != null) merged[k] = String(v);
+  for (const [k, v] of Object.entries(override)) {
+    if (v === null) delete merged[k];
+    else if (v != null) merged[k] = String(v);
+  }
+  const qs = new URLSearchParams(merged).toString();
+  return qs ? `/?${qs}` : "/";
+}
+
+// The Overview is fixed to high-signal defaults (Overall all-active-geo blend,
+// cold start, default weights); deeper slicing (region, infra, connection mode)
+// lives on /performance. The ranked method is switchable via ?method= and
+// defaults to getTransaction; users re-weight via the persona presets / weight
+// sliders client-side.
+const DEFAULT_METHOD: Method = "getTransaction";
 const OVERVIEW_MODE = "cold" as const;
 // Geos + methods surfaced in each expanded row's latency grid. All six
 // benchmarked regions × the high-signal core methods — the expanded row shows
@@ -35,6 +54,8 @@ const GRID_GEOS: readonly GeoRegion[] = [
   "eu-west",
   "ap-southeast",
 ];
+// High-signal core methods always shown in the expanded-row grid. The ranked
+// method is prepended to these at request time (see gridMethods below).
 const GRID_METHODS: readonly Method[] = [
   "getTransaction",
   "getAccountInfo",
@@ -51,6 +72,25 @@ export default async function OverviewPage({
     ? parseInt(params.window!, 10)
     : 24;
 
+  // Ranked method — validated against the canonical set, defaulting to
+  // getTransaction. Drives the leaderboard fetch below.
+  const methodRaw = params.method ?? DEFAULT_METHOD;
+  const selectedMethod: Method = (ALL_METHODS as readonly string[]).includes(methodRaw)
+    ? (methodRaw as Method)
+    : DEFAULT_METHOD;
+
+  // Expanded-row grid: the ranked method first, then the high-signal core
+  // methods (de-duped) so the drill-down always includes what the board ranks by.
+  const gridMethods: Method[] = [
+    selectedMethod,
+    ...GRID_METHODS.filter((m) => m !== selectedMethod),
+  ];
+
+  // Alphabetically-sorted options for the inline method dropdown.
+  const methodOptions: MethodOption[] = [...ALL_METHODS]
+    .sort((a, b) => a.localeCompare(b))
+    .map((m) => ({ method: m, href: urlWith(params, { method: m }) }));
+
   let perGeo: { geo: GeoRegion; rows: Awaited<ReturnType<typeof fetchAggregatesForGeo>>; eligible: Awaited<ReturnType<typeof fetchAggregatesForGeo>> }[] = [];
   let methodRegionLatency: MethodRegionLatency = {};
   let sampleCount = EMPTY_SAMPLE_COUNT;
@@ -59,9 +99,9 @@ export default async function OverviewPage({
   try {
     const activeGeos = await fetchActiveGeos();
 
-    // Leaderboard ranking: per-active-geo getTransaction/cold aggregates, blended
+    // Leaderboard ranking: per-active-geo selectedMethod/cold aggregates, blended
     // Overall client-side. Plus the expanded-row latency grid: all six geos ×
-    // the core methods (cold). getTransaction × each active geo overlaps the
+    // gridMethods (cold). The selectedMethod × each active geo overlaps the
     // leaderboard fetches' cache keys, so those calls aren't double work.
     const [perGeoRaw, gridRaw, sampleData] = await Promise.all([
       Promise.all(
@@ -70,7 +110,7 @@ export default async function OverviewPage({
             geoRegion: g,
             windowHours,
             connectionMode: OVERVIEW_MODE,
-            method: OVERVIEW_METHOD,
+            method: selectedMethod,
           });
           const eligible = rows.filter(
             (r) => r.eligible === true && r.p95_ms !== null && r.p50_ms !== null,
@@ -80,7 +120,7 @@ export default async function OverviewPage({
       ),
       Promise.all(
         GRID_GEOS.flatMap((g) =>
-          GRID_METHODS.map(async (m) => {
+          gridMethods.map(async (m) => {
             const rows = await fetchAggregatesForGeo({
               geoRegion: g,
               windowHours,
@@ -119,12 +159,15 @@ export default async function OverviewPage({
         </div>
       )}
 
-      {/* Intro + weight radar + preset chips + leaderboard. */}
+      {/* Intro + weights panel + preset chips + leaderboard. */}
       <OverviewBoard
         rawPerGeo={perGeo}
         methodRegionLatency={methodRegionLatency}
         sampleCount={sampleCount}
         methodCount={methodCount}
+        selectedMethod={selectedMethod}
+        methodOptions={methodOptions}
+        gridMethods={gridMethods}
       />
 
       {/* Deep-dive CTA into /performance. */}

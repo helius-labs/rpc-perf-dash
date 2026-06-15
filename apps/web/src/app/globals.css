@@ -806,3 +806,66 @@ summary:has(.rcc-caret)::-webkit-details-marker { display: none; }
 .mx-item:focus-visible .mx-name {
   transform: translateX(min(0px, calc(100cqw - 100%)));
 }
+
+/* Weight sliders on the Overview (OverviewBoard). The filled portion of the
+   track is painted by an inline linear-gradient on the element (set per-axis in
+   JS); these rules give the track a thin rounded shape and a styled thumb that
+   match the design system instead of the raw browser control. */
+.weight-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  border-radius: 999px;
+  outline: none;
+  /* background (the accent→track gradient) is set inline per axis. The inset
+     ring gives the track subtle depth so it reads as a groove, not a flat bar. */
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.04);
+}
+.weight-slider::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 999px;
+  background: transparent;
+}
+.weight-slider::-moz-range-track {
+  height: 6px;
+  border-radius: 999px;
+  background: transparent;
+}
+.weight-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -4px; /* center the 14px thumb on the 6px track */
+  border-radius: 999px;
+  background: var(--text);
+  box-shadow: 0 0 0 1px var(--border-2), 0 1px 3px rgb(0 0 0 / 0.5);
+  cursor: pointer;
+  transition: box-shadow 0.15s ease, transform 0.15s ease;
+}
+.weight-slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: none;
+  border-radius: 999px;
+  background: var(--text);
+  box-shadow: 0 0 0 1px var(--border-2), 0 1px 3px rgb(0 0 0 / 0.5);
+  cursor: pointer;
+  transition: box-shadow 0.15s ease, transform 0.15s ease;
+}
+.weight-slider:hover::-webkit-slider-thumb {
+  transform: scale(1.08);
+  box-shadow: 0 0 0 4px var(--accent-soft), 0 1px 3px rgb(0 0 0 / 0.5);
+}
+.weight-slider:hover::-moz-range-thumb {
+  transform: scale(1.08);
+  box-shadow: 0 0 0 4px var(--accent-soft), 0 1px 3px rgb(0 0 0 / 0.5);
+}
+.weight-slider:active::-webkit-slider-thumb,
+.weight-slider:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 4px var(--accent-soft), 0 0 0 1px var(--accent);
+}
+.weight-slider:active::-moz-range-thumb,
+.weight-slider:focus-visible::-moz-range-thumb {
+  box-shadow: 0 0 0 4px var(--accent-soft), 0 0 0 1px var(--accent);
+}

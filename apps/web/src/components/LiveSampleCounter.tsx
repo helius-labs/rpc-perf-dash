@@ -60,7 +60,7 @@ export function LiveSampleCounter({ initial }: { initial: SampleCount }) {
   }, []);
 
   return (
-    <span className="text-[26px] font-semibold tabular-nums leading-none text-fg">
+    <span className="text-[24px] font-semibold tabular-nums leading-none text-fg">
       {display.toLocaleString()}
     </span>
   );

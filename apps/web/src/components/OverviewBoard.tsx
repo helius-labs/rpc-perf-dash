@@ -23,11 +23,12 @@ import {
   blendRegionScores,
   type ScoringWeights,
 } from "@rpcbench/shared/scoring";
-import { GEO_REGIONS } from "@rpcbench/shared/types";
+import { GEO_REGIONS, type Method } from "@rpcbench/shared/types";
 import { brandColorFor, logoFor, animatedLogoFor } from "@/lib/providerColors";
 import { WORKLOAD_PRESETS, presetIdForWeights } from "@/lib/workloadPresets";
 import { buildOverallLeaderRows, scorePerGeo } from "./leaderboardShared";
 import { IndexLeaderboard, type RawGeoOutcome, type MethodRegionLatency } from "./IndexLeaderboard";
+import { MethodFilter, type MethodOption } from "./MethodFilter";
 import { LiveSampleCounter } from "./LiveSampleCounter";
 import { FloatingTooltip } from "./FloatingTooltip";
 import type { SampleCount } from "@/lib/sampleCount";
@@ -40,13 +41,6 @@ const AXIS_ORDER: ReadonlyArray<keyof ScoringWeights> = [
   "correctness",
   "freshness",
 ];
-const AXIS_SHORT: Record<keyof ScoringWeights, string> = {
-  latency: "Lat",
-  winRate: "Win",
-  reliability: "Rel",
-  correctness: "Cor",
-  freshness: "Fr",
-};
 /** Distinct cloud infrastructures the benchmark vantages run on (AWS, GCP,
  *  Cloudflare, Teraswitch/Latitude bare-metal). Surfaced as an intro stat. */
 const CLOUD_INFRA_COUNT = 4;
@@ -110,14 +104,19 @@ export function OverviewBoard({
   methodRegionLatency,
   sampleCount,
   methodCount,
+  selectedMethod,
+  methodOptions,
+  gridMethods,
 }: {
   rawPerGeo: RawGeoOutcome[];
   methodRegionLatency: MethodRegionLatency;
   sampleCount: SampleCount;
   methodCount: number;
+  selectedMethod: string;
+  methodOptions: MethodOption[];
+  gridMethods: Method[];
 }) {
   const [weights, setWeights] = useState<ScoringWeights>(DEFAULT_WEIGHTS);
-  const [showWeights, setShowWeights] = useState(false);
   const activePresetId = presetIdForWeights(weights);
 
   // Full ranking under the active weighting — same overall blend the leaderboard
@@ -147,11 +146,10 @@ export function OverviewBoard({
       <div className="relative z-10 flex flex-col gap-4">
         {/* Intro — blurb + stats. */}
         <div className="flex flex-col max-w-[640px]">
-          <span className="section-kicker">Solana RPC Benchmark</span>
-          <h1 className="text-[clamp(26px,4vw,38px)] font-semibold tracking-[-0.026em] leading-[1.08] mt-2 mb-0 text-fg">
+          <h1 className="text-[clamp(24px,3.8vw,36px)] font-semibold tracking-[-0.026em] leading-[1.08] mt-2 mb-0 text-fg">
             Find the best Solana RPC
           </h1>
-          <p className="mt-3 mb-0 text-[15px] leading-[1.6] text-fg2">
+          <p className="mt-3 mb-0 text-[14px] leading-[1.6] text-fg2">
             A live, independent benchmark that ranks public Solana RPC providers by real-world
             speed and reliability. Pick the workload that matches yours, or expand a provider for
             the details.
@@ -164,20 +162,20 @@ export function OverviewBoard({
               </span>
             </div>
             <div className="flex flex-col gap-1">
-              <span className="text-[22px] sm:text-[26px] font-semibold tabular-nums leading-none text-fg">{methodCount}</span>
+              <span className="text-[21px] sm:text-[24px] font-semibold tabular-nums leading-none text-fg">{methodCount}</span>
               <span className="font-geistmono text-[10px] uppercase tracking-[0.12em] text-muted">RPC methods</span>
             </div>
             <div className="flex flex-col gap-1">
-              <span className="text-[22px] sm:text-[26px] font-semibold tabular-nums leading-none text-fg">{GEO_REGIONS.length}</span>
+              <span className="text-[21px] sm:text-[24px] font-semibold tabular-nums leading-none text-fg">{GEO_REGIONS.length}</span>
               <span className="font-geistmono text-[10px] uppercase tracking-[0.12em] text-muted">regions</span>
             </div>
             <div className="flex flex-col gap-1">
-              <span className="text-[22px] sm:text-[26px] font-semibold tabular-nums leading-none text-fg">{CLOUD_INFRA_COUNT}</span>
+              <span className="text-[21px] sm:text-[24px] font-semibold tabular-nums leading-none text-fg">{CLOUD_INFRA_COUNT}</span>
               <span className="font-geistmono text-[10px] uppercase tracking-[0.12em] text-muted">cloud infra</span>
             </div>
             <Link
               href="/methodology"
-              className="group self-center inline-flex items-center gap-1.5 rounded-full border border-accent/40 px-3.5 py-[7px] text-[13px] font-medium text-accent transition-colors hover:bg-accent/10 hover:border-accent hover:no-underline"
+              className="group self-center inline-flex items-center gap-1.5 rounded-full border border-accent/40 px-3.5 py-[7px] text-[12px] font-medium text-accent transition-colors hover:bg-accent/10 hover:border-accent hover:no-underline"
             >
               How it works
               <svg
@@ -193,9 +191,9 @@ export function OverviewBoard({
           </div>
         </div>
 
-        {/* Control bar — preset chips (always one line) + a toggle that reveals
-            the manual weight sliders. */}
-        <div className="flex flex-col py-3 border-y border-line">
+        {/* Control bar — preset chips (one line) over a compact, always-visible
+            row of per-axis weight sliders. */}
+        <div className="flex flex-col gap-2 py-3 border-y border-line">
           <div className="flex items-center gap-2 sm:gap-3">
             <span className="font-geistmono text-[10.5px] tracking-[0.14em] uppercase text-muted shrink-0 hidden sm:inline">
               Optimize for
@@ -207,11 +205,11 @@ export function OverviewBoard({
                   <button
                     key={preset.id}
                     type="button"
-                    title={preset.label}
+                    title={preset.caption}
                     aria-pressed={active}
                     onClick={() => setWeights(preset.weights)}
                     className={
-                      "flex-1 min-w-0 truncate text-center text-[12px] sm:text-[13px] font-medium px-2 sm:px-3.5 py-[7px] rounded-full border cursor-pointer transition-colors " +
+                      "flex-1 min-w-0 truncate text-center text-[11px] sm:text-[12px] font-medium px-2 sm:px-3.5 py-[7px] rounded-full border cursor-pointer transition-colors " +
                       (active
                         ? "bg-accent border-accent text-white"
                         : "border-line2 text-fg2 hover:text-fg hover:border-fg2")
@@ -222,81 +220,74 @@ export function OverviewBoard({
                 );
               })}
             </div>
-            <button
-              type="button"
-              onClick={() => setShowWeights((s) => !s)}
-              aria-expanded={showWeights}
-              className="shrink-0 inline-flex items-center gap-1.5 font-geistmono text-[11px] text-muted bg-bg border border-line rounded-full px-3 py-[6px] cursor-pointer transition-colors hover:text-fg hover:border-line2"
-            >
-              Weights
-              <span
-                className={"text-[8px] transition-transform duration-200 " + (showWeights ? "rotate-180" : "")}
-                aria-hidden="true"
-              >
-                ▼
-              </span>
-            </button>
           </div>
 
-          {/* Manual weights — hidden behind the toggle, slides open. */}
-          <div
-            className={
-              "grid transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none " +
-              (showWeights ? "grid-rows-[1fr]" : "grid-rows-[0fr]")
-            }
-          >
-            <div className="overflow-hidden">
-              <div className="flex items-center gap-x-4 gap-y-2 pt-3 flex-wrap">
-                {AXIS_ORDER.map((k) => (
-                  <label key={k} className="inline-flex items-center gap-1.5 font-geistmono text-[10.5px] text-fg2">
+          {/* Weights — always visible. A full-width strip of one mini slider
+              per axis (label + value over the track) so it fills the row
+              instead of leaving dead space, and stays short instead of pushing
+              the leaderboard down. Accent fill (see .weight-slider in
+              globals.css). */}
+          <div className="flex items-end gap-x-4 sm:gap-x-5 gap-y-3 flex-wrap">
+            {AXIS_ORDER.map((k) => {
+              const v = weights[k] ?? 0;
+              const pct = Math.round(v * 100);
+              return (
+                <div key={k} className="flex flex-col gap-1.5 flex-1 min-w-[104px]">
+                  <div className="flex items-center justify-between gap-1 min-w-0">
                     <FloatingTooltip
                       title={AXIS_LABEL[k]}
                       trigger={
-                        <span className="text-muted uppercase tracking-[0.06em] text-[9px] cursor-help">
-                          <span className="hidden sm:inline">{AXIS_LABEL[k]}</span>
-                          <span className="sm:hidden inline-block w-[22px]">{AXIS_SHORT[k]}</span>
+                        <span className="truncate font-geistmono text-[10px] uppercase tracking-[0.12em] text-muted cursor-help underline decoration-dotted decoration-line2 underline-offset-[3px]">
+                          {AXIS_LABEL[k]}
                         </span>
                       }
                     >
                       <p className="text-neutral-300">{AXIS_DESC[k]}</p>
                     </FloatingTooltip>
-                    <input
-                      type="range"
-                      min={0}
-                      max={1}
-                      step={0.05}
-                      value={weights[k] ?? 0}
-                      onChange={(e) => setWeights((w) => ({ ...w, [k]: Number(e.target.value) }))}
-                      className="w-[64px] h-1 accent-accent cursor-pointer"
-                      aria-label={`${AXIS_LABEL[k]} weight`}
-                    />
-                    <span className="tabular-nums text-fg w-[26px] text-right">{(weights[k] ?? 0).toFixed(2)}</span>
-                  </label>
-                ))}
-                <button
-                  type="button"
-                  onClick={() => setWeights(DEFAULT_WEIGHTS)}
-                  className="ml-auto shrink-0 font-geistmono text-[10.5px] text-muted bg-bg border border-line rounded-full px-2.5 py-1 cursor-pointer transition-colors hover:text-fg hover:border-line2 max-[860px]:ml-0"
-                >
-                  Reset
-                </button>
-              </div>
-            </div>
+                    <span className="font-geistmono tabular-nums text-[10px] text-muted shrink-0">
+                      {v.toFixed(2)}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    value={v}
+                    onChange={(e) => setWeights((w) => ({ ...w, [k]: Number(e.target.value) }))}
+                    className="weight-slider w-full cursor-pointer"
+                    style={{
+                      background: `linear-gradient(to right, var(--accent) ${pct}%, rgb(255 255 255 / 0.1) ${pct}%)`,
+                    }}
+                    aria-label={`${AXIS_LABEL[k]} weight`}
+                  />
+                </div>
+              );
+            })}
+            <button
+              type="button"
+              onClick={() => setWeights(DEFAULT_WEIGHTS)}
+              className="shrink-0 font-geistmono text-[10px] text-muted bg-bg border border-line2 rounded-full px-3.5 py-[6px] cursor-pointer transition-colors hover:text-fg hover:border-fg2"
+            >
+              Reset
+            </button>
           </div>
         </div>
 
-      {/* Scope of the ranking — stated in plain sight, not a tooltip.
-          Scores reflect getTransaction only; full matrix on /performance. */}
-      <p className="mt-1.5 -mb-5 font-geistmono text-[9.5px] sm:text-[10px] tracking-[0.12em] uppercase text-muted leading-snug">
-        <code className="font-geistmono normal-case tracking-normal text-[11px] text-muted">getTransaction</code>
-        {" · cold start · last 24h · all regions"}
-      </p>
+      {/* Scope of the ranking — stated in plain sight, not a tooltip. The
+          method is switchable via the inline dropdown (?method=); the rest of
+          the scope is fixed. Full matrix on /performance. */}
+      <div className="mt-1.5 -mb-5 flex items-center flex-wrap font-geistmono text-[9.5px] sm:text-[10px] tracking-[0.12em] uppercase text-muted leading-snug">
+        <MethodFilter variant="inline" options={methodOptions} selected={selectedMethod} />
+        <span>{" · cold start · last 24h · all regions"}</span>
+      </div>
 
       <IndexLeaderboard
         rawPerGeo={rawPerGeo}
         selectedGeo={null}
         weights={weights}
         methodRegionLatency={methodRegionLatency}
+        gridMethods={gridMethods}
       />
       </div>
     </section>
