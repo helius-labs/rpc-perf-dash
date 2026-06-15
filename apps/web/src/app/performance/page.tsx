@@ -27,8 +27,10 @@ import {
   fetchActiveProviders,
   fetchAggregatesForGeo,
   fetchMethodLatency,
+  fetchMethodGeoLatency,
   type InfraGeoPair,
   type MethodLatencyRow,
+  type MethodGeoLatencyRow,
 } from "@/lib/leaderboard";
 import { fetchProviderHealth, EMPTY_HEALTH } from "@/lib/health";
 import { fetchConsensusRates, type ConsensusRate } from "@/lib/consensus";
@@ -112,6 +114,7 @@ export default async function PerformancePage({
   let activeProviders: string[] = [];
   let consensusRates: ConsensusRate[] = [];
   let methodLat: MethodLatencyRow[] = [];
+  let methodGeoLat: MethodGeoLatencyRow[] = [];
   let recentChallenges: RecentChallenge[] = [];
   let health = EMPTY_HEALTH;
   let error: string | null = null;
@@ -131,12 +134,19 @@ export default async function PerformancePage({
           return { geo: g, rows };
         }),
       );
-    const [healthData, conRates, providers, ml, regionColdRaw, regionWarmRaw, recent] =
+    const [healthData, conRates, providers, ml, mgl, regionColdRaw, regionWarmRaw, recent] =
       await Promise.all([
         fetchProviderHealth(),
         fetchConsensusRates(),
         fetchActiveProviders(),
-        fetchMethodLatency({ windowHours }),
+        fetchMethodLatency({
+          windowHours,
+          ...(selectedProvider ? { workerProvider: selectedProvider } : {}),
+        }),
+        fetchMethodGeoLatency({
+          windowHours,
+          ...(selectedProvider ? { workerProvider: selectedProvider } : {}),
+        }),
         fetchGeoRows(activeGeos, "cold"),
         fetchGeoRows(activeGeos, "warm"),
         fetchRecentChallenges(20),
@@ -147,6 +157,7 @@ export default async function PerformancePage({
     consensusRates = conRates;
     activeProviders = providers;
     methodLat = ml;
+    methodGeoLat = mgl;
     recentChallenges = recent;
   } catch (err) {
     console.error("[/performance]", err);
@@ -358,6 +369,10 @@ export default async function PerformancePage({
         providers={tableProviders}
         methodRows={methodBreakdownRows}
         regionRows={regionBreakdownRows}
+        cubeRows={methodGeoLat}
+        infraLabel={
+          selectedProvider ? (WORKER_PROVIDER_LABELS[selectedProvider] ?? selectedProvider) : undefined
+        }
       />
 
       {/* Fleet health strip. */}

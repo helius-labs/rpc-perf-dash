@@ -320,14 +320,19 @@ export interface MethodLatencyRow {
  * the table's cold/warm toggle is client-side. One query.
  *
  * Reads the leaderboard precompute (leaderboard_agg_1h / _1d) instead of raw
- * `samples`: it sums the pooled-infra (`worker_provider = __all__`) rows across
- * every geo and weight-averages the correct-only percentiles by
+ * `samples`: it sums the selected infra's rows (default `worker_provider =
+ * __all__`, the pooled-infra view, or a single cloud when the Infra pill is set)
+ * across every geo and weight-averages the correct-only percentiles by
  * sample_count_valid. Same correct-only semantics as before, ~5-min fresh, but
  * reads ~50k precomputed rows instead of seq-scanning millions of raw samples
  * (was ~2.5s at 24h, on every render).
  */
-async function fetchMethodLatencyImpl(opts: { windowHours: number }): Promise<MethodLatencyRow[]> {
+async function fetchMethodLatencyImpl(opts: {
+  windowHours: number;
+  workerProvider?: string;
+}): Promise<MethodLatencyRow[]> {
   const aggTable = sql.raw(leaderboardTableForWindow(opts.windowHours));
+  const wpKey = opts.workerProvider ?? POOLED_INFRA;
   const rows = await db().execute(sql`
     SELECT
       method,
@@ -338,7 +343,7 @@ async function fetchMethodLatencyImpl(opts: { windowHours: number }): Promise<Me
       round(sum(latency_p95_correct::bigint * sample_count_valid)::numeric
             / NULLIF(sum(sample_count_valid) FILTER (WHERE latency_p95_correct IS NOT NULL), 0))::int AS p95
     FROM ${aggTable}
-    WHERE worker_provider = ${POOLED_INFRA}
+    WHERE worker_provider = ${wpKey}
       AND provider_id IN (SELECT id FROM providers WHERE benchmarked = true)
       AND window_start > now() - make_interval(hours => ${opts.windowHours})
     GROUP BY method, provider_id, connection_mode
@@ -349,6 +354,60 @@ async function fetchMethodLatencyImpl(opts: { windowHours: number }): Promise<Me
 export const fetchMethodLatency = unstable_cache(
   fetchMethodLatencyImpl,
   ["fetchMethodLatency"],
+  { revalidate: CACHE_TTL_S },
+);
+
+export interface MethodGeoLatencyRow {
+  geo: GeoRegion;
+  method: string;
+  provider_id: string;
+  connection_mode: "cold" | "warm";
+  p50: number | null;
+  p95: number | null;
+}
+
+/**
+ * The full (geo × method × provider × cold/warm) p50 + p95 cube over the window
+ * — i.e. fetchMethodLatency with `geo` added to the GROUP BY so the third axis
+ * is no longer pooled away. Feeds the drill-down rows in the "By method / By
+ * region" breakdown table: one fetch covers both expansions (filter to a method
+ * → group by geo; filter to a geo → group by method). One query, both modes so
+ * the table's cold/warm + p50/p95 toggles stay client-side.
+ *
+ * Same scan + index as fetchMethodLatency (`leaderboard_agg_1h_method_latency`
+ * on worker_provider, methodology_version, window_start) and the same
+ * sample_count_valid weight-averaging, so drill-down numbers stay consistent
+ * with the parent rows. Scoped to a single worker_provider (no per-geo IN-list),
+ * so it avoids the all-geo pair-list slow-query class.
+ */
+async function fetchMethodGeoLatencyImpl(opts: {
+  windowHours: number;
+  workerProvider?: string;
+}): Promise<MethodGeoLatencyRow[]> {
+  const aggTable = sql.raw(leaderboardTableForWindow(opts.windowHours));
+  const wpKey = opts.workerProvider ?? POOLED_INFRA;
+  const rows = await db().execute(sql`
+    SELECT
+      geo,
+      method,
+      provider_id,
+      connection_mode,
+      round(sum(latency_p50_correct::bigint * sample_count_valid)::numeric
+            / NULLIF(sum(sample_count_valid) FILTER (WHERE latency_p50_correct IS NOT NULL), 0))::int AS p50,
+      round(sum(latency_p95_correct::bigint * sample_count_valid)::numeric
+            / NULLIF(sum(sample_count_valid) FILTER (WHERE latency_p95_correct IS NOT NULL), 0))::int AS p95
+    FROM ${aggTable}
+    WHERE worker_provider = ${wpKey}
+      AND provider_id IN (SELECT id FROM providers WHERE benchmarked = true)
+      AND window_start > now() - make_interval(hours => ${opts.windowHours})
+    GROUP BY geo, method, provider_id, connection_mode
+  `);
+  return rows as unknown as MethodGeoLatencyRow[];
+}
+
+export const fetchMethodGeoLatency = unstable_cache(
+  fetchMethodGeoLatencyImpl,
+  ["fetchMethodGeoLatency"],
   { revalidate: CACHE_TTL_S },
 );
 
