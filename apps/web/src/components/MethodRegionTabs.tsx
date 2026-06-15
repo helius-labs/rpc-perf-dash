@@ -94,10 +94,10 @@ function RowCells({
                   aria-hidden="true"
                   className={"w-[3px] rounded-sm shrink-0 " + (best ? "bg-accent" : "bg-transparent")}
                 />
-                <div className="flex flex-col gap-1.5 flex-1 min-w-0">
+                <div className="flex flex-col gap-0.5 flex-1 min-w-0">
                   <span
                     className={
-                      "font-geistmono text-[12.5px] tabular-nums " +
+                      "font-geistmono text-[12.5px] leading-none tabular-nums " +
                       (best ? "text-accent font-medium" : "text-fg")
                     }
                   >
@@ -336,7 +336,7 @@ export function MethodRegionTabs({
                     }}
                     className="group border-b border-line/60 cursor-pointer hover:bg-[color-mix(in_srgb,var(--text)_3%,transparent)]"
                   >
-                    <td className="sticky left-0 bg-bg z-[1] py-1.5 pr-3 md:pr-4 align-middle whitespace-nowrap group-hover:bg-[color-mix(in_srgb,var(--text)_3%,var(--bg))]">
+                    <td className="sticky left-0 bg-bg z-[1] py-0 pr-3 md:pr-4 align-middle whitespace-nowrap group-hover:bg-[color-mix(in_srgb,var(--text)_3%,var(--bg))]">
                       {r.isCode ? (
                         <code className="font-geistmono text-[12.5px] text-fg">{r.label}</code>
                       ) : (
@@ -348,80 +348,72 @@ export function MethodRegionTabs({
                       providers={providers}
                       mode={mode}
                       percentile={percentile}
-                      cellCls="py-1.5 px-3 md:px-4 align-middle min-w-[96px] md:min-w-[110px]"
+                      cellCls="py-0 px-3 md:px-4 align-middle min-w-[96px] md:min-w-[110px]"
                     />
                   </tr>
-                  <tr aria-hidden={!isOpen} className="border-b border-line/60 last:border-b-0">
-                    <td colSpan={providers.length + 1} className="p-0">
-                      <div
-                        className={
-                          "grid transition-[grid-template-rows] duration-300 ease-out motion-reduce:transition-none " +
-                          (isOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]")
-                        }
-                      >
-                        <div
-                          className={
-                            "overflow-hidden transition-opacity duration-300 ease-out " +
-                            (isOpen ? "opacity-100" : "opacity-0")
-                          }
-                        >
+                  {isOpen && (
+                    <tr className="border-b border-line/60 last:border-b-0">
+                      <td colSpan={providers.length + 1} className="p-0">
+                        <div className="mrtab-reveal">
+                         <div className="overflow-hidden">
                           <div className="my-2 mx-1 px-3 py-2 rounded-lg border border-line/60 bg-[color-mix(in_srgb,var(--text)_3%,transparent)]">
-                            {subRows.length === 0 ? (
-                              <span className="font-geistmono text-[12px] text-muted">
-                                No {tab === "method" ? "regional" : "per-method"} data in this window
-                              </span>
-                            ) : (
-                              <table className="w-full border-collapse">
-                                <thead>
-                                  <tr>
-                                    <th className="text-left font-geistmono text-[10px] font-medium tracking-[0.14em] uppercase text-muted py-2 pr-3 md:pr-4 whitespace-nowrap">
-                                      {subHeader}
+                          {subRows.length === 0 ? (
+                            <span className="font-geistmono text-[12px] text-muted">
+                              No {tab === "method" ? "regional" : "per-method"} data in this window
+                            </span>
+                          ) : (
+                            <table className="w-full border-collapse">
+                              <thead>
+                                <tr>
+                                  <th className="text-left font-geistmono text-[10px] font-medium tracking-[0.14em] uppercase text-muted py-2 pr-3 md:pr-4 whitespace-nowrap">
+                                    {subHeader}
+                                  </th>
+                                  {providers.map((p) => (
+                                    <th
+                                      key={p.id}
+                                      className="text-left font-geistmono text-[10px] font-medium tracking-[0.14em] uppercase text-muted py-2 px-3 md:px-4 whitespace-nowrap min-w-[96px] md:min-w-[110px]"
+                                    >
+                                      <span className="inline-flex items-center gap-1.5">
+                                        <span
+                                          className="inline-block w-[7px] h-[7px] rounded-full"
+                                          style={{ background: dotColor(p.id) }}
+                                        />
+                                        {p.name}
+                                      </span>
                                     </th>
-                                    {providers.map((p) => (
-                                      <th
-                                        key={p.id}
-                                        className="text-left font-geistmono text-[10px] font-medium tracking-[0.14em] uppercase text-muted py-2 px-3 md:px-4 whitespace-nowrap min-w-[96px] md:min-w-[110px]"
-                                      >
-                                        <span className="inline-flex items-center gap-1.5">
-                                          <span
-                                            className="inline-block w-[7px] h-[7px] rounded-full"
-                                            style={{ background: dotColor(p.id) }}
-                                          />
-                                          {p.name}
-                                        </span>
-                                      </th>
-                                    ))}
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {subRows.map((sr) => (
-                                    <tr key={sr.key} className="border-t border-line/40">
-                                      <td className="py-1.5 pr-3 md:pr-4 align-middle whitespace-nowrap">
-                                        {sr.isCode ? (
-                                          <code className="font-geistmono text-[12.5px] text-fg2">
-                                            {sr.label}
-                                          </code>
-                                        ) : (
-                                          <span className="text-fg2 font-medium text-[13px]">{sr.label}</span>
-                                        )}
-                                      </td>
-                                      <RowCells
-                                        row={sr}
-                                        providers={providers}
-                                        mode={mode}
-                                        percentile={percentile}
-                                        cellCls="py-1.5 px-3 md:px-4 align-middle min-w-[96px] md:min-w-[110px]"
-                                      />
-                                    </tr>
                                   ))}
-                                </tbody>
-                              </table>
-                            )}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {subRows.map((sr) => (
+                                  <tr key={sr.key} className="border-t border-line/40">
+                                    <td className="py-0 pr-3 md:pr-4 align-middle whitespace-nowrap">
+                                      {sr.isCode ? (
+                                        <code className="font-geistmono text-[12.5px] text-fg2">
+                                          {sr.label}
+                                        </code>
+                                      ) : (
+                                        <span className="text-fg2 font-medium text-[13px]">{sr.label}</span>
+                                      )}
+                                    </td>
+                                    <RowCells
+                                      row={sr}
+                                      providers={providers}
+                                      mode={mode}
+                                      percentile={percentile}
+                                      cellCls="py-0 px-3 md:px-4 align-middle min-w-[96px] md:min-w-[110px]"
+                                    />
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          )}
                           </div>
+                         </div>
                         </div>
-                      </div>
-                    </td>
-                  </tr>
+                      </td>
+                    </tr>
+                  )}
                 </Fragment>
               );
             })}

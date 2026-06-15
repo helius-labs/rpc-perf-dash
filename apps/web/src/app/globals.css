@@ -486,6 +486,24 @@ summary:has(.rcc-caret)::-webkit-details-marker { display: none; }
 .idx-mr-sep { color: var(--muted); }
 .idx-mr-empty { color: var(--muted); }
 
+/* MethodRegionTabs drill-down reveal. The expanded row is conditionally mounted
+   (so a collapsed row reserves zero height inside the table), which means a CSS
+   transition can't run — it would have no start state. Instead this one-shot
+   animation plays on mount: a grid-rows 0fr→1fr accordion (the child clips via
+   overflow:hidden) plus a fade, so the sub-grid slides open. */
+@keyframes mrtabReveal {
+  from { grid-template-rows: 0fr; opacity: 0; }
+  to   { grid-template-rows: 1fr; opacity: 1; }
+}
+.mrtab-reveal {
+  display: grid;
+  grid-template-rows: 1fr;
+  animation: mrtabReveal 0.28s ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .mrtab-reveal { animation: none; }
+}
+
 .idx-detail-secondary {
   display: flex;
   flex-wrap: wrap;
