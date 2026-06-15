@@ -7,8 +7,9 @@
  * this file (and rollups.ts), not changing call sites.
  */
 
+import { and, eq, inArray } from "drizzle-orm";
 import type { DbClient } from "./index.js";
-import { samples } from "./schema.js";
+import { samples, challenges } from "./schema.js";
 
 export interface SampleRow {
   challenge_id: string;
@@ -52,6 +53,22 @@ export async function insertSamples(db: DbClient, rows: SampleRow[]): Promise<vo
   if (rows.length === 0) return;
   // Drizzle doesn't model `bytea` as Buffer cleanly across versions; pass-through.
   await db.insert(samples).values(rows as never);
+
+  // Flag the challenge(s) as having samples so the generator's stale-expiry job
+  // can skip them via the `has_samples` flag instead of a NOT EXISTS scan over
+  // `samples`. Best-effort: the sample insert above is authoritative, so a flag
+  // failure must never fail the write path (the worst case is a sampled
+  // challenge briefly looking empty until a retry/backfill flags it). The guard
+  // on `has_samples = false` keeps this to a single write per challenge.
+  try {
+    const ids = [...new Set(rows.map((r) => r.challenge_id))];
+    await db
+      .update(challenges)
+      .set({ has_samples: true })
+      .where(and(inArray(challenges.id, ids), eq(challenges.has_samples, false)));
+  } catch (err) {
+    console.error("[insertSamples] has_samples flag update failed (non-fatal)", err);
+  }
 }
 
 /**

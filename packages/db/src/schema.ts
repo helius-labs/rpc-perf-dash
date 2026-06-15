@@ -58,6 +58,12 @@ export const challenges = pgTable(
     status: text("status").notNull(),
     is_honeypot: boolean("is_honeypot").notNull().default(false),
     run_id: uuid("run_id"),
+    // Denormalized: set true when the first sample for this challenge is written
+    // (see insertSamples). Lets the stale-expiry job skip sampled challenges with
+    // a cheap flag check instead of a NOT EXISTS scan over the ~40M-row samples
+    // table. Migration 0020. Partial index for the expiry candidate lookup is in
+    // that migration (challenges(expires_at) WHERE status='ready' AND NOT has_samples).
+    has_samples: boolean("has_samples").notNull().default(false),
   },
   (t) => ({
     by_status: index("challenges_status_idx").on(t.status, t.generated_at),

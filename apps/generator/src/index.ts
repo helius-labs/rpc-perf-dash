@@ -175,12 +175,18 @@ async function expireStaleAssignments(
 async function expireStaleChallenges(
   db: ReturnType<typeof createDb>,
 ): Promise<void> {
+  // Reads the denormalized `has_samples` flag (set by insertSamples) instead of
+  // a NOT EXISTS scan over the ~40M-row `samples` table. Index-backed by
+  // challenges_expiry_candidates_idx (migration 0020). REQUIRES that the flag is
+  // populated first — deploy order is migrate → workers (flag new) → backfill
+  // (flag existing) → THIS generator. Running it before the backfill would
+  // mislabel sampled-but-unflagged challenges as expired (cosmetic, recoverable).
   await db.execute(sql`
     UPDATE challenges
     SET status = 'expired'
     WHERE status = 'ready'
       AND expires_at < now() - interval '30 seconds'
-      AND NOT EXISTS (SELECT 1 FROM samples WHERE challenge_id = challenges.id)
+      AND has_samples = false
   `);
 }
 
@@ -475,6 +481,8 @@ async function main() {
   // queue).
   const runExpiry = () => {
     Promise.allSettled([
+      // Now reads the cheap `has_samples` flag (migration 0020) instead of
+      // scanning `samples` — safe to run every minute. See expireStaleChallenges.
       expireStaleChallenges(db),
       expireStaleAssignments(db),
     ]).then((results) => {
