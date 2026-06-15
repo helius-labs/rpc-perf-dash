@@ -24,18 +24,23 @@ async function main() {
   // Direct (unpooled) connection — this is heavy, long-running batch work.
   const db = createDb({ mode: "direct" });
 
-  console.log("[backfill] rollups_1h (30d)…");
-  await rollup1h(db, "30 days");
-  console.log("[backfill] rollups_1d (30d)…");
-  await rollup1d(db, "30 days");
+  // Scoped to 2 days: full 30-day re-scan saturated Neon and starved the live
+  // generator. 2d covers the 24h chart window fully; longer history fills in on
+  // its own as the generator's rollup tick runs (and is bounded by samples'
+  // 30-day retention). Bump back up only if you need deep history immediately
+  // and can tolerate the load.
+  console.log("[backfill] rollups_1h (2d)…");
+  await rollup1h(db, "2 days");
+  console.log("[backfill] rollups_1d (2d)…");
+  await rollup1d(db, "2 days");
 
   console.log("[backfill] geo_region_map…");
   await ensureGeoRegionMap(db);
 
-  console.log("[backfill] leaderboard_agg_1h / challenges_1h / failures_1h (30d)…");
-  await rollupLeaderboard(db, "leaderboard_agg_1h", "leaderboard_challenges_1h", "leaderboard_failures_1h", "hour", "30 days");
-  console.log("[backfill] leaderboard_agg_1d / challenges_1d / failures_1d (30d)…");
-  await rollupLeaderboard(db, "leaderboard_agg_1d", "leaderboard_challenges_1d", "leaderboard_failures_1d", "day", "30 days");
+  console.log("[backfill] leaderboard_agg_1h / challenges_1h / failures_1h (2d)…");
+  await rollupLeaderboard(db, "leaderboard_agg_1h", "leaderboard_challenges_1h", "leaderboard_failures_1h", "hour", "2 days");
+  console.log("[backfill] leaderboard_agg_1d / challenges_1d / failures_1d (2d)…");
+  await rollupLeaderboard(db, "leaderboard_agg_1d", "leaderboard_challenges_1d", "leaderboard_failures_1d", "day", "2 days");
 
   console.log("[backfill] done");
   process.exit(0);

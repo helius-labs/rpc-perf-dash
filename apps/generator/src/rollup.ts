@@ -17,7 +17,7 @@
 
 import { sql } from "drizzle-orm";
 import type { DbClient } from "@rpcbench/db";
-import { GEO_REGION_MAP, type Method } from "@rpcbench/shared";
+import { GEO_REGION_MAP, LATENCY_HIST, type Method } from "@rpcbench/shared";
 import { HANDLERS } from "@rpcbench/methods";
 import type { MultiEndpointRpcClient } from "./utility-client.js";
 
@@ -297,6 +297,9 @@ export async function rollupLeaderboard(
   const aggT = sql.raw(aggTable);
   const chalT = sql.raw(chalTable);
   const failT = sql.raw(failTable);
+  // Histogram precompute table is paired 1:1 with the agg table's grain.
+  const histTable = aggTable === "leaderboard_agg_1h" ? "latency_histogram_1h" : "latency_histogram_1d";
+  const histT = sql.raw(histTable);
 
   // All deletes + re-inserts run in ONE transaction so concurrent runs (the
   // 5-min generator tick and the one-off long-window backfill) serialize
@@ -316,6 +319,7 @@ export async function rollupLeaderboard(
   await tx.execute(sql`DELETE FROM ${aggT}  WHERE window_start >= ${floor}`);
   await tx.execute(sql`DELETE FROM ${chalT} WHERE window_start >= ${floor}`);
   await tx.execute(sql`DELETE FROM ${failT} WHERE window_start >= ${floor}`);
+  await tx.execute(sql`DELETE FROM ${histT} WHERE window_start >= ${floor}`);
 
   // Aggregates (correct-only percentiles + counts) at both infra scopes, joined
   // to the per-bucket win tally.
@@ -490,6 +494,51 @@ export async function rollupLeaderboard(
     ON CONFLICT (geo, worker_provider, provider_id, method, connection_mode, methodology_version, window_start, failure_category)
     DO UPDATE SET n = EXCLUDED.n
   `);
+
+  // Latency-distribution histograms (correct-only) at both infra scopes. Each
+  // row holds a sparse JSONB bin map { "<1..60>": count } over the shared log
+  // domain plus the exact count + min. width_bucket is clamped to [1, NBINS] so
+  // the tails fall in the edge bins and Σ bins == n. Feeds the "Latency
+  // distribution" metric (sum bins across buckets → density / CDF / box).
+  await tx.execute(sql`
+    WITH base AS (
+      SELECT s.provider_id, s.method, s.connection_mode, s.methodology_version,
+             s.worker_provider, s.latency_ms, grm.geo AS geo_r,
+             ${bucket} AS window_start,
+             least(${LATENCY_HIST.NBINS}, greatest(1,
+               width_bucket(ln(greatest(s.latency_ms, 1)::float), ${LATENCY_HIST.L0}, ${LATENCY_HIST.L1}, ${LATENCY_HIST.NBINS})
+             )) AS bin
+      FROM samples s
+      JOIN geo_region_map grm
+        ON grm.worker_provider = s.worker_provider AND grm.region = s.region
+      WHERE s.started_at >= ${floor}
+        AND s.ranking_eligible = true
+        AND s.correctness = 'correct'
+        AND s.latency_ms IS NOT NULL
+    ),
+    counts AS (
+      SELECT geo_r AS geo,
+        CASE WHEN GROUPING(worker_provider) = 1 THEN '__all__' ELSE worker_provider END AS worker_provider,
+        provider_id, method, connection_mode, methodology_version, window_start, bin,
+        count(*)::int AS cnt, min(latency_ms)::int AS min_ms
+      FROM base
+      GROUP BY GROUPING SETS (
+        (geo_r, provider_id, method, connection_mode, methodology_version, window_start, bin),
+        (geo_r, worker_provider, provider_id, method, connection_mode, methodology_version, window_start, bin)
+      )
+    )
+    INSERT INTO ${histT} (
+      geo, worker_provider, provider_id, method, connection_mode, methodology_version, window_start, bins, n, min_ms
+    )
+    SELECT geo, worker_provider, provider_id, method, connection_mode, methodology_version, window_start,
+      jsonb_object_agg(bin::text, cnt) AS bins,
+      sum(cnt)::int AS n,
+      min(min_ms)::int AS min_ms
+    FROM counts
+    GROUP BY geo, worker_provider, provider_id, method, connection_mode, methodology_version, window_start
+    ON CONFLICT (geo, worker_provider, provider_id, method, connection_mode, methodology_version, window_start)
+    DO UPDATE SET bins = EXCLUDED.bins, n = EXCLUDED.n, min_ms = EXCLUDED.min_ms
+  `);
   });
 }
 
@@ -500,6 +549,8 @@ async function pruneLeaderboard(db: DbClient): Promise<void> {
   await db.execute(sql`DELETE FROM leaderboard_challenges_1d WHERE window_start < now() - interval '30 days'`);
   await db.execute(sql`DELETE FROM leaderboard_failures_1h   WHERE window_start < now() - interval '30 days'`);
   await db.execute(sql`DELETE FROM leaderboard_failures_1d   WHERE window_start < now() - interval '30 days'`);
+  await db.execute(sql`DELETE FROM latency_histogram_1h      WHERE window_start < now() - interval '30 days'`);
+  await db.execute(sql`DELETE FROM latency_histogram_1d      WHERE window_start < now() - interval '30 days'`);
 }
 
 async function refreshEligibility(db: DbClient): Promise<void> {

@@ -14,6 +14,7 @@ import { fetchScoreSeries } from "@/lib/leaderboard";
 import { binOptionsForWindow, binLabel } from "@/lib/chartBins";
 import { FilterGroup } from "./FilterGroup";
 import { LatencyChart } from "./LatencyChart";
+import { ChartSkeleton } from "./ChartSkeleton";
 
 const BAR_CLS =
   "flex flex-col gap-3 py-3 border-y border-line mb-4 md:flex-row md:flex-wrap md:items-center md:gap-x-[22px] md:gap-y-3.5 md:py-3.5";
@@ -56,30 +57,7 @@ export function ChartLoading({ filters, windowHours }: { filters: ReactNode; win
         {bins.length > 1 && <FilterGroup label="Bin">{bins.map((m) => ph(binLabel(m)))}</FilterGroup>}
         <FilterGroup label="Outliers">{ph("shown")}</FilterGroup>
       </div>
-      <div className="border border-line rounded-lg overflow-hidden" aria-busy="true" aria-label="Loading chart">
-        <svg viewBox="0 0 1280 420" className="block w-full h-auto animate-pulse">
-          {[80, 160, 240, 320].map((y) => (
-            <line key={y} x1={56} x2={1264} y1={y} y2={y} stroke="var(--border)" strokeWidth={1} />
-          ))}
-          <polyline
-            points="56,300 240,260 430,285 620,210 810,250 1000,180 1190,205"
-            fill="none"
-            stroke="var(--border-2)"
-            strokeWidth={3}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-          <polyline
-            points="56,350 240,330 430,345 620,300 810,330 1000,290 1190,310"
-            fill="none"
-            stroke="var(--border-2)"
-            strokeWidth={3}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            opacity={0.6}
-          />
-        </svg>
-      </div>
+      <ChartSkeleton />
     </div>
   );
 }

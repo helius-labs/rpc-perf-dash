@@ -13,7 +13,8 @@
     "./scoring": "./src/scoring.ts",
     "./workloads": "./src/workloads.ts",
     "./honeypots": "./src/honeypots.ts",
-    "./types": "./src/types.ts"
+    "./types": "./src/types.ts",
+    "./histogram": "./src/histogram.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

@@ -1,5 +1,6 @@
 export * from "./types.js";
 export * from "./providers.js";
+export * from "./histogram.js";
 export * from "./consensus.js";
 export * from "./timing.js";
 export * from "./canonical.js";

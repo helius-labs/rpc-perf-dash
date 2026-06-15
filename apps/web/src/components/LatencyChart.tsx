@@ -26,6 +26,8 @@ import {
   BoxChart,
   type DistributionSeries,
 } from "./DistributionCharts";
+import { ChartSkeleton } from "./ChartSkeleton";
+import { SvgChartTooltip } from "./SvgChartTooltip";
 
 const W = 1280;
 const H_DESKTOP = 420;
@@ -152,22 +154,50 @@ export function LatencyChart({
 
   const [metric, setMetric] = useState<Metric>("latency");
   const isScore = hasScore && metric === "score";
-  // "Latency distribution" — CDF / histogram / box of the raw latency
-  // distribution, only offered when a single method is in context. Its data is
-  // expensive (raw samples) so it's fetched lazily from /api/distribution only
-  // while this metric is selected; the three views all render from that one
-  // dataset (sub-mode switch = pure client re-render, no refetch).
-  // Only ≤6h windows: at 24h+ the raw percentile scan runs 6–11s (see
-  // lib/distribution.ts), so the pill is disabled for larger windows.
-  const distAllowed = windowHours <= 6;
+  // "Latency distribution" — CDF / histogram / box, offered when a single
+  // method is in context. Fetched lazily from /api/distribution only while this
+  // metric is selected (reads the cheap precomputed histogram tables — fast at
+  // any window); the three views render from that one dataset (sub-mode switch =
+  // pure client re-render, no refetch).
   const canDistribution = hasScore && method != null;
-  const isDist = canDistribution && distAllowed && metric === "distribution";
+  const isDist = canDistribution && metric === "distribution";
   const unit = isScore ? "" : "ms";
 
   const [distMode, setDistMode] = useState<DistMode>("cumulative");
   const [distData, setDistData] = useState<{ series: DistributionSeries[] } | null>(null);
   const [distLoading, setDistLoading] = useState(false);
   const [distError, setDistError] = useState<string | null>(null);
+
+  // Persist the chosen metric + distribution sub-mode for the session so a
+  // method/region/window switch (which remounts this chart via the Suspense
+  // key) keeps the same view instead of snapping back to Latency. Restored on
+  // mount (after hydration, so no SSR mismatch); written on each user choice.
+  useEffect(() => {
+    try {
+      const m = window.sessionStorage.getItem("perf.chartMetric");
+      if (m === "score" || m === "distribution" || m === "latency") setMetric(m);
+      const d = window.sessionStorage.getItem("perf.distMode");
+      if (d === "cumulative" || d === "histogram" || d === "box") setDistMode(d);
+    } catch {
+      /* sessionStorage unavailable — fall back to defaults */
+    }
+  }, []);
+  const chooseMetric = (m: Metric) => {
+    setMetric(m);
+    try {
+      window.sessionStorage.setItem("perf.chartMetric", m);
+    } catch {
+      /* ignore */
+    }
+  };
+  const chooseDistMode = (d: DistMode) => {
+    setDistMode(d);
+    try {
+      window.sessionStorage.setItem("perf.distMode", d);
+    } catch {
+      /* ignore */
+    }
+  };
   useEffect(() => {
     if (!isDist || !method) return;
     const ctrl = new AbortController();
@@ -351,28 +381,17 @@ export function LatencyChart({
           {(canDistribution
             ? (["latency", "score", "distribution"] as const)
             : (["latency", "score"] as const)
-          ).map((m) => {
-            const disabled = m === "distribution" && !distAllowed;
-            return (
-              <button
-                key={m}
-                type="button"
-                disabled={disabled}
-                onClick={disabled ? undefined : () => setMetric(m)}
-                className={pillCls(metric === m && !disabled)}
-                style={disabled ? { opacity: 0.4, cursor: "not-allowed" } : undefined}
-                title={disabled ? "Latency distribution is available for 1h and 6h windows" : undefined}
-              >
-                {METRIC_LABEL[m]}
-              </button>
-            );
-          })}
+          ).map((m) => (
+            <button key={m} type="button" onClick={() => chooseMetric(m)} className={pillCls(metric === m)}>
+              {METRIC_LABEL[m]}
+            </button>
+          ))}
         </FilterGroup>
       )}
       {isDist && (
         <FilterGroup label="View">
           {(["cumulative", "histogram", "box"] as const).map((v) => (
-            <button key={v} type="button" onClick={() => setDistMode(v)} className={pillCls(distMode === v)}>
+            <button key={v} type="button" onClick={() => chooseDistMode(v)} className={pillCls(distMode === v)}>
               {v === "cumulative" ? "Cumulative" : v === "histogram" ? "Histogram" : "Box"}
             </button>
           ))}
@@ -514,9 +533,7 @@ export function LatencyChart({
       <div style={{ marginBottom: 16 }}>
         {controlBar}
         {distLoading && !distData ? (
-          <div className={emptyCls} style={{ height: H }} aria-busy="true">
-            Loading distribution…
-          </div>
+          <ChartSkeleton />
         ) : distError ? (
           <div className={emptyCls} style={{ height: H }}>
             Couldn’t load distribution: {distError}
@@ -527,16 +544,13 @@ export function LatencyChart({
           </div>
         ) : (
           <>
-            <div className="flex flex-wrap gap-x-4 gap-y-1.5 mb-3 text-[12px]">
+            <div className="flex flex-wrap gap-x-4 gap-y-1 mb-2.5 font-geistmono text-[11px] leading-tight">
               {distSeries.map((s) => (
-                <span key={s.id} className="inline-flex items-center gap-1.5">
-                  <span
-                    style={{ width: 10, height: 10, background: s.color, borderRadius: 2, display: "inline-block" }}
-                  />
-                  <b className="text-fg">{s.name}</b>
+                <span key={s.id} className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                  <span className="inline-block w-2 h-2 rounded-[2px]" style={{ background: s.color }} />
+                  <span className="text-fg2">{s.name}</span>
                   <span className="text-muted">
-                    p50 {Math.round(s.p50)}ms · p95 {Math.round(s.p95)}ms · win {s.winPct.toFixed(1)}% · n=
-                    {s.n.toLocaleString()}
+                    p50 {Math.round(s.p50)} · p95 {Math.round(s.p95)}ms · win {Math.round(s.winPct)}%
                   </span>
                 </span>
               ))}
@@ -943,58 +957,19 @@ const LatencyChartCanvas = memo(function LatencyChartCanvas({
             pinned values are rendered in a static panel below the SVG so
             they don't crowd the small plot area. */}
         {!compact && hover && tipTime && (
-          <g transform={`translate(${tipX}, ${tipY})`} pointerEvents="none">
-            <rect
-              x={0}
-              y={0}
-              width={tipW}
-              height={tipH}
-              fill="#1a1a1a"
-              stroke="#444"
-              strokeWidth={1}
-              rx={3}
-            />
-            <text x={8} y={15} fill="#ddd" fontSize={11} fontFamily="system-ui, sans-serif">
-              {fmtMD(tipTime)} {fmtHM(tipTime)}{mounted ? ` ${tzShort}` : ""}
-            </text>
-            {hover.rows.map((r, i) => {
-              const isNearest = hover.nearestProviderId === r.provider_id;
-              return (
-                <g key={r.provider_id} transform={`translate(8, ${30 + i * 16})`}>
-                  <rect
-                    x={0}
-                    y={-8}
-                    width={10}
-                    height={10}
-                    fill={colorFor(r.provider_id)}
-                    rx={2}
-                    opacity={isNearest ? 1 : 0.55}
-                  />
-                  <text
-                    x={16}
-                    y={0}
-                    fill={isNearest ? "#fff" : "#999"}
-                    fontSize={11}
-                    fontWeight={isNearest ? 600 : 400}
-                    fontFamily="system-ui, sans-serif"
-                  >
-                    {providerName(r.provider_id)}
-                  </text>
-                  <text
-                    x={tipW - 8}
-                    y={0}
-                    fill={isNearest ? "#fff" : "#999"}
-                    fontSize={11}
-                    fontWeight={isNearest ? 600 : 400}
-                    textAnchor="end"
-                    fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
-                  >
-                    {fmtVal(r.p95_ms)}
-                  </text>
-                </g>
-              );
-            })}
-          </g>
+          <SvgChartTooltip
+            x={tipX}
+            y={tipY}
+            header={`${fmtMD(tipTime)} ${fmtHM(tipTime)}${mounted ? ` ${tzShort}` : ""}`}
+            rows={hover.rows.map((r) => ({
+              key: r.provider_id,
+              label: providerName(r.provider_id),
+              value: fmtVal(r.p95_ms),
+              color: colorFor(r.provider_id),
+              emphasized: hover.nearestProviderId === r.provider_id,
+              dimmed: hover.nearestProviderId !== r.provider_id,
+            }))}
+          />
         )}
       </svg>
       {/* Compact (mobile) extras: pinned-values panel + static color legend

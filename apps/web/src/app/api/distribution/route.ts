@@ -9,10 +9,8 @@
  * Query params (mirrors the Performance page filters):
  *   method  — RPC method (default getTransaction)
  *   mode    — cold | warm (default cold)
- *   hours   — window: 1 | 6 (default 6). Distribution is offered ONLY for ≤6h
- *             windows: at 24h+ the raw percentile_cont scan runs 6–11s. Larger
- *             values are clamped to 6 so a stray request can't run the slow
- *             query (the UI disables the metric past 6h).
+ *   hours   — window: 1 | 6 | 24 | 168 | 720 (default 24). All windows are fast
+ *             now that this reads the precomputed latency_histogram_* tables.
  *   region  — GEO (na-east, eu-central, …); omitted/invalid = Overall (all geos)
  *   wp      — infra (worker_provider); omitted/"all" = pooled across clouds
  *
@@ -20,6 +18,7 @@
  */
 import { GEO_REGIONS, type GeoRegion, type Method } from "@rpcbench/shared";
 import { ALL_METHODS } from "@/lib/methods";
+import { WINDOWS } from "@/lib/windows";
 import { fetchLatencyDistribution } from "@/lib/distribution";
 import { DB_ERROR_MESSAGE } from "@/lib/db";
 
@@ -33,9 +32,8 @@ export async function GET(req: Request) {
 
   const connectionMode = sp.get("mode") === "warm" ? "warm" : "cold";
 
-  // Distribution is only fast for small windows. Clamp anything past 6h to 6h.
   const hoursRaw = parseInt(sp.get("hours") ?? "", 10);
-  const windowHours = hoursRaw === 1 ? 1 : 6;
+  const windowHours = WINDOWS.some((w) => w.value === hoursRaw) ? hoursRaw : 24;
 
   const regionRaw = sp.get("region") ?? "";
   const geo: GeoRegion | null = (GEO_REGIONS as readonly string[]).includes(regionRaw)

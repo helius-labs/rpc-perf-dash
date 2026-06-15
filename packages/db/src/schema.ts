@@ -633,3 +633,38 @@ export const leaderboard_failures_1d = pgTable(
     ),
   }),
 );
+
+// Precomputed latency-distribution histograms (migration 0019). One row per
+// (geo, infra-or-'__all__', provider, method, mode, mv, bucket): a sparse JSONB
+// bin map { "<1..60>": count } over the shared log domain (packages/shared/
+// histogram.ts), plus the exact count + min. Bins are additive across buckets,
+// so a window read sums the maps → density / CDF / box. Feeds the Performance
+// "Latency distribution" metric. _1h ≤7d, _1d beyond.
+function latencyHistogramColumns() {
+  return {
+    geo: text("geo").notNull(),
+    worker_provider: text("worker_provider").notNull(),
+    provider_id: text("provider_id").notNull(),
+    method: text("method").notNull(),
+    connection_mode: text("connection_mode").notNull(),
+    methodology_version: smallint("methodology_version").notNull(),
+    window_start: timestamp("window_start", { withTimezone: true }).notNull(),
+    bins: jsonb("bins").notNull(),
+    n: integer("n").notNull(),
+    min_ms: integer("min_ms"),
+  };
+}
+
+export const latency_histogram_1h = pgTable("latency_histogram_1h", latencyHistogramColumns(), (t) => ({
+  pk: primaryKey({
+    columns: [t.geo, t.worker_provider, t.provider_id, t.method, t.connection_mode, t.methodology_version, t.window_start],
+  }),
+  read: index("latency_histogram_1h_read").on(t.worker_provider, t.method, t.connection_mode, t.window_start),
+}));
+
+export const latency_histogram_1d = pgTable("latency_histogram_1d", latencyHistogramColumns(), (t) => ({
+  pk: primaryKey({
+    columns: [t.geo, t.worker_provider, t.provider_id, t.method, t.connection_mode, t.methodology_version, t.window_start],
+  }),
+  read: index("latency_histogram_1d_read").on(t.worker_provider, t.method, t.connection_mode, t.window_start),
+}));
