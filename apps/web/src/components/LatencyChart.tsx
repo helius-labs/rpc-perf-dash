@@ -11,6 +11,7 @@
 
 import { memo, useEffect, useMemo, useState } from "react";
 import { BENCHMARKED_PROVIDERS } from "@rpcbench/shared/providers";
+import type { GeoRegion, Method } from "@rpcbench/shared";
 import type { ChartSeries } from "@/lib/chartData";
 import type { ScoreSeries } from "@/lib/leaderboard";
 import { colorFor } from "@/lib/providerColors";
@@ -19,6 +20,12 @@ import { FilterGroup } from "./FilterGroup";
 import { ExportButtons } from "./ExportButtons";
 import { toCSV } from "@/lib/exportData";
 import { binOptionsForWindow, binLabel } from "@/lib/chartBins";
+import {
+  CdfChart,
+  DensityChart,
+  BoxChart,
+  type DistributionSeries,
+} from "./DistributionCharts";
 
 const W = 1280;
 const H_DESKTOP = 420;
@@ -49,9 +56,24 @@ interface Props {
   showRpcFilter?: boolean;
   /** Initial RPC selection, seeded from the `bp` URL param. Empty = show all. */
   initialBenchmarked?: readonly string[];
+  /** Single method the chart is showing — enables the "Latency distribution"
+   *  metric (fetched lazily from /api/distribution). Optional: callers without
+   *  it (provider deep-dive) just don't get the distribution toggle. */
+  method?: Method | undefined;
+  /** Current geo filter (null = Overall) — forwarded to the distribution fetch. */
+  selectedGeo?: GeoRegion | null;
+  /** Current infra filter — forwarded to the distribution fetch (pools clouds when omitted). */
+  workerProvider?: string | undefined;
 }
 
-type Metric = "latency" | "score";
+type Metric = "latency" | "score" | "distribution";
+type DistMode = "cumulative" | "histogram" | "box";
+
+const METRIC_LABEL: Record<Metric, string> = {
+  latency: "Latency",
+  score: "Score",
+  distribution: "Distribution",
+};
 
 interface HoverState {
   // SVG-space cursor x within plot area
@@ -90,6 +112,9 @@ export function LatencyChart({
   filters,
   showRpcFilter = false,
   initialBenchmarked,
+  method,
+  selectedGeo = null,
+  workerProvider,
 }: Props) {
   // Latency vs Score. The toggle only appears when a score series was supplied
   // (the provider deep-dive page passes none → latency-only, no dead toggle).
@@ -127,7 +152,46 @@ export function LatencyChart({
 
   const [metric, setMetric] = useState<Metric>("latency");
   const isScore = hasScore && metric === "score";
+  // "Latency distribution" — CDF / histogram / box of the raw latency
+  // distribution, only offered when a single method is in context. Its data is
+  // expensive (raw samples) so it's fetched lazily from /api/distribution only
+  // while this metric is selected; the three views all render from that one
+  // dataset (sub-mode switch = pure client re-render, no refetch).
+  // Only ≤6h windows: at 24h+ the raw percentile scan runs 6–11s (see
+  // lib/distribution.ts), so the pill is disabled for larger windows.
+  const distAllowed = windowHours <= 6;
+  const canDistribution = hasScore && method != null;
+  const isDist = canDistribution && distAllowed && metric === "distribution";
   const unit = isScore ? "" : "ms";
+
+  const [distMode, setDistMode] = useState<DistMode>("cumulative");
+  const [distData, setDistData] = useState<{ series: DistributionSeries[] } | null>(null);
+  const [distLoading, setDistLoading] = useState(false);
+  const [distError, setDistError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!isDist || !method) return;
+    const ctrl = new AbortController();
+    setDistLoading(true);
+    setDistError(null);
+    const qs = new URLSearchParams({ method, mode: connectionMode, hours: String(windowHours) });
+    if (selectedGeo) qs.set("region", selectedGeo);
+    if (workerProvider) qs.set("wp", workerProvider);
+    fetch(`/api/distribution?${qs.toString()}`, { signal: ctrl.signal })
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
+      .then((d: { series: DistributionSeries[] }) => {
+        setDistData(d);
+        setDistLoading(false);
+      })
+      .catch((e: unknown) => {
+        if ((e as Error)?.name === "AbortError") return;
+        setDistError((e as Error)?.message ?? "failed to load distribution");
+        setDistLoading(false);
+      });
+    return () => ctrl.abort();
+  }, [isDist, method, connectionMode, windowHours, selectedGeo, workerProvider]);
   // Compact mode shrinks the chart for mobile viewports — smaller height,
   // fewer x-axis ticks, in-SVG legend moved below the SVG. Tap-to-pin replaces
   // hover-crosshair on touch devices.
@@ -237,6 +301,16 @@ export function LatencyChart({
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
+  // Distribution series filtered by the RPC multi-select (same client set as
+  // the latency/score lines), ordered by p50 from the fetch.
+  const distSeries = useMemo(
+    () =>
+      (distData?.series ?? []).filter(
+        (s) => selectedBenchmarked.size === 0 || selectedBenchmarked.has(s.id),
+      ),
+    [distData, selectedBenchmarked],
+  );
+
   // Control bar (filters + Percentile / Bin / Outliers). Hoisted so it renders
   // in both the chart and the empty state — when there are no samples the
   // filters must stay so the user can change region/window/method.
@@ -274,14 +348,37 @@ export function LatencyChart({
       )}
       {hasScore && (
         <FilterGroup label="Metric">
-          {(["latency", "score"] as const).map((m) => (
-            <button key={m} type="button" onClick={() => setMetric(m)} className={pillCls(metric === m)}>
-              {m === "latency" ? "Latency" : "Score"}
+          {(canDistribution
+            ? (["latency", "score", "distribution"] as const)
+            : (["latency", "score"] as const)
+          ).map((m) => {
+            const disabled = m === "distribution" && !distAllowed;
+            return (
+              <button
+                key={m}
+                type="button"
+                disabled={disabled}
+                onClick={disabled ? undefined : () => setMetric(m)}
+                className={pillCls(metric === m && !disabled)}
+                style={disabled ? { opacity: 0.4, cursor: "not-allowed" } : undefined}
+                title={disabled ? "Latency distribution is available for 1h and 6h windows" : undefined}
+              >
+                {METRIC_LABEL[m]}
+              </button>
+            );
+          })}
+        </FilterGroup>
+      )}
+      {isDist && (
+        <FilterGroup label="View">
+          {(["cumulative", "histogram", "box"] as const).map((v) => (
+            <button key={v} type="button" onClick={() => setDistMode(v)} className={pillCls(distMode === v)}>
+              {v === "cumulative" ? "Cumulative" : v === "histogram" ? "Histogram" : "Box"}
             </button>
           ))}
         </FilterGroup>
       )}
-      {!isScore && (
+      {!isScore && !isDist && (
         <FilterGroup label="Percentile">
           {(["p50", "p95"] as const).map((pp) => (
             <button key={pp} type="button" onClick={() => setPercentile(pp)} className={pillCls(percentile === pp)}>
@@ -290,7 +387,7 @@ export function LatencyChart({
           ))}
         </FilterGroup>
       )}
-      {binOptions.length > 1 && (
+      {!isDist && binOptions.length > 1 && (
         <FilterGroup label="Bin">
           {binOptions.map((m) => (
             <button key={m} type="button" onClick={() => setBinMinutes(m)} className={pillCls(m === effectiveBin)}>
@@ -299,17 +396,53 @@ export function LatencyChart({
           ))}
         </FilterGroup>
       )}
-      <FilterGroup label="Outliers">
-        <button
-          type="button"
-          onClick={() => setHideOutliers((v) => !v)}
-          className={pillCls(hideOutliers)}
-          title="Drop points above Q3 + 1.5·IQR per series. Hides isolated spikes while keeping sustained degradation visible."
-        >
-          {hideOutliers ? "hidden" : "shown"}
-        </button>
-      </FilterGroup>
-      {isScore ? (
+      {!isDist && (
+        <FilterGroup label="Outliers">
+          <button
+            type="button"
+            onClick={() => setHideOutliers((v) => !v)}
+            className={pillCls(hideOutliers)}
+            title="Drop points above Q3 + 1.5·IQR per series. Hides isolated spikes while keeping sustained degradation visible."
+          >
+            {hideOutliers ? "hidden" : "shown"}
+          </button>
+        </FilterGroup>
+      )}
+      {isDist ? (
+        <ExportButtons
+          filename={`rpc-latency-distribution-${windowHours}h`}
+          buildCsv={() =>
+            toCSV(
+              ["provider", "p50_ms", "p95_ms", "p99_ms", "min_ms", "n", "win_pct"],
+              distSeries.map((s) => [
+                s.name,
+                Math.round(s.p50),
+                Math.round(s.p95),
+                Math.round(s.p99),
+                Math.round(s.min),
+                s.n,
+                s.winPct.toFixed(1),
+              ]),
+            )
+          }
+          buildJson={() => ({
+            metric: "latency-distribution",
+            windowHours,
+            method,
+            series: distSeries.map((s) => ({
+              provider_id: s.id,
+              provider: s.name,
+              n: s.n,
+              percentiles: s.q,
+              p50: s.p50,
+              p95: s.p95,
+              p99: s.p99,
+              min: s.min,
+              winPct: s.winPct,
+            })),
+          })}
+        />
+      ) : isScore ? (
         <ExportButtons
           filename={`rpc-score-${windowHours}h`}
           buildCsv={() =>
@@ -367,6 +500,61 @@ export function LatencyChart({
       )}
     </div>
   );
+
+  if (isDist) {
+    const emptyCls =
+      "border border-line rounded-lg flex items-center justify-center text-[13px] text-muted";
+    const caption =
+      distMode === "cumulative"
+        ? "cumulative distribution — % of requests at or below x ms"
+        : distMode === "histogram"
+          ? "latency density — log-x histogram, normalized per provider"
+          : "p25–p75 box · p50 line · whisker → p95 · dot p99 · tick = min";
+    return (
+      <div style={{ marginBottom: 16 }}>
+        {controlBar}
+        {distLoading && !distData ? (
+          <div className={emptyCls} style={{ height: H }} aria-busy="true">
+            Loading distribution…
+          </div>
+        ) : distError ? (
+          <div className={emptyCls} style={{ height: H }}>
+            Couldn’t load distribution: {distError}
+          </div>
+        ) : distSeries.length === 0 ? (
+          <div className={emptyCls} style={{ height: H }}>
+            No samples in the last {windowHours}h.
+          </div>
+        ) : (
+          <>
+            <div className="flex flex-wrap gap-x-4 gap-y-1.5 mb-3 text-[12px]">
+              {distSeries.map((s) => (
+                <span key={s.id} className="inline-flex items-center gap-1.5">
+                  <span
+                    style={{ width: 10, height: 10, background: s.color, borderRadius: 2, display: "inline-block" }}
+                  />
+                  <b className="text-fg">{s.name}</b>
+                  <span className="text-muted">
+                    p50 {Math.round(s.p50)}ms · p95 {Math.round(s.p95)}ms · win {s.winPct.toFixed(1)}% · n=
+                    {s.n.toLocaleString()}
+                  </span>
+                </span>
+              ))}
+            </div>
+            <div className="border border-line rounded-lg overflow-hidden p-2">
+              {distMode === "cumulative" && <CdfChart series={distSeries} />}
+              {distMode === "histogram" && <DensityChart series={distSeries} />}
+              {distMode === "box" && <BoxChart series={distSeries} />}
+            </div>
+            <div style={{ fontSize: 11, color: "#666", marginTop: 4 }}>
+              {caption}, {connectionMode}, correct-only, last {windowHours}h. Win % is consensus wins from the
+              leaderboard precompute (tracks, but won’t byte-match, a raw per-request win rate).
+            </div>
+          </>
+        )}
+      </div>
+    );
+  }
 
   if (all.length === 0) {
     return (

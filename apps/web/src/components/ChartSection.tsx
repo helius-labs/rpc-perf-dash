@@ -47,6 +47,7 @@ export function ChartLoading({ filters, windowHours }: { filters: ReactNode; win
         <FilterGroup label="Metric">
           {ph("Latency")}
           {ph("Score")}
+          {ph("Distribution")}
         </FilterGroup>
         <FilterGroup label="Percentile">
           {ph("p50")}
@@ -125,6 +126,9 @@ export async function ChartPanel({
       filters={filters}
       showRpcFilter
       initialBenchmarked={initialBenchmarked}
+      method={method}
+      selectedGeo={selectedGeo}
+      workerProvider={workerProvider}
     />
   );
 }
