@@ -237,7 +237,7 @@ export function OverviewBoard({
                     <FloatingTooltip
                       title={AXIS_LABEL[k]}
                       trigger={
-                        <span className="truncate font-geistmono text-[10px] uppercase tracking-[0.12em] text-muted cursor-help underline decoration-dotted decoration-line2 underline-offset-[3px]">
+                        <span className="truncate font-geistmono text-[10px] uppercase tracking-[0.12em] text-muted cursor-help underline decoration-dotted decoration-muted underline-offset-[3px]">
                           {AXIS_LABEL[k]}
                         </span>
                       }

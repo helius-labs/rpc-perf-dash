@@ -27,7 +27,7 @@ import { GEO_REGIONS, GEO_REGION_LABELS, type GeoRegion, type Method } from "@rp
 import { slugForProviderId } from "@rpcbench/shared/providers";
 import { brandColorFor } from "@/lib/providerColors";
 import { ALL_METHODS } from "@/lib/methods";
-import { Tooltip } from "./Tooltip";
+import { FloatingTooltip } from "./FloatingTooltip";
 import {
   FailureBreakdownList,
   RegionBlendBreakdown,
@@ -217,7 +217,7 @@ const IndexLeaderboardRow = memo(function IndexLeaderboardRow({
           if (!hasBreakdown) return scoreEl;
           return (
             <span onClick={(e) => e.stopPropagation()}>
-              <Tooltip align="right" title="Score breakdown" trigger={scoreEl}>
+              <FloatingTooltip title="Score breakdown" trigger={scoreEl}>
                 {/* Reset the leaderboard's display-font typography (44px,
                     -0.03em tracking, line-height 1) that would otherwise
                     cascade in and garble the breakdown text. */}
@@ -239,7 +239,7 @@ const IndexLeaderboardRow = memo(function IndexLeaderboardRow({
                     </>
                   ) : null}
                 </div>
-              </Tooltip>
+              </FloatingTooltip>
             </span>
           );
         })()}
@@ -355,18 +355,18 @@ const IndexLeaderboardRow = memo(function IndexLeaderboardRow({
           {/* Secondary line: the overall relative metrics for this view. */}
           <div className="idx-detail-secondary">
             <span className="idx-ds">
-              <span className="idx-ds-l">win rate</span>
-              <span className="idx-ds-v">{(p.winRate * 100).toFixed(0)}<i>%</i></span>
-            </span>
-            <span className="idx-ds">
               <span className="idx-ds-l">samples</span>
               <span className="idx-ds-v">{p.samples.toLocaleString()}</span>
+            </span>
+            <span className="idx-ds">
+              <span className="idx-ds-l">win rate</span>
+              <span className="idx-ds-v">{(p.winRate * 100).toFixed(0)}<i>%</i></span>
             </span>
             <span className="idx-ds">
               <span className="idx-ds-l">correct</span>
               {p.failed > 0 ? (
                 <span onClick={(e) => e.stopPropagation()}>
-                  <Tooltip align="right" title="Failure breakdown" trigger={
+                  <FloatingTooltip title="Failure breakdown" trigger={
                     <span className="idx-ds-v" style={{ cursor: "help" }}>
                       {(p.success * 100).toFixed(1)}<i>%</i>
                     </span>
@@ -374,12 +374,54 @@ const IndexLeaderboardRow = memo(function IndexLeaderboardRow({
                     <div className="text-left font-normal normal-case tracking-normal leading-normal">
                       <FailureBreakdownList breakdown={p.failure_breakdown} totalFailed={p.failed} />
                     </div>
-                  </Tooltip>
+                  </FloatingTooltip>
                 </span>
               ) : (
                 <span className="idx-ds-v">{(p.success * 100).toFixed(1)}<i>%</i></span>
               )}
             </span>
+            {p.regionBlend && p.regionBlend.length > 0 && (() => {
+              // The two regions surfaced in the metric (highest score). Used both
+              // for the label and to highlight their rows in the weights tooltip.
+              const top = [...p.regionBlend!]
+                .sort((a, b) => b.score - a.score)
+                .slice(0, 2)
+                .map((r) => r.label);
+              const topSet = new Set(top);
+              return (
+                <span className="idx-ds">
+                  <span className="idx-ds-l">strongest regions</span>
+                  <span onClick={(e) => e.stopPropagation()}>
+                    <FloatingTooltip title="Region weights" trigger={
+                      <span className="idx-ds-v idx-ds-regions underline decoration-dotted decoration-muted underline-offset-[3px]" style={{ cursor: "help" }}>
+                        {top.join(" / ")}
+                      </span>
+                    }>
+                      <div className="text-left font-normal normal-case tracking-normal leading-normal">
+                        <div className="font-mono text-[11px] text-neutral-400 mb-1">
+                          Region weights in the overall blend
+                        </div>
+                        {[...p.regionBlend!]
+                          .sort((a, b) => b.weight - a.weight)
+                          .map((r) => {
+                            const isTop = topSet.has(r.label);
+                            return (
+                              <div key={r.label} className="flex justify-between gap-6 text-[11px] leading-snug">
+                                <span className={isTop ? "text-accent font-medium" : "text-neutral-300"}>
+                                  {r.label}
+                                </span>
+                                <span className={"font-mono tabular-nums " + (isTop ? "text-accent" : "text-neutral-400")}>
+                                  {(r.weight * 100).toFixed(0)}%
+                                </span>
+                              </div>
+                            );
+                          })}
+                      </div>
+                    </FloatingTooltip>
+                  </span>
+                </span>
+              );
+            })()}
           </div>
         </div>
         </div>

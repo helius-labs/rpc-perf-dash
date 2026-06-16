@@ -58,7 +58,7 @@ export function MethodFilter({ options, selected, variant = "pill" }: Props) {
     variant === "inline"
       ? "cursor-pointer select-none inline-flex items-center gap-1 align-baseline " +
         "font-geistmono normal-case tracking-normal text-[11px] text-muted " +
-        "underline decoration-dotted decoration-line2 underline-offset-[3px] " +
+        "underline decoration-dotted decoration-muted underline-offset-[3px] " +
         "transition-colors hover:text-fg"
       : "cursor-pointer select-none inline-flex items-center gap-1.5 " +
         "px-[11px] py-[5px] rounded-full text-[12px] font-geistmono " +
