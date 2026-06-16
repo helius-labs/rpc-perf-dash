@@ -1,11 +1,12 @@
 import Link from "next/link";
-import type { Route } from "next";
+import type { Metadata, Route } from "next";
 import {
   type GeoRegion,
   type Method,
 } from "@rpcbench/shared";
 import { ALL_METHODS } from "@/lib/methods";
 import { WINDOWS } from "@/lib/windows";
+import { ogImagePath, parseShareParams } from "@/lib/share";
 import { type MethodRegionLatency } from "@/components/IndexLeaderboard";
 import { type MethodOption } from "@/components/MethodFilter";
 import { OverviewBoard } from "@/components/OverviewBoard";
@@ -61,6 +62,29 @@ const GRID_METHODS: readonly Method[] = [
   "getAccountInfo",
   "getTokenAccountsByOwner",
 ];
+
+// Per-view social card: reads the same filters/weights the ShareButton encodes
+// into the URL so a tweeted link renders the matching leaderboard card in-feed.
+// Bare URLs fall back to the default Overall / getTransaction / 24h card.
+export async function generateMetadata({
+  searchParams,
+}: {
+  searchParams: Promise<SearchParams>;
+}): Promise<Metadata> {
+  const params = await searchParams;
+  const filters = parseShareParams(params as Record<string, string | undefined>);
+  const windowLabel =
+    WINDOWS.find((w) => w.value === filters.windowHours)?.label ?? `${filters.windowHours}h`;
+  const title = `Solana RPC Benchmark — ${filters.method} leaderboard`;
+  const description = `Live, regional, non-gameable Solana RPC rankings for ${filters.method} (last ${windowLabel}).`;
+  const image = ogImagePath(filters);
+  return {
+    title,
+    description,
+    openGraph: { title, description, images: [image] },
+    twitter: { card: "summary_large_image", title, description, images: [image] },
+  };
+}
 
 export default async function OverviewPage({
   searchParams,

@@ -6,11 +6,13 @@ import "./globals.css";
 import NavLinks from "@/components/NavLinks";
 import MobileMenu from "@/components/MobileMenu";
 import HeaderStatus from "@/components/HeaderStatus";
+import { siteUrl } from "@/lib/siteUrl";
 
 const geistSans = Geist({ subsets: ["latin"], variable: "--font-sans-geist", display: "swap" });
 const geistMono = Geist_Mono({ subsets: ["latin"], variable: "--font-mono-geist", display: "swap" });
 
 export const metadata = {
+  metadataBase: new URL(siteUrl()),
   title: "Solana RPC Benchmark",
   description: "Continuous, regional, non-gameable RPC benchmark",
 };

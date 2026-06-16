@@ -17,6 +17,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import {
   DEFAULT_REGION_WEIGHTS,
   DEFAULT_WEIGHTS,
@@ -26,6 +27,9 @@ import {
 import { GEO_REGIONS, type Method } from "@rpcbench/shared/types";
 import { brandColorFor, logoFor, animatedLogoFor } from "@/lib/providerColors";
 import { WORKLOAD_PRESETS, presetIdForWeights } from "@/lib/workloadPresets";
+import { WINDOW_VALUES } from "@/lib/windows";
+import { type ShareFilters } from "@/lib/share";
+import { ShareButton } from "./ShareButton";
 import { buildOverallLeaderRows, scorePerGeo } from "./leaderboardShared";
 import { IndexLeaderboard, type RawGeoOutcome, type MethodRegionLatency } from "./IndexLeaderboard";
 import { MethodFilter, type MethodOption } from "./MethodFilter";
@@ -136,6 +140,21 @@ export function OverviewBoard({
   }, [rawPerGeo, weights]);
 
   const winner = ranked[0] ?? null;
+
+  // Share-card filters mirror the Overview's fixed scope (Overall blend, cold
+  // start) plus the live ranked method + tuned weights, so the generated card
+  // matches the on-screen board. Window is read from the URL (?window=), the
+  // only scope param the Overview varies; defaults to 24h.
+  const searchParams = useSearchParams();
+  const windowParam = Number(searchParams.get("window"));
+  const windowHours = WINDOW_VALUES.has(windowParam) ? windowParam : 24;
+  const shareFilters: ShareFilters = {
+    method: selectedMethod as Method,
+    region: "overall",
+    mode: "cold",
+    windowHours,
+    weights,
+  };
 
   return (
     <section className="relative pt-1 pb-2">
@@ -276,10 +295,16 @@ export function OverviewBoard({
 
       {/* Scope of the ranking — stated in plain sight, not a tooltip. The
           method is switchable via the inline dropdown (?method=); the rest of
-          the scope is fixed. Full matrix on /performance. */}
-      <div className="mt-1.5 -mb-5 flex items-center flex-wrap font-geistmono text-[9.5px] sm:text-[10px] tracking-[0.12em] uppercase text-muted leading-snug">
-        <MethodFilter variant="inline" options={methodOptions} selected={selectedMethod} />
-        <span>{" · cold start · last 24h · all regions"}</span>
+          the scope is fixed. Full matrix on /performance. The share control sits
+          at the right end of this same row. */}
+      <div className="mt-1.5 -mb-2 flex items-center gap-2 flex-wrap">
+        <div className="flex items-center flex-wrap font-geistmono text-[9.5px] sm:text-[10px] tracking-[0.12em] uppercase text-muted leading-snug">
+          <MethodFilter variant="inline" options={methodOptions} selected={selectedMethod} />
+          <span>{" · cold start · last 24h · all regions"}</span>
+        </div>
+        <div className="ml-auto">
+          <ShareButton filters={shareFilters} pagePath="/" />
+        </div>
       </div>
 
       <IndexLeaderboard

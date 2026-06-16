@@ -913,3 +913,36 @@ export const METHODS: readonly MethodSpec[] = [
     ],
   },
 ];
+
+const METHOD_BY_NAME: ReadonlyMap<string, MethodSpec> = new Map(
+  METHODS.map((m) => [m.name, m]),
+);
+
+export interface MethodParamSummary {
+  /** Technique family label, e.g. "Byte-equal hash". */
+  technique: string;
+  /** Short, exact restatement of the match rule, e.g. "Byte-equal projection hash". */
+  techniqueDetail: string;
+  /** "What kind of answer is this", e.g. "Immutable block (read at confirmed)". */
+  shape: string;
+  /** Voter-panel line, e.g. "4 voters · Helius, Triton, Alchemy, QuickNode". */
+  voters: string;
+}
+
+/**
+ * Concise, card-safe descriptor for a method — drawn from the *top-level*
+ * MethodSpec fields only (techniqueDetail / shape / voters + the technique
+ * family label), deliberately avoiding the nested `input.*` prose, which runs
+ * long. Returns null for methods not in the Explorer (caller falls back to the
+ * bare method name). Shared by the OG share card and any future caller.
+ */
+export function methodParamSummary(method: string): MethodParamSummary | null {
+  const spec = METHOD_BY_NAME.get(method);
+  if (!spec) return null;
+  return {
+    technique: TECHNIQUES[spec.technique].label,
+    techniqueDetail: spec.techniqueDetail,
+    shape: spec.shape,
+    voters: spec.voters,
+  };
+}

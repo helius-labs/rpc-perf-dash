@@ -24,14 +24,17 @@ import {
   blendRegionScores,
   score,
   type ScoredProvider,
+  type ScoringWeights,
 } from "@rpcbench/shared/scoring";
 import { db } from "@/lib/db";
 import {
   buildOverallLeaderRows,
+  buildSingleLeaderRows,
   rowToMetrics,
   scorePerGeo,
   type OverallLeaderRow,
   type RowAgg,
+  type SingleLeaderRow,
 } from "@/components/leaderboardShared";
 
 /**
@@ -283,10 +286,16 @@ export async function fetchRankedOverall(opts?: {
   windowHours?: number;
   connectionMode?: "cold" | "warm";
   method?: Method;
+  /** Per-axis scoring weights — defaults to DEFAULT_WEIGHTS so existing callers
+   *  (provider deep-dive, leaderboardApi) are unaffected. The share-card route
+   *  passes the sharer's tuned weights so the card matches the on-screen board.
+   *  The region blend always uses DEFAULT_REGION_WEIGHTS. */
+  weights?: ScoringWeights;
 }): Promise<OverallLeaderRow[]> {
   const windowHours = opts?.windowHours ?? 24;
   const connectionMode = opts?.connectionMode ?? "cold";
   const method: Method = opts?.method ?? "getTransaction";
+  const weights = opts?.weights ?? DEFAULT_WEIGHTS;
 
   const geos = await fetchActiveGeos();
   const targets = geos.length > 0 ? geos : GEO_REGIONS;
@@ -296,7 +305,7 @@ export async function fetchRankedOverall(opts?: {
       const eligible = rows.filter(
         (r) => r.eligible === true && r.p95_ms !== null && r.p50_ms !== null,
       );
-      return { geo, rows, eligible, scored: scorePerGeo({ eligible }, DEFAULT_WEIGHTS) };
+      return { geo, rows, eligible, scored: scorePerGeo({ eligible }, weights) };
     }),
   );
 
@@ -304,6 +313,39 @@ export async function fetchRankedOverall(opts?: {
   for (const o of perGeo) map.set(o.geo, o.scored);
   const blended = blendRegionScores(map, DEFAULT_REGION_WEIGHTS);
   return buildOverallLeaderRows(blended, perGeo);
+}
+
+/**
+ * Single-geo ranked leaderboard — the same rows IndexLeaderboard builds for a
+ * specific region (RowAgg → eligibility filter → scorePerGeo → buildSingleLeaderRows).
+ * Used by the share-card route for `region != overall`. Weights default to
+ * DEFAULT_WEIGHTS; the card route passes the sharer's tuned weights.
+ */
+export async function fetchRankedSingle(opts: {
+  geoRegion: GeoRegion;
+  windowHours?: number;
+  connectionMode?: "cold" | "warm";
+  workerProvider?: string | undefined;
+  method?: Method;
+  weights?: ScoringWeights;
+}): Promise<SingleLeaderRow[]> {
+  const windowHours = opts.windowHours ?? 24;
+  const connectionMode = opts.connectionMode ?? "cold";
+  const method: Method = opts.method ?? "getTransaction";
+  const weights = opts.weights ?? DEFAULT_WEIGHTS;
+
+  const rows = await fetchAggregatesForGeo({
+    geoRegion: opts.geoRegion,
+    windowHours,
+    connectionMode,
+    method,
+    ...(opts.workerProvider ? { workerProvider: opts.workerProvider } : {}),
+  });
+  const eligible = rows.filter(
+    (r) => r.eligible === true && r.p50_ms !== null && r.p95_ms !== null,
+  );
+  const scored = scorePerGeo({ eligible }, weights);
+  return buildSingleLeaderRows({ geo: opts.geoRegion, rows, eligible, scored }).rows;
 }
 
 export interface MethodLatencyRow {

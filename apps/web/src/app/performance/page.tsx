@@ -1,7 +1,9 @@
 import Link from "next/link";
+import type { Metadata } from "next";
 import { FilterPill } from "@/components/FilterPill";
 import { FilterGroup } from "@/components/FilterGroup";
 import { MethodFilter } from "@/components/MethodFilter";
+import { ShareButton } from "@/components/ShareButton";
 import {
   BENCHMARKED_PROVIDERS,
   GEO_REGIONS,
@@ -11,8 +13,10 @@ import {
   type Method,
   WORKER_PROVIDER_LABELS,
 } from "@rpcbench/shared";
+import { DEFAULT_WEIGHTS } from "@rpcbench/shared/scoring";
 import { ALL_METHODS } from "@/lib/methods";
 import { WINDOWS } from "@/lib/windows";
+import { ogImagePath, parseShareParams, type ShareFilters } from "@/lib/share";
 import { Suspense } from "react";
 import { ChartPanel, ChartLoading } from "@/components/ChartSection";
 import { MethodRegionTabs } from "@/components/MethodRegionTabs";
@@ -73,6 +77,29 @@ function chartCloudPairs(
     }
   }
   return out;
+}
+
+// Per-view social card. Region/window/mode/method query keys line up with this
+// page's own params; the ShareButton additionally encodes infra + (default)
+// weights so a tweeted link's card matches the filtered view.
+export async function generateMetadata({
+  searchParams,
+}: {
+  searchParams: Promise<SearchParams>;
+}): Promise<Metadata> {
+  const params = await searchParams;
+  const filters = parseShareParams(params as Record<string, string | undefined>);
+  const windowLabel =
+    WINDOWS.find((w) => w.value === filters.windowHours)?.label ?? `${filters.windowHours}h`;
+  const title = `Solana RPC Benchmark — ${filters.method} performance`;
+  const description = `Latency and rankings for ${filters.method} across regions and clouds (last ${windowLabel}).`;
+  const image = ogImagePath(filters);
+  return {
+    title,
+    description,
+    openGraph: { title, description, images: [image] },
+    twitter: { card: "summary_large_image", title, description, images: [image] },
+  };
 }
 
 export default async function PerformancePage({
@@ -308,6 +335,17 @@ export default async function PerformancePage({
     selectedProvider ?? "all",
   ].join("|");
 
+  // Share-card filters track the active chart filters. Performance doesn't tune
+  // scoring weights, so it shares the documented defaults.
+  const shareFilters: ShareFilters = {
+    method: selectedMethod,
+    region: selectedGeo ?? "overall",
+    mode: connectionMode,
+    windowHours,
+    infra: selectedProvider ?? undefined,
+    weights: DEFAULT_WEIGHTS,
+  };
+
   return (
     <div>
       <header className="pt-1 flex flex-col lg:flex-row lg:items-start lg:justify-between gap-x-12 gap-y-6">
@@ -326,6 +364,9 @@ export default async function PerformancePage({
         </div>
         <div className="w-full lg:w-[360px] shrink-0 lg:pt-3">
           <ScoreStrip rows={miniScores} ranked={scoresRanked} />
+          <div className="flex justify-end mt-3">
+            <ShareButton filters={shareFilters} pagePath="/performance" />
+          </div>
         </div>
       </header>
 
@@ -336,8 +377,8 @@ export default async function PerformancePage({
       )}
 
       {/* Performance over time. */}
-      <section className="pt-8">
-        <div className="flex justify-between items-start gap-8 mb-[18px]">
+      <section className="pt-4">
+        <div className="flex justify-between items-start gap-8 mb-3">
           <div>
             <h2 className="text-[26px] font-medium tracking-[-0.022em] mt-2 mb-0">
               Performance over time
