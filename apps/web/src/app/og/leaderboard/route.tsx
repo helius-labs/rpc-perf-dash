@@ -11,9 +11,6 @@
  */
 
 import { ImageResponse } from "next/og";
-import { promises as fs } from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { GEO_REGION_LABELS } from "@rpcbench/shared/types";
 import { fetchRankedOverall, fetchRankedSingle } from "@/lib/leaderboard";
 import { brandColorFor, colorFor, logoFor } from "@/lib/providerColors";
@@ -27,13 +24,14 @@ export const dynamic = "force-dynamic";
 
 const SIZE = { width: 1200, height: 630 } as const;
 
-// Fonts are referenced relative to this module so the bundler emits + traces
-// them (works in dev and in the production/standalone output, unlike a bare
-// process.cwd() join into src/). The Node runtime can't fetch() a file:// URL,
-// so resolve the traced asset to a path and read it off disk.
-async function loadFonts() {
+// Fonts + logos live in public/ and are fetched over the request origin. This
+// is the one approach that works in both dev and the Vercel serverless function:
+// import.meta.url bakes in the build-time source path (gone at runtime) and the
+// function filesystem doesn't include public/, so neither fs nor a file:// URL
+// works — but the assets are always reachable over HTTP from the same origin.
+async function loadFonts(origin: string) {
   const load = (file: string) =>
-    fs.readFile(fileURLToPath(new URL(`../_fonts/${file}`, import.meta.url)));
+    fetch(new URL(`/fonts/${file}`, origin)).then((r) => r.arrayBuffer());
   const [sansReg, sansMed, sansSemi, monoReg, monoMed] = await Promise.all([
     load("Geist-Regular.ttf"),
     load("Geist-Medium.ttf"),
@@ -50,29 +48,23 @@ async function loadFonts() {
   ];
 }
 
-// public/ ships with the deployment, so read the SVG marks off disk and inline
-// them as data URIs (Satori only renders SVG via <img>). cwd is normally the
-// app root (apps/web); fall back to the monorepo-rooted path just in case. A
-// missing/unreadable logo returns null → the card draws an initial chip.
-async function logoDataUri(providerId: string): Promise<string | null> {
+// Inline each SVG mark as a base64 data URI (Satori only renders SVG via <img>).
+// Fetched from public/ over the origin; a failed fetch returns null → initial chip.
+async function logoDataUri(providerId: string, origin: string): Promise<string | null> {
   const url = logoFor(providerId);
   if (!url) return null;
-  const rel = url.replace(/^\//, "");
-  for (const base of [
-    path.join(process.cwd(), "public", rel),
-    path.join(process.cwd(), "apps/web/public", rel),
-  ]) {
-    try {
-      const buf = await fs.readFile(base);
-      return `data:image/svg+xml;base64,${buf.toString("base64")}`;
-    } catch {
-      /* try next candidate */
-    }
+  try {
+    const res = await fetch(new URL(url, origin));
+    if (!res.ok) return null;
+    const buf = Buffer.from(await res.arrayBuffer());
+    return `data:image/svg+xml;base64,${buf.toString("base64")}`;
+  } catch {
+    return null;
   }
-  return null;
 }
 
 export async function GET(req: Request) {
+  const origin = new URL(req.url).origin;
   const filters = parseShareParams(new URL(req.url).searchParams);
 
   // Fetch the ranked field with the sharer's weights, then keep only eligible
@@ -122,7 +114,7 @@ export async function GET(req: Request) {
       ...r,
       brand: brandColorFor(r.provider_id),
       color: colorFor(r.provider_id),
-      logo: await logoDataUri(r.provider_id),
+      logo: await logoDataUri(r.provider_id, origin),
     })),
   );
 
@@ -148,7 +140,7 @@ export async function GET(req: Request) {
   }).format(now);
   const timestamp = `AS OF ${date} · ${time} UTC`;
 
-  const fonts = await loadFonts();
+  const fonts = await loadFonts(origin);
 
   return new ImageResponse(
     (
