@@ -4,9 +4,8 @@
  * Real-time /challenges results table. Initial rows come from the server
  * (SSR), then the component polls /api/challenges every 5s with the page's
  * active filters and replaces the list. Newly-arrived rows fade in for ~1.5s
- * so it's visible the table is streaming — the exact same polling logic as
- * RecentChallengesTable on the Performance page (same interval, same diff +
- * highlight, same per-second relative-time tick).
+ * so it's visible the table is streaming (diff + highlight + per-second
+ * relative-time tick).
  *
  * Scaling: the API route is cached server-side for 10s + edge-cached for 5s,
  * so N concurrent polling clients on a filter set converge to ~1 DB query /

@@ -7,6 +7,10 @@ import {
   fetchTimeline,
 } from "@/lib/status";
 import { LiveAge } from "@/components/LiveAge";
+import { ProviderHealth } from "@/components/ProviderHealth";
+import { ConsensusIntegrity } from "@/components/ConsensusIntegrity";
+import { fetchProviderHealth } from "@/lib/health";
+import { fetchConsensusRates } from "@/lib/consensus";
 
 const STATE_LABEL: Record<StageState, string> = {
   ok: "Healthy",
@@ -257,6 +261,59 @@ export function StatusTimelineSkeleton() {
             </svg>
           </div>
         ))}
+      </div>
+    </section>
+  );
+}
+
+/**
+ * Async server child: the fleet-health strip + consensus-integrity table,
+ * rendered inside a <Suspense> on /status so the live funnel + cloud matrix
+ * paint immediately. One fetchProviderHealth call feeds both the health strip
+ * and the consensus accuracy header. Both fetchers are unstable_cache-wrapped
+ * (~30s TTL), so this block is cheap. Consensus integrity is the last section.
+ */
+export async function StatusHealthSections() {
+  const [health, consensusRates] = await Promise.all([
+    fetchProviderHealth(),
+    fetchConsensusRates(),
+  ]);
+  return (
+    <>
+      <section className="home-extra">
+        <div className="prov-section">
+          <div className="prov-section-head">
+            <span className="section-kicker">Fleet health · 15m</span>
+          </div>
+          <div className="mt-3">
+            <ProviderHealth
+              benchmarked={health.benchmarked}
+              auditor={health.auditor}
+              infra={health.infra}
+              windowLabel="15m"
+            />
+          </div>
+        </div>
+      </section>
+      <ConsensusIntegrity
+        rates={consensusRates}
+        accuracyPct={health.auditor.consensus_accuracy_pct}
+        auditedN={health.auditor.consensus_audited_n}
+      />
+    </>
+  );
+}
+
+/** Suspense fallback for the health sections while they stream. */
+export function StatusHealthSkeleton() {
+  return (
+    <section className="home-extra" aria-busy="true">
+      <div className="prov-section">
+        <div className="prov-section-head">
+          <span className="section-kicker">Fleet health · 15m</span>
+          <span className="prov-section-count">loading…</span>
+        </div>
+        <div className="mt-3 h-24 animate-pulse rounded border border-line bg-surface" />
       </div>
     </section>
   );

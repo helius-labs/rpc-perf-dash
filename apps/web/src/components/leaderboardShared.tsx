@@ -10,6 +10,9 @@ import { Fragment } from "react";
 import { type GeoRegion } from "@rpcbench/shared/types";
 import {
   score,
+  blendRegionScores,
+  DEFAULT_WEIGHTS,
+  DEFAULT_REGION_WEIGHTS,
   type ProviderMetrics,
   type ScoredProvider,
   type ScoringWeights,
@@ -502,4 +505,55 @@ export function buildOverallLeaderRows(
       per_geo,
     };
   }).sort((a, b) => b.total - a.total);
+}
+
+// ---------------------------------------------------------------------------
+// Mini score board (Performance page) — the same overall-score ranking the
+// Overview shows, but computed from the Performance page's already-fetched
+// per-geo aggregates so it tracks the active chart filters. Reuses the exact
+// scoring builders above so the math can't drift from the Overview.
+// ---------------------------------------------------------------------------
+
+export interface MiniScoreRow {
+  provider_id: string;
+  provider_name: string;
+  total: number;
+}
+
+/**
+ * Ranked 0–100 overall scores for a compact strip. `selectedGeo` null →
+ * region-blended Overall (DEFAULT_REGION_WEIGHTS), exactly like the Overview;
+ * a specific geo → that region's single-geo scores. Rows come back sorted by
+ * total desc, one per benchmarked provider (ineligible → total 0). Returns []
+ * when the selected geo isn't present in `perGeo` (e.g. a hand-typed URL).
+ */
+export function buildMiniScoreRows(
+  perGeo: { geo: GeoRegion; rows: RowAgg[] }[],
+  selectedGeo: GeoRegion | null,
+  weights: ScoringWeights = DEFAULT_WEIGHTS,
+): MiniScoreRow[] {
+  const outcomes: PerGeoOutcome[] = perGeo.map(({ geo, rows }) => {
+    const eligible = rows.filter(
+      (r) => r.eligible === true && r.p50_ms != null && r.p95_ms != null,
+    );
+    return { geo, rows, eligible, scored: scorePerGeo({ eligible }, weights) };
+  });
+
+  if (selectedGeo) {
+    const outcome = outcomes.find((o) => o.geo === selectedGeo);
+    if (!outcome) return [];
+    return buildSingleLeaderRows(outcome).rows.map((r) => ({
+      provider_id: r.provider_id,
+      provider_name: r.provider_name,
+      total: r.total,
+    }));
+  }
+
+  const map = new Map(outcomes.map((o) => [o.geo, o.scored]));
+  const blended = blendRegionScores(map, DEFAULT_REGION_WEIGHTS);
+  return buildOverallLeaderRows(blended, outcomes).map((r) => ({
+    provider_id: r.provider_id,
+    provider_name: r.provider_name,
+    total: r.total,
+  }));
 }

@@ -4,6 +4,8 @@ import {
   PipelineStatusView,
   StatusTimelineSection,
   StatusTimelineSkeleton,
+  StatusHealthSections,
+  StatusHealthSkeleton,
 } from "@/components/PipelineStatus";
 import { AutoRefresh } from "@/components/AutoRefresh";
 
@@ -27,6 +29,11 @@ export default async function StatusPage() {
           + cloud matrix above paint immediately. */}
       <Suspense fallback={<StatusTimelineSkeleton />}>
         <StatusTimelineSection />
+      </Suspense>
+      {/* Fleet health + consensus integrity (the last section). Streamed too,
+          so the live funnel + cloud matrix above never wait on them. */}
+      <Suspense fallback={<StatusHealthSkeleton />}>
+        <StatusHealthSections />
       </Suspense>
     </div>
   );

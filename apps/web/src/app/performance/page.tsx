@@ -15,12 +15,9 @@ import { ALL_METHODS } from "@/lib/methods";
 import { WINDOWS } from "@/lib/windows";
 import { Suspense } from "react";
 import { ChartPanel, ChartLoading } from "@/components/ChartSection";
-import { ProviderHealth } from "@/components/ProviderHealth";
-import { FloatingTooltip } from "@/components/FloatingTooltip";
 import { MethodRegionTabs } from "@/components/MethodRegionTabs";
-import { RecentChallengesTable } from "@/components/RecentChallengesTable";
-import { BucketLegend } from "@/components/BucketLegend";
-import { fetchRecentChallenges, type RecentChallenge } from "@/lib/recentChallenges";
+import { ScoreStrip } from "@/components/ScoreStrip";
+import { buildMiniScoreRows } from "@/components/leaderboardShared";
 import {
   fetchActiveGeos,
   fetchActiveInfraGeo,
@@ -32,8 +29,6 @@ import {
   type MethodLatencyRow,
   type MethodGeoLatencyRow,
 } from "@/lib/leaderboard";
-import { fetchProviderHealth, EMPTY_HEALTH } from "@/lib/health";
-import { fetchConsensusRates, type ConsensusRate } from "@/lib/consensus";
 import { DB_ERROR_MESSAGE } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
@@ -112,11 +107,8 @@ export default async function PerformancePage({
   let activeGeos: GeoRegion[] = [];
   let activeInfraGeo: InfraGeoPair[] = [];
   let activeProviders: string[] = [];
-  let consensusRates: ConsensusRate[] = [];
   let methodLat: MethodLatencyRow[] = [];
   let methodGeoLat: MethodGeoLatencyRow[] = [];
-  let recentChallenges: RecentChallenge[] = [];
-  let health = EMPTY_HEALTH;
   let error: string | null = null;
 
   try {
@@ -134,31 +126,24 @@ export default async function PerformancePage({
           return { geo: g, rows };
         }),
       );
-    const [healthData, conRates, providers, ml, mgl, regionColdRaw, regionWarmRaw, recent] =
-      await Promise.all([
-        fetchProviderHealth(),
-        fetchConsensusRates(),
-        fetchActiveProviders(),
-        fetchMethodLatency({
-          windowHours,
-          ...(selectedProvider ? { workerProvider: selectedProvider } : {}),
-        }),
-        fetchMethodGeoLatency({
-          windowHours,
-          ...(selectedProvider ? { workerProvider: selectedProvider } : {}),
-        }),
-        fetchGeoRows(activeGeos, "cold"),
-        fetchGeoRows(activeGeos, "warm"),
-        fetchRecentChallenges(20),
-      ]);
+    const [providers, ml, mgl, regionColdRaw, regionWarmRaw] = await Promise.all([
+      fetchActiveProviders(),
+      fetchMethodLatency({
+        windowHours,
+        ...(selectedProvider ? { workerProvider: selectedProvider } : {}),
+      }),
+      fetchMethodGeoLatency({
+        windowHours,
+        ...(selectedProvider ? { workerProvider: selectedProvider } : {}),
+      }),
+      fetchGeoRows(activeGeos, "cold"),
+      fetchGeoRows(activeGeos, "warm"),
+    ]);
     regionTableCold = regionColdRaw;
     regionTableWarm = regionWarmRaw;
-    health = healthData;
-    consensusRates = conRates;
     activeProviders = providers;
     methodLat = ml;
     methodGeoLat = mgl;
-    recentChallenges = recent;
   } catch (err) {
     console.error("[/performance]", err);
     error = DB_ERROR_MESSAGE;
@@ -308,6 +293,13 @@ export default async function PerformancePage({
     </>
   );
 
+  // Overall-score board (above the chart) — reuses the Overview's scoring
+  // pipeline over the already-fetched per-geo aggregates for the active
+  // connection mode, so it tracks the current region/infra/window/method.
+  const scoreTable = connectionMode === "warm" ? regionTableWarm : regionTableCold;
+  const miniScores = buildMiniScoreRows(scoreTable, selectedGeo);
+  const scoresRanked = miniScores.some((r) => r.total > 0);
+
   const chartKey = [
     selectedGeo ?? "all",
     windowHours,
@@ -318,19 +310,23 @@ export default async function PerformancePage({
 
   return (
     <div>
-      <header className="max-w-[820px] pt-1">
-        <span className="section-kicker">Performance</span>
-        <h1 className="text-[clamp(26px,4vw,38px)] font-semibold tracking-[-0.025em] leading-[1.08] mt-2 mb-0 text-fg">
-          Latency, by method &amp; region
-        </h1>
-        <p className="mt-3 text-[14.5px] leading-[1.6] text-fg2 max-w-[64ch]">
-          A closer look behind the{" "}
-          <Link href="/" className="text-accent hover:underline">
-            Overview ranking
-          </Link>
-          : latency over time, per-method and per-region breakdowns, fleet health, and
-          consensus checks. Filter by region, infra, time window, connection mode, and method.
-        </p>
+      <header className="pt-1 flex flex-col lg:flex-row lg:items-start lg:justify-between gap-x-12 gap-y-6">
+        <div className="max-w-[560px]">
+          <h1 className="text-[clamp(26px,4vw,38px)] font-semibold tracking-[-0.025em] leading-[1.08] mt-2 mb-0 text-fg">
+            Latency, by method &amp; region
+          </h1>
+          <p className="mt-3 text-[14.5px] leading-[1.6] text-fg2">
+            A closer look behind the{" "}
+            <Link href="/" className="text-accent hover:underline">
+              Overview ranking
+            </Link>
+            : latency over time plus per-method and per-region breakdowns. Filter by
+            region, infra, time window, connection mode, and method.
+          </p>
+        </div>
+        <div className="w-full lg:w-[360px] shrink-0 lg:pt-3">
+          <ScoreStrip rows={miniScores} ranked={scoresRanked} />
+        </div>
       </header>
 
       {error && (
@@ -343,7 +339,6 @@ export default async function PerformancePage({
       <section className="pt-8">
         <div className="flex justify-between items-start gap-8 mb-[18px]">
           <div>
-            <span className="section-kicker">01 · Performance over time</span>
             <h2 className="text-[26px] font-medium tracking-[-0.022em] mt-2 mb-0">
               Performance over time
             </h2>
@@ -374,184 +369,6 @@ export default async function PerformancePage({
           selectedProvider ? (WORKER_PROVIDER_LABELS[selectedProvider] ?? selectedProvider) : undefined
         }
       />
-
-      {/* Fleet health strip. */}
-      <section className="home-extra">
-        <div className="prov-section">
-          <div className="prov-section-head">
-            <span className="section-kicker">Fleet health · 15m</span>
-          </div>
-          <div className="mt-3">
-            <ProviderHealth
-              benchmarked={health.benchmarked}
-              auditor={health.auditor}
-              infra={health.infra}
-              windowLabel="15m"
-            />
-          </div>
-        </div>
-      </section>
-
-      {/* Recent challenges — live, sampled, all providers. */}
-      <section className="home-extra">
-        <div className="prov-section">
-          <div className="prov-section-head">
-            <span className="inline-flex items-center gap-1.5">
-              <span className="section-kicker">Recent challenges · sampled</span>
-              <BucketLegend />
-            </span>
-            <span className="prov-section-count">
-              last {recentChallenges.length} ·{" "}
-              <Link href="/challenges" className="section-link-arrow">
-                view all &amp; filter
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <path
-                    d="M5 12h14M13 5l7 7-7 7"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    fill="none"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              </Link>
-            </span>
-          </div>
-          <div className="prov-table-wrap is-scroll">
-            <RecentChallengesTable initial={recentChallenges} />
-          </div>
-        </div>
-      </section>
-
-      {/* Consensus integrity — daily breakdown of no-consensus, disputed, and
-          auditor-unavailable rates. Sampled via consensus_log so totals are a
-          slice of traffic, not the full population — ratios still meaningful. */}
-      <section className="home-extra">
-        <div className="prov-section">
-          <div className="prov-section-head">
-            <span className="section-kicker">Consensus integrity · 14d</span>
-            <span className="prov-section-count">
-              {health.auditor.consensus_accuracy_pct === null
-                ? "finality re-verification: not yet sampled"
-                : `finality-verified accuracy: ${health.auditor.consensus_accuracy_pct.toFixed(2)}% over ${health.auditor.consensus_audited_n.toLocaleString()} challenges`}
-            </span>
-          </div>
-          {consensusRates.length === 0 ? (
-            <p className="prov-empty">No consensus_log entries yet.</p>
-          ) : (
-            <div className="prov-table-wrap is-scroll">
-              <table className="prov-table">
-                <thead>
-                  <tr>
-                    <th>
-                      <FloatingTooltip
-                        title="Day"
-                        trigger={
-                          <span style={{ borderBottom: "1px dotted #555", cursor: "help" }}>Day</span>
-                        }
-                      >
-                        <div className="font-medium mb-1.5">Day</div>
-                        <div className="text-neutral-400">
-                          Calendar day (UTC) the consensus decisions were finalized, most
-                          recent first. The table covers the last 14 days.
-                        </div>
-                      </FloatingTooltip>
-                    </th>
-                    <th className="prov-num">
-                      <FloatingTooltip
-                        title="Sampled"
-                        trigger={
-                          <span style={{ borderBottom: "1px dotted #555", cursor: "help" }}>Sampled</span>
-                        }
-                      >
-                        <div className="font-medium mb-1.5">Sampled</div>
-                        <div className="text-neutral-400">
-                          Consensus-log entries recorded that day. Logging is selective
-                          (every disputed and no-consensus challenge plus a 1% sample of
-                          clean archive traffic), so this is a <strong>slice</strong> of
-                          all challenges, not the full population. The percentages stay
-                          meaningful; the absolute counts do not.
-                        </div>
-                      </FloatingTooltip>
-                    </th>
-                    <th className="prov-num">
-                      <FloatingTooltip
-                        title="No-consensus"
-                        trigger={
-                          <span style={{ borderBottom: "1px dotted #555", cursor: "help" }}>No-consensus</span>
-                        }
-                      >
-                        <div className="font-medium mb-1.5">No-consensus</div>
-                        <div className="text-neutral-400">
-                          The benchmarked-provider panel couldn&apos;t agree on a single
-                          correct answer (decision = <code>ambiguous</code>). These
-                          challenges are dropped from scoring. Lower is better.
-                        </div>
-                      </FloatingTooltip>
-                    </th>
-                    <th className="prov-num">
-                      <FloatingTooltip
-                        title="Disputed"
-                        trigger={
-                          <span style={{ borderBottom: "1px dotted #555", cursor: "help" }}>Disputed</span>
-                        }
-                      >
-                        <div className="font-medium mb-1.5">Disputed</div>
-                        <div className="text-neutral-400">
-                          The panel agreed, but the independent auditor disagreed with the
-                          panel&apos;s answer (auditor verdict = <code>disputed</code>).
-                          These samples are dropped from scoring. Lower is better.
-                        </div>
-                      </FloatingTooltip>
-                    </th>
-                    <th className="prov-num">
-                      <FloatingTooltip
-                        title="Auditor down"
-                        trigger={
-                          <span style={{ borderBottom: "1px dotted #555", cursor: "help" }}>Auditor down</span>
-                        }
-                      >
-                        <div className="font-medium mb-1.5">Auditor down</div>
-                        <div className="text-neutral-400">
-                          The panel agreed, but the auditor was unreachable so its answer
-                          couldn&apos;t be cross-checked (auditor verdict ={" "}
-                          <code>auditor_unavailable</code>). Samples are kept but flagged.
-                          Lower is better.
-                        </div>
-                      </FloatingTooltip>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {consensusRates.map((r) => (
-                    <tr key={r.day}>
-                      <td className="prov-amb-day">{r.day}</td>
-                      <td className="prov-num">{r.total.toLocaleString()}</td>
-                      <td className="prov-num">
-                        {r.no_consensus.toLocaleString()}
-                        {r.total > 0 && (
-                          <span style={{ color: "#666", marginLeft: 4 }}>
-                            ({((r.no_consensus / r.total) * 100).toFixed(1)}%)
-                          </span>
-                        )}
-                      </td>
-                      <td className="prov-num">
-                        {r.disputed.toLocaleString()}
-                        {r.total > 0 && (
-                          <span style={{ color: "#666", marginLeft: 4 }}>
-                            ({((r.disputed / r.total) * 100).toFixed(1)}%)
-                          </span>
-                        )}
-                      </td>
-                      <td className="prov-num">{r.auditor_unavailable.toLocaleString()}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      </section>
     </div>
   );
 }

@@ -326,7 +326,7 @@ export default async function ChallengesPage({
       </div>
 
       {/* Results table — client component that polls /api/challenges with the
-          active filters, exactly like RecentChallengesTable on /performance. */}
+          active filters. */}
       {!error && (
         <ChallengesTable
           initial={rows}

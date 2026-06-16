@@ -12,7 +12,7 @@ import type {
   BenchmarkedHealth,
   InfraVantageHealth,
   AuditorHealth,
-} from "@/components/ProviderHealth";
+} from "@/lib/healthTypes";
 
 export interface ProviderHealthSnapshot {
   benchmarked: BenchmarkedHealth[];
@@ -139,16 +139,3 @@ export const fetchProviderHealth = unstable_cache(
   ["fetchProviderHealth"],
   { revalidate: CACHE_TTL_S },
 );
-
-/** Empty snapshot for the page-level error fallback. */
-export const EMPTY_HEALTH: ProviderHealthSnapshot = {
-  benchmarked: [],
-  auditor: {
-    last_ok_at: null,
-    healthy: false,
-    any_open: false,
-    consensus_accuracy_pct: null,
-    consensus_audited_n: 0,
-  },
-  infra: [],
-};

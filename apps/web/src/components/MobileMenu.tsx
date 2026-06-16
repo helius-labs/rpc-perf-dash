@@ -17,7 +17,7 @@ import { useFleetStatus } from "./useFleetStatus";
 export default function MobileMenu() {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
-  const fleetStatus = useFleetStatus();
+  const fleet = useFleetStatus();
 
   // Close on route change so tapping a link doesn't leave the drawer open.
   useEffect(() => {
@@ -108,7 +108,7 @@ export default function MobileMenu() {
                   <span
                     className="inline-flex h-2 w-2 rounded-full"
                     aria-hidden="true"
-                    style={{ background: fleetStatus ? FLEET_DOT[fleetStatus] : FLEET_DOT.absent }}
+                    style={{ background: fleet ? FLEET_DOT[fleet.status] : FLEET_DOT.absent }}
                   />
                 )}
               </Link>

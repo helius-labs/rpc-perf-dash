@@ -6,10 +6,9 @@
  * page's SSR fetch (lib/challengeRows.ts), so the poll returns exactly the
  * slice the page rendered.
  *
- * Caching matches /api/recent-challenges: 10s server-side cache
- * (unstable_cache, shared with the SSR call) + 5s CDN cache with
- * stale-while-revalidate, so N polling clients converge to ~1 DB query / 10s
- * per filter set.
+ * Caching: 10s server-side cache (unstable_cache, shared with the SSR call) +
+ * 5s CDN cache with stale-while-revalidate, so N polling clients converge to
+ * ~1 DB query / 10s per filter set.
  *
  * No auth — same public data the page renders.
  */

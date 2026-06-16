@@ -9,12 +9,12 @@
  */
 
 import { useEffect, useState } from "react";
-import { FLEET_DOT, type FleetStatus } from "@/lib/fleetStatus";
+import { FLEET_DOT, type FleetSummary } from "@/lib/fleetStatus";
 
 const REFRESH_MS = 60_000;
 
-export function useFleetStatus(): FleetStatus | null {
-  const [status, setStatus] = useState<FleetStatus | null>(null);
+export function useFleetStatus(): FleetSummary | null {
+  const [summary, setSummary] = useState<FleetSummary | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -22,10 +22,10 @@ export function useFleetStatus(): FleetStatus | null {
       try {
         const r = await fetch("/api/fleet-status", { cache: "no-store" });
         if (!r.ok) return;
-        const d = (await r.json()) as { status: FleetStatus };
-        if (!cancelled && d.status in FLEET_DOT) setStatus(d.status);
+        const d = (await r.json()) as FleetSummary;
+        if (!cancelled && d.status in FLEET_DOT) setSummary(d);
       } catch {
-        // keep the last known status
+        // keep the last known summary
       }
     };
     poll();
@@ -36,5 +36,5 @@ export function useFleetStatus(): FleetStatus | null {
     };
   }, []);
 
-  return status;
+  return summary;
 }
