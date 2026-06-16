@@ -358,6 +358,30 @@ Loosens eligibility thresholds for fresh dashboard rendering during local dev. *
 - **Pooled** (`NEON_DATABASE_URL_POOLED`, the `-pooler` URL): for workers. High concurrency, transaction-pooler mode → **prepared statements are unsupported**. The drizzle config explicitly disables them.
 - **Direct** (`NEON_DATABASE_URL_DIRECT` / `_UNPOOLED`): for the generator + migrations + the CLI benchmark. Long-lived connection, full SQL support.
 
+### Storage & retention (keep the DB bounded)
+Every table now has explicit retention, tiered to exactly what the dashboard reads (max display window is 720h / 30d; granularity coarsens as the window widens — see `apps/web/src/lib/chartData.ts`). The generator owns all of it:
+
+| Data | Retention | Where | Reader that sets the floor |
+|---|---|---|---|
+| `challenges.reference_response` (JSON payload) | **6h, then nulled** | `trimReferenceResponses` (`maintenance.ts`) | worker at claim (~30s window); `/raw` page shows "trimmed" past 6h. `reference_hash` (used by scoring + `runFinalityRecheck`) is kept forever. |
+| `challenges` rows (+ FK children) | 31d | `pruneControlTables` (`maintenance.ts`) | `/challenges` (≤720h). Cascades to `challenge_assignments`, `consensus_log`, `consensus_audit`, `quorum_log`. |
+| `eligibility` | 31d | `pruneControlTables` | write-only (gates derived inline via `eligibilityFloors`); pruned by `window_end`. |
+| `rollups_5m` | **2d** | `pruneOldRollups5m` (`rollup.ts`) | chart ≤24h + eligibility's 4h window. |
+| `rollups_1h` | 8d | `pruneOldRollups1h1d` | chart 24h–7d (also `provider/[id]` 24h). |
+| `rollups_1d` | 31d | `pruneOldRollups1h1d` | chart >7d–30d. |
+| `leaderboard_*_1h`, `latency_histogram_1h` | 8d | `pruneLeaderboard` | leaderboard/API ≤7d. |
+| `leaderboard_*_1d`, `latency_histogram_1d` | 31d | `pruneLeaderboard` | leaderboard/API >7d–30d. |
+| `samples` / `samples_archived` | 30d / 90d | `partitions.ts` (DROP partition) | `/challenges` joins samples ≤720h. Unchanged — see § Partition management. |
+
+The `reference_response` trim + control-table prune run on a dedicated 5-min interval (`runMaintenance`), decoupled from the rollup tick (the leaderboard CTE there can overrun and starve tail work). Both are batched (`ctid IN (SELECT … LIMIT n)`) and capped per firing, so the first post-deploy run drains the backlog over several ticks rather than one giant transaction. The trim's inner SELECT is backed by the partial index `challenges_ref_pending_idx`, and the eligibility prune by `eligibility_window_end_idx` (both migration 0022). The trim SELECT carries an `ORDER BY generated_at` that is **load-bearing**: non-null payloads are almost all <6h old, so the planner overestimates the `reference_response IS NOT NULL AND generated_at < 6h` match count (assumes the two predicates are independent) and, under `LIMIT`, would otherwise pick a full ~1.3GB seq scan of `challenges` every 5 min. The `ORDER BY` forces use of the partial index's ordering, bounding the scan to the genuinely-old rows. `ANALYZE` alone does **not** fix this (it's a cross-predicate correlation, not stale single-column stats) — do not remove the `ORDER BY`.
+
+### One-time storage reclaim (nulling/deleting alone won't shrink Neon)
+Postgres marks tuples dead on UPDATE/DELETE but doesn't return the space to the OS, and Neon additionally retains old page versions for its history/PITR window. To actually reclaim the ~158 GB of historical `reference_response` after the trim job has drained the backlog:
+1. Confirm the trim has caught up: `SELECT count(*) FROM challenges WHERE reference_response IS NOT NULL AND generated_at < now() - interval '6 hours'` should be ~0.
+2. Physically rewrite `challenges` to drop the dead TOAST. Preferred: **pg_repack** (online, no long lock) — `CREATE EXTENSION IF NOT EXISTS pg_repack;` then `pg_repack -t challenges -d neondb`. If pg_repack isn't available on the Neon plan, fall back to `VACUUM FULL challenges` in a low-traffic window (takes an `ACCESS EXCLUSIVE` lock → blocks challenge inserts for the rewrite duration).
+3. Reduce the Neon **history/PITR retention** window (Neon console → project settings) so the freed pages age out — required for the reclaim (and the "History" line) to actually drop.
+4. Verify with `pg_database_size(current_database())` and the per-table `pg_total_relation_size` query.
+
 ---
 
 ## Adding a benchmarked method

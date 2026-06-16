@@ -300,7 +300,11 @@ export default async function RawPage({
 
       <Collapsible className="mt-3" title="Reference response">
         <pre className={PRE_CLS}>
-          {seedRevealed ? safeStringify(challenge.reference_response) : "Reference hidden until expiry."}
+          {!seedRevealed
+            ? "Reference hidden until expiry."
+            : challenge.reference_response == null
+              ? "Reference payload trimmed 6h after generation to bound storage; the reference hash above is retained permanently."
+              : safeStringify(challenge.reference_response)}
         </pre>
       </Collapsible>
 

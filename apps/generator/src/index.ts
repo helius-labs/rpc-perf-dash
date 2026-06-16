@@ -26,6 +26,7 @@ import {
   writeHeartbeat,
 } from "./heartbeat.js";
 import { ensurePartitions } from "./partitions.js";
+import { runMaintenance } from "./maintenance.js";
 import { ensureProvidersSeeded } from "./seed-providers.js";
 import {
   ROLLUP_INTERVAL_MS,
@@ -107,6 +108,10 @@ const HEARTBEAT_INTERVAL_MS = 5_000;
 const PARTITION_CRON_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const SEED_REVEAL_INTERVAL_MS = 60_000;
 const EXPIRE_STALE_INTERVAL_MS = 60_000;
+// Storage-bounding maintenance (reference_response trim + control-table prune).
+// Every 5 min is plenty: only ~375 challenges cross the 6h frontier per such
+// interval at steady state. See apps/generator/src/maintenance.ts.
+const MAINTENANCE_INTERVAL_MS = 5 * 60 * 1000;
 
 /**
  * Fisher-Yates partial shuffle: pick K random elements without replacement,
@@ -718,6 +723,27 @@ async function main() {
   // Kick once at startup so the consensus-accuracy metric on the dashboard
   // populates without waiting two minutes.
   runFinality();
+
+  // Storage-bounding maintenance — own interval + overlap guard, decoupled from
+  // the rollup tick (its long CTE would otherwise starve this). Trims old
+  // reference_response payloads and caps the control-plane tables at 31d. The
+  // first post-deploy run drains the ~1.4M-row reference_response backlog over
+  // several ticks (MAX_BATCHES_PER_RUN per firing). Run at startup too.
+  let maintenanceInFlight = false;
+  const runMaintenanceJob = () => {
+    if (maintenanceInFlight) {
+      console.warn("[maintenance] previous run still running, skipping this firing");
+      return;
+    }
+    maintenanceInFlight = true;
+    runMaintenance(db)
+      .catch((err) => console.error("[maintenance]", (err as Error).message))
+      .finally(() => {
+        maintenanceInFlight = false;
+      });
+  };
+  setInterval(runMaintenanceJob, MAINTENANCE_INTERVAL_MS);
+  runMaintenanceJob();
 
   // Use unref to allow shutdown signals; main process stays alive on intervals.
   await new Promise(() => {}); // run forever

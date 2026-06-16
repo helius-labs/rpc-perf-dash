@@ -266,6 +266,11 @@ recompute those with `JSON.stringify(params)` as stored.) When the scoring or
 comparison rules change, we bump the methodology version so past results stay
 coherent.
 
+The independent reference's full response payload is shown for the first 6 hours
+after a test is generated, then trimmed to bound storage; its canonical
+reference hash — what the verdict is computed against — is retained permanently,
+so the audit verdict on any test stays verifiable indefinitely.
+
 ## Anti-gaming defenses
 
 A provider that can recognize benchmark traffic can serve it from a fast path

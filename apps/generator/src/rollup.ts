@@ -230,8 +230,19 @@ export async function rollup1d(db: DbClient, lookback = "2 days"): Promise<void>
   `);
 }
 
+// Retention is tiered to exactly what the dashboard reads (see
+// apps/web/src/lib/chartData.ts table-selection): rollups_5m only feeds charts
+// ≤24h (and the eligibility refresh's 4h window), so 2 days is ample buffer.
+// rollups_1h feeds 24h–7d, rollups_1d feeds >7d–30d. Keeping all three at 30d
+// (the old behaviour, and rollups_1h/1d previously unpruned entirely) was
+// storing ~15× more 5m rows than anything queries them.
 async function pruneOldRollups5m(db: DbClient): Promise<void> {
-  await db.execute(sql`DELETE FROM rollups_5m WHERE window_start < now() - interval '30 days'`);
+  await db.execute(sql`DELETE FROM rollups_5m WHERE window_start < now() - interval '2 days'`);
+}
+
+async function pruneOldRollups1h1d(db: DbClient): Promise<void> {
+  await db.execute(sql`DELETE FROM rollups_1h WHERE window_start < now() - interval '8 days'`);
+  await db.execute(sql`DELETE FROM rollups_1d WHERE window_start < now() - interval '31 days'`);
 }
 
 function sqlLit(s: string): string {
@@ -542,15 +553,18 @@ export async function rollupLeaderboard(
   });
 }
 
+// Retention tiered to dashboard reads: the *_1h tables only feed windows ≤7d,
+// the *_1d tables feed >7d–30d. Keep 8d / 31d respectively (one extra day of
+// buffer past each window boundary).
 async function pruneLeaderboard(db: DbClient): Promise<void> {
-  await db.execute(sql`DELETE FROM leaderboard_agg_1h        WHERE window_start < now() - interval '30 days'`);
-  await db.execute(sql`DELETE FROM leaderboard_agg_1d        WHERE window_start < now() - interval '30 days'`);
-  await db.execute(sql`DELETE FROM leaderboard_challenges_1h WHERE window_start < now() - interval '30 days'`);
-  await db.execute(sql`DELETE FROM leaderboard_challenges_1d WHERE window_start < now() - interval '30 days'`);
-  await db.execute(sql`DELETE FROM leaderboard_failures_1h   WHERE window_start < now() - interval '30 days'`);
-  await db.execute(sql`DELETE FROM leaderboard_failures_1d   WHERE window_start < now() - interval '30 days'`);
-  await db.execute(sql`DELETE FROM latency_histogram_1h      WHERE window_start < now() - interval '30 days'`);
-  await db.execute(sql`DELETE FROM latency_histogram_1d      WHERE window_start < now() - interval '30 days'`);
+  await db.execute(sql`DELETE FROM leaderboard_agg_1h        WHERE window_start < now() - interval '8 days'`);
+  await db.execute(sql`DELETE FROM leaderboard_agg_1d        WHERE window_start < now() - interval '31 days'`);
+  await db.execute(sql`DELETE FROM leaderboard_challenges_1h WHERE window_start < now() - interval '8 days'`);
+  await db.execute(sql`DELETE FROM leaderboard_challenges_1d WHERE window_start < now() - interval '31 days'`);
+  await db.execute(sql`DELETE FROM leaderboard_failures_1h   WHERE window_start < now() - interval '8 days'`);
+  await db.execute(sql`DELETE FROM leaderboard_failures_1d   WHERE window_start < now() - interval '31 days'`);
+  await db.execute(sql`DELETE FROM latency_histogram_1h      WHERE window_start < now() - interval '8 days'`);
+  await db.execute(sql`DELETE FROM latency_histogram_1d      WHERE window_start < now() - interval '31 days'`);
 }
 
 async function refreshEligibility(db: DbClient): Promise<void> {
@@ -640,6 +654,7 @@ export async function runHeavyRollups(db: DbClient): Promise<void> {
   await rollup1h(db);
   await rollup1d(db);
   await pruneOldRollups5m(db);
+  await pruneOldRollups1h1d(db);
   await refreshEligibility(db);
 }
 

@@ -243,7 +243,6 @@ export function MethodRegionTabs({
     <section className="pt-10">
       <div className="flex justify-between items-end gap-3 mb-4 flex-wrap">
         <div>
-          <span className="section-kicker">03 · Per-method &amp; region breakdown</span>
           <h2 className="text-[20px] md:text-[26px] font-medium tracking-[-0.022em] mt-2 mb-0">
             {mode} {percentile} latency by method &amp; region
             {infraLabel ? <span className="text-fg2"> on {infraLabel}</span> : null}

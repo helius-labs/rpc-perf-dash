@@ -126,9 +126,57 @@ sed -e "s/__IMAGE_TAG__/$TAG/g" -e "s/__ACCOUNT_ID__/$ACCOUNT_ID/g" \
 # (`main: src/index.ts`) resolve correctly regardless of where this script
 # is invoked from.
 log "deploying Worker + container binding"
-wrangler deploy --config "$WRANGLER_TMP" --cwd "$CF_DIR"
+# Capture the output so Step 6 can pull the deployed workers.dev URL out of it
+# (keeps this committed file free of account-specific hostnames). `set -e`
+# still aborts the script if wrangler deploy exits non-zero.
+DEPLOY_OUT="$(wrangler deploy --config "$WRANGLER_TMP" --cwd "$CF_DIR" 2>&1)"
+printf '%s\n' "$DEPLOY_OUT"
+
+# ── Step 6: wake the container lanes ──────────────────────────────────────
+# wrangler deploy recycles the 6 DO containers, but they come back `inactive`:
+# only INBOUND HTTP to the Worker counts as activity for `sleepAfter` — the
+# container's internal Neon poll loop (which writes worker_heartbeat) does NOT.
+# So a freshly-deployed CF vantage stays dark — no heartbeats, hence absent
+# from the dashboard's Infra filter + health cards — until something hits the
+# Worker, which otherwise only happens on the 6h keep-alive cron. Bridge that
+# gap here: curl /healthcheck until every lane has answered (fetch() routes to
+# a random lane and echoes x-cf-lane), so all 6 boot now instead of hours later.
+#
+# CF_WORKER_URL overrides the URL if the deploy output can't be parsed (e.g.
+# workers_dev disabled in favor of a custom route).
+WORKER_URL="${CF_WORKER_URL:-$(grep -oE 'https://[a-z0-9._-]+\.workers\.dev' <<<"$DEPLOY_OUT" | head -1)}"
+if [[ -z "$WORKER_URL" ]]; then
+  log "WARN: couldn't determine the Worker URL from deploy output — wake the lanes manually:"
+  log "      for i in \$(seq 12); do curl -s https://rpc-bench-worker-cf.<subdomain>.workers.dev/healthcheck; done"
+else
+  log "waking container lanes via $WORKER_URL/healthcheck (until all 6 lanes answer)"
+  seen=" "          # space-delimited set of lanes already woken
+  n_seen=0
+  attempt=0
+  while [[ $n_seen -lt 6 && $attempt -lt 30 ]]; do
+    attempt=$((attempt + 1))
+    # -D - dumps response headers; first hit to a cold lane can take a few
+    # seconds (firecracker cold start), hence the generous -m 30.
+    lane="$(curl -s -m 30 -D - -o /dev/null "$WORKER_URL/healthcheck" 2>/dev/null \
+              | tr -d '\r' | awk 'tolower($1) == "x-cf-lane:" { print $2 }')"
+    if [[ -z "$lane" ]]; then
+      log "  attempt $attempt: no x-cf-lane header (worker still cold?) — retrying"
+      continue
+    fi
+    if [[ "$seen" != *" $lane "* ]]; then
+      seen="$seen$lane "
+      n_seen=$((n_seen + 1))
+    fi
+    log "  attempt $attempt: lane $lane up ($n_seen/6 distinct)"
+  done
+  if [[ $n_seen -lt 6 ]]; then
+    log "WARN: only woke $n_seen/6 lanes after $attempt attempts — the 6h keep-alive"
+    log "      cron will catch the stragglers, or re-run the curl loop above."
+  else
+    log "all 6 lanes awake:$seen"
+  fi
+fi
 
 log "DONE."
 log "next: wrangler tail rpc-bench-worker-cf  # stream logs"
-log "      curl https://rpc-bench-worker-cf.<your-subdomain>.workers.dev/  # probe healthcheck"
 log "      SELECT * FROM worker_heartbeat WHERE worker_provider='cloudflare';  # confirm registry pickup"
