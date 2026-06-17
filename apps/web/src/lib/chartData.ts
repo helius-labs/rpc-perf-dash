@@ -41,23 +41,35 @@ export interface ChartQuery {
   connectionMode?: "cold" | "warm";
   /** If set, restrict to a single benchmarked provider (for /provider/[id]). */
   provider_id?: string;
+  /**
+   * Pool every vantage instead of filtering to `cloudPairs`. When true the
+   * `(worker_provider, region) IN (...)` clause is dropped entirely, so the
+   * query relies on the provider_id + connection_mode + method + window_start
+   * index (rollups_5m_provider_chart_idx) instead of expanding a large pair
+   * list into a many-branch BitmapOr. MUST be paired with `provider_id` — without
+   * it the query would pool every provider across every vantage. Used by the
+   * provider deep-dive (/provider/[id]), which pools all geos for one provider.
+   */
+  allVantages?: boolean;
 }
 
 async function fetchLatencySeriesImpl(opts: ChartQuery): Promise<ChartSeries[]> {
   if (opts.methods.length === 0) return [];
-  if (opts.cloudPairs.length === 0) return [];
+  if (!opts.allVantages && opts.cloudPairs.length === 0) return [];
 
   const methodsLiteral = sql.raw(
     opts.methods.map((m) => `'${m.replace(/'/g, "''")}'`).join(","),
   );
-  const pairLiteral = sql.raw(
-    opts.cloudPairs
-      .map(
-        (p) =>
-          `(${escapeLit(p.worker_provider)},${escapeLit(p.region)})`,
-      )
-      .join(","),
-  );
+  // allVantages pools every vantage → drop the pair filter entirely (relies on
+  // rollups_5m_provider_chart_idx via provider_id below). Otherwise filter to the
+  // explicit (worker_provider, region) list.
+  const pairFilter = opts.allVantages
+    ? sql``
+    : sql`AND (r.worker_provider, r.region) IN (${sql.raw(
+        opts.cloudPairs
+          .map((p) => `(${escapeLit(p.worker_provider)},${escapeLit(p.region)})`)
+          .join(","),
+      )})`;
   const providerFilter = opts.provider_id
     ? sql`AND r.provider_id = ${opts.provider_id}`
     : sql``;
@@ -87,7 +99,7 @@ async function fetchLatencySeriesImpl(opts: ChartQuery): Promise<ChartSeries[]> 
     FROM ${sourceTable} r
     JOIN providers p ON p.id = r.provider_id AND p.benchmarked = true
     WHERE r.connection_mode = ${mode}
-      AND (r.worker_provider, r.region) IN (${pairLiteral})
+      ${pairFilter}
       AND r.method IN (${methodsLiteral})
       AND r.window_start > now() - make_interval(hours => ${opts.windowHours})
       AND r.latency_p95 IS NOT NULL

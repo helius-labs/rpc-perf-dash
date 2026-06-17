@@ -5,9 +5,9 @@ import { notFound, redirect } from "next/navigation";
 import {
   GEO_REGIONS,
   GEO_REGION_LABELS,
+  METHODOLOGY_VERSION,
   POOLED_INFRA,
   benchmarkedProviderByRouteParam,
-  cloudRegionsForGeo,
   providerSlug,
   type GeoRegion,
   type Method,
@@ -32,18 +32,8 @@ export const dynamic = "force-dynamic";
 
 interface MethodRow {
   method: string;
-  bucket: string;
   p50_cold: number | null;
-  p95_cold: number | null;
-  p99_cold: number | null;
-  p50_warm: number | null;
-  p95_warm: number | null;
-  p99_warm: number | null;
   sample_count_valid: number;
-  correctness_rate: number | null;
-  completeness_rate: number | null;
-  honeypot_total: number;
-  honeypot_pass_count: number;
 }
 
 interface FailureBreakdownRow {
@@ -94,48 +84,38 @@ const fetchMethodBreakdown = unstable_cache(
 );
 
 async function fetchMethodBreakdownImpl(providerId: string): Promise<MethodRow[]> {
-  // Read from the pre-aggregated hourly rollups (rollups_1h) rather than scanning
-  // raw `samples`. The old exact-percentile query over raw samples could only seek
-  // on provider_id (started_at is not a leading index column), so it scanned the
-  // provider's ENTIRE sample history to keep the last 24h — ~20s on a busy
-  // provider. rollups_1h is provider_id-keyed and tiny (≈methods×regions×buckets×
-  // modes×24 rows), so this is the same source the home/chart pages use.
+  // Section 04 renders only per-method sample-weighted p50 (cold) — see
+  // p50ByMethod(), the sole consumer of these rows. So read the pooled
+  // leaderboard precompute (leaderboard_agg_1h, worker_provider='__all__' rows,
+  // vantages already rolled up at write time) instead of scanning raw per-vantage
+  // rollups_1h. For one provider/24h that's ~hundreds of rows via the
+  // provider-leading leaderboard_agg_1h_provider_method_idx (migration 0023),
+  // versus the ~80k scattered per-vantage rows the rollups_1h scan read.
   //
-  // Percentiles can't be recombined exactly across rollup windows, so we take a
-  // sample-weighted mean of each window's p50/p95/p99 — consistent with the
-  // sample-weighted aggregation `p50ByMethod` already applies across buckets.
+  // GROUP BY method pools across geos; the weight-average mirrors leaderboard.ts.
+  // p50 here is correct-only (latency_p50_correct) — consistent with the score /
+  // leaderboard, which already use correct-only percentiles.
   const rows = await db().execute(sql`
     SELECT
-      method, bucket,
-      (sum(latency_p50 * sample_count_valid) FILTER (WHERE connection_mode='cold' AND latency_p50 IS NOT NULL)
-       / NULLIF(sum(sample_count_valid) FILTER (WHERE connection_mode='cold' AND latency_p50 IS NOT NULL), 0))::int AS p50_cold,
-      (sum(latency_p95 * sample_count_valid) FILTER (WHERE connection_mode='cold' AND latency_p95 IS NOT NULL)
-       / NULLIF(sum(sample_count_valid) FILTER (WHERE connection_mode='cold' AND latency_p95 IS NOT NULL), 0))::int AS p95_cold,
-      (sum(latency_p99 * sample_count_valid) FILTER (WHERE connection_mode='cold' AND latency_p99 IS NOT NULL)
-       / NULLIF(sum(sample_count_valid) FILTER (WHERE connection_mode='cold' AND latency_p99 IS NOT NULL), 0))::int AS p99_cold,
-      (sum(latency_p50 * sample_count_valid) FILTER (WHERE connection_mode='warm' AND latency_p50 IS NOT NULL)
-       / NULLIF(sum(sample_count_valid) FILTER (WHERE connection_mode='warm' AND latency_p50 IS NOT NULL), 0))::int AS p50_warm,
-      (sum(latency_p95 * sample_count_valid) FILTER (WHERE connection_mode='warm' AND latency_p95 IS NOT NULL)
-       / NULLIF(sum(sample_count_valid) FILTER (WHERE connection_mode='warm' AND latency_p95 IS NOT NULL), 0))::int AS p95_warm,
-      (sum(latency_p99 * sample_count_valid) FILTER (WHERE connection_mode='warm' AND latency_p99 IS NOT NULL)
-       / NULLIF(sum(sample_count_valid) FILTER (WHERE connection_mode='warm' AND latency_p99 IS NOT NULL), 0))::int AS p99_warm,
-      sum(sample_count_valid) FILTER (WHERE connection_mode='cold')::int AS sample_count_valid,
-      (sum(correctness_rate * sample_count_valid) FILTER (WHERE connection_mode='cold' AND correctness_rate IS NOT NULL)
-       / NULLIF(sum(sample_count_valid) FILTER (WHERE connection_mode='cold' AND correctness_rate IS NOT NULL), 0))::real AS correctness_rate,
-      (sum(completeness_rate * sample_count_valid) FILTER (WHERE connection_mode='cold' AND completeness_rate IS NOT NULL)
-       / NULLIF(sum(sample_count_valid) FILTER (WHERE connection_mode='cold' AND completeness_rate IS NOT NULL), 0))::real AS completeness_rate,
-      sum(honeypot_total) FILTER (WHERE connection_mode='cold')::int        AS honeypot_total,
-      sum(honeypot_pass_count) FILTER (WHERE connection_mode='cold')::int   AS honeypot_pass_count
-    FROM rollups_1h
+      method,
+      round(sum(latency_p50_correct::bigint * sample_count_valid)::numeric
+            / NULLIF(sum(sample_count_valid) FILTER (WHERE latency_p50_correct IS NOT NULL), 0))::int AS p50_cold,
+      sum(sample_count_valid)::int AS sample_count_valid
+    FROM leaderboard_agg_1h
     WHERE provider_id = ${providerId}
+      AND worker_provider = ${POOLED_INFRA}
+      AND connection_mode = 'cold'
+      AND methodology_version = ${METHODOLOGY_VERSION}
       AND window_start > now() - interval '24 hours'
-    GROUP BY method, bucket
-    ORDER BY method, bucket
+    GROUP BY method
+    ORDER BY method
   `);
   return rows as unknown as MethodRow[];
 }
 
-/** Sample-weighted p50 (cold) per method, across difficulty buckets. */
+/** Sample-weighted p50 (cold) per method. The breakdown query already returns one
+ *  row per method (pooled across geos), so this collapses to that row's value;
+ *  the weighting is kept so the shape is robust if multiple rows per method recur. */
 function p50ByMethod(breakdown: MethodRow[]): Array<{ method: string; value: number }> {
   const agg = new Map<string, { sum: number; n: number }>();
   for (const r of breakdown) {
@@ -174,8 +154,13 @@ export default async function ProviderPage({ params }: { params: Promise<{ id: s
       fetchMethodBreakdown(id),
       fetchFailureBreakdown(id),
       fetchLatencySeries({
-        // Provider detail chart pools every active geo (all 6 GEO_REGIONS).
-        cloudPairs: GEO_REGIONS.flatMap((g) => cloudRegionsForGeo(g)),
+        // Provider detail chart pools every vantage for this provider. Passing
+        // allVantages (instead of an explicit ~62-pair list) drops the
+        // (worker_provider, region) IN clause so the query uses
+        // rollups_5m_provider_chart_idx via provider_id, avoiding a many-branch
+        // BitmapOr. allVantages requires provider_id (set just below).
+        cloudPairs: [],
+        allVantages: true,
         methods: allMethods,
         windowHours: 24,
         provider_id: id,
