@@ -129,7 +129,7 @@ export const fetchActiveInfraGeo = unstable_cache(
  * Eligibility floors, derived inline from the *selected* window so the gate
  * tracks the timeframe (1h/6h/24h/7d/30d) instead of the generator's fixed
  * 4h precompute. The quality floors (reliability / correctness / honeypot)
- * are fixed ratios and mirror the generator's POC gate in rollup.ts; the
+ * are fixed ratios and mirror the generator's eligibility gate in rollup.ts; the
  * sample-count floor scales with the window at the same per-hour rate as
  * that gate (50 valid samples / 4h = 12.5/hr) so confidence is comparable at
  * every window. Keep these in sync with rollup.ts:eligibilityThresholds().
@@ -156,12 +156,11 @@ export interface AggregateOpts {
 async function fetchAggregatesForGeoImpl(opts: AggregateOpts): Promise<RowAgg[]> {
   // All windows read the leaderboard precompute (leaderboard_agg_1h / _1d),
   // refreshed every 5 min by the generator's rollup tick (trailing-2h upsert).
-  // This replaced the ≤24h raw-`samples` path, which scanned the
-  // multi-million-row current-day partition twice per geo — and, since the
-  // breakdown table's cold/warm toggle, ×2 for warm as well (12 scans/render).
-  // The precompute gives exact rates (summed num/den) and exact win-counts;
-  // percentiles are weight-averaged across hourly buckets, the same benign
-  // approximation the >24h view always used. Measured: sigs 24h 1956ms → ~80ms.
+  // Reading the precompute avoids scanning the ≤24h raw-`samples` path, which
+  // would scan the multi-million-row current-day partition twice per geo (×2
+  // again for warm). The precompute gives exact rates (summed num/den) and
+  // exact win-counts; percentiles are weight-averaged across hourly buckets, a
+  // benign approximation.
   const floor = eligibilityFloors(opts.windowHours);
   return fetchAggregatesFromPrecompute(opts, floor);
 }
@@ -429,10 +428,10 @@ export const fetchAggregatesForGeoByMethod = unstable_cache(
 );
 
 /**
- * Legacy SINGLE-METHOD overall leaderboard (region-blend of one method). Under
- * Option A the headline "overall" is now the preset method-blend
- * (`fetchRankedPreset`); this remains for the explicit-`method=` API drill-down
- * and the per-region share card, which still rank by one method.
+ * Legacy SINGLE-METHOD overall leaderboard (region-blend of one method). The
+ * headline "overall" is the preset method-blend (`fetchRankedPreset`); this
+ * remains for the explicit-`method=` API drill-down and the per-region share
+ * card, which still rank by one method.
  */
 export async function fetchRankedOverall(opts?: {
   windowHours?: number;
@@ -470,7 +469,7 @@ export async function fetchRankedOverall(opts?: {
  * Workload-preset ranking — the method-blended "overall" board. This is the
  * single server-side source of the preset score: the provider deep-dive, the
  * public API, and the OG share card all call it so a provider's overall rank is
- * the same number everywhere (Option A — "overall" = the preset blend, default
+ * the same number everywhere ("overall" = the preset blend, default
  * Balanced). Composes the cached multi-method cube fetch per geo (restricted to
  * the preset's region subset) and the shared `buildPresetLeaderRows` blend.
  */
@@ -545,9 +544,9 @@ export interface MethodLatencyRow {
  * `samples`: it sums the selected infra's rows (default `worker_provider =
  * __all__`, the pooled-infra view, or a single cloud when the Infra pill is set)
  * across every geo and weight-averages the correct-only percentiles by
- * sample_count_valid. Same correct-only semantics as before, ~5-min fresh, but
- * reads ~50k precomputed rows instead of seq-scanning millions of raw samples
- * (was ~2.5s at 24h, on every render).
+ * sample_count_valid. Correct-only semantics, ~5-min fresh, and reads ~50k
+ * precomputed rows instead of seq-scanning millions of raw samples on every
+ * render.
  */
 async function fetchMethodLatencyImpl(opts: {
   windowHours: number;

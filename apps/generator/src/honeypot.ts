@@ -40,12 +40,11 @@ export async function drawHoneypot(
 /**
  * Seed the honeypot pool by sampling deeply-finalized history.
  *
- * Methodology_version 2: ground truth comes from the AUDITOR (utility)
- * directly. Pre-cutover this used a quorum vote; the consensus model removes
- * the neutral pool, so we rely on the auditor's archival fetch + a manual
- * sanity check (operator-side) before publishing the honeypot pool.
+ * Ground truth comes from the AUDITOR (utility) directly: the auditor's
+ * archival fetch plus a manual operator-side sanity check before publishing
+ * the honeypot pool.
  *
- * Operator runs this at M2 setup and on monthly refresh.
+ * Run this at initial setup and on monthly refresh.
  */
 export async function seedHoneypotPool(opts: {
   db: DbClient;

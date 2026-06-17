@@ -135,8 +135,8 @@ export const eligibility = pgTable(
  * sampled into the archive, or honeypot) — see `record.ts:shouldArchive`. Full
  * per-vantage-per-mode logging would explode the row count.
  *
- * Methodology_version 2. The legacy v=1 `quorum_log` table is preserved for
- * historical audit reads; new rows are written here.
+ * Consensus decisions are logged here. The legacy `quorum_log` table is
+ * preserved for historical audit reads; new rows are written here.
  */
 export const consensus_log = pgTable(
   "consensus_log",
@@ -190,8 +190,8 @@ export const consensus_audit = pgTable(
 );
 
 /**
- * Legacy v=1 quorum log. Read-only — preserved so /raw inspections of pre-cutover
- * challenges still render. No new rows after methodology_version 2.
+ * Legacy quorum log. Read-only — preserved so /raw inspections of older
+ * challenges still render. No new rows are written.
  */
 export const quorum_log = pgTable(
   "quorum_log",

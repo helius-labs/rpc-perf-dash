@@ -1,30 +1,27 @@
 # Operations runbook
 
-Things you must know before deploying / changing infrastructure. Distilled from
-the methodology v=1 → v=2 cutover (2026-05-27/28) — every landmine here is
-something we actually hit in prod or staging.
-
-If you're an LLM agent: this file is the canonical ops reference. Read it
-end-to-end before touching `infra/`, `packages/shared/src/providers.ts`, or
-any secrets.
+Things to know before deploying or changing infrastructure: deploy ordering,
+the env-var fan-out, per-cloud gotchas, and recovery procedures. Read it
+end-to-end before touching `infra/`, `packages/shared/src/providers.ts`, or any
+secrets.
 
 ---
 
 ## Deploy order — strict
 
-Methodology bumps and schema changes require this order. Skipping a step
-causes the obvious downstream failure.
+Methodology bumps and schema changes require this order. Skipping a step causes
+the obvious downstream failure.
 
 1. **DB migrations** (`pnpm db:migrate`) — generator + workers expect the new
    schema. Migration must be idempotent (use `IF NOT EXISTS`, `ON CONFLICT`,
    `IF EXISTS` on drops).
 2. **Generator** (`cdk deploy RpcBenchGenerator --exclusively`) — writes the
-   new challenge shape. Must redeploy BEFORE workers: v=1 workers writing
-   against the v=2 schema would error; v=2 workers reading v=1 challenges
-   would misclassify.
-3. **Workers** — all four deploy paths. AWS / TSW / CF / GCP (any order
-   between themselves; they're independent). `bash
-   infra/scripts/deploy-all-workers.sh` covers all four serially.
+   new challenge shape. Must redeploy BEFORE workers: a worker running old code
+   against the new schema would error, and a new-code worker reading old-shape
+   challenges would misclassify.
+3. **Workers** — all four deploy paths. AWS / TSW / CF / GCP (any order between
+   themselves; they're independent). `bash infra/scripts/deploy-all-workers.sh`
+   covers all four serially.
 4. **Web app** (Vercel) — read-only against the DB. Deploys whenever; can be
    skipped during ops emergencies and rolled later for UI updates.
 
@@ -37,8 +34,8 @@ order, but you also have to wire env vars through every worker deploy path
 ## Env var propagation matrix
 
 A new provider's URL has to land in NINE places before workers can query it.
-This is the most error-prone part of the system; we missed CF Worker→Container
-proxying twice during the v=2 cutover.
+This is the most error-prone part of the system — the CF Worker→Container proxy
+(row 8) is the easiest to miss.
 
 | # | Location | Purpose | What to edit |
 |---|---|---|---|
@@ -49,7 +46,7 @@ proxying twice during the v=2 cutover.
 | 5 | `infra/cdk/lib/worker-stack.ts` | AWS worker container env-var binding | Same `secretEnv` list as above. |
 | 6 | `infra/gcp/terraform/main.tf` | GCP `local.secret_keys` | Terraform creates the Secret Manager secret resource + worker IAM binding for each key. |
 | 7 | `infra/gcp/seed-secrets.sh` | `WORKER_SECRETS` array | Filter list — keys NOT here get skipped when pushing values into Secret Manager. **Keep in sync with the terraform list.** |
-| 8 | `infra/cloudflare/src/index.ts` | CF Worker → Container env-var proxy | The `Env` interface AND the `this.envVars = { ... }` block. **CF secrets do NOT auto-propagate to the container** — every key has to be listed manually. This bites every time. |
+| 8 | `infra/cloudflare/src/index.ts` | CF Worker → Container env-var proxy | The `Env` interface AND the `this.envVars = { ... }` block. **CF secrets do NOT auto-propagate to the container** — every key has to be listed manually. |
 | 9 | `/tmp/rpc-bench-worker.env.shared` (operator local) | Source of values for TSW + CF deploys | Rebuild from AWS Secrets Manager: see "Rebuilding the shared env file" below. |
 
 **Verifier:** after a provider rollout, query
@@ -64,7 +61,7 @@ A cloud missing from the result means its deploy path didn't get the env var.
 
 ```bash
 aws secretsmanager get-secret-value --secret-id rpcbench/env \
-  --region us-east-2 --profile dev --query SecretString --output text \
+  --region us-east-2 --profile "$AWS_PROFILE" --query SecretString --output text \
   | python3 -c '
 import json, sys
 d = json.load(sys.stdin)
@@ -94,7 +91,7 @@ for k in WANT:
   1. Terraform apply to create the secret resource (Cloud Run revision will fail to start — expected).
   2. `seed-secrets.sh` to add a version.
   3. Terraform apply again with a fresh image tag to roll Cloud Run.
-- **Auth:** `gcloud auth print-access-token` exports `GOOGLE_OAUTH_ACCESS_TOKEN` for the terraform google provider. (Useful when Application Default Credentials are blocked by org policy on the project, as they are on ours.)
+- **Auth:** `gcloud auth print-access-token` exports `GOOGLE_OAUTH_ACCESS_TOKEN` for the terraform google provider. (Useful when Application Default Credentials are blocked by org policy on the project.)
 
 ### Cloudflare (Workers + Containers)
 - **Auth: run `wrangler login` first (Containers scope required).** `deploy-cf.sh`'s
@@ -121,17 +118,16 @@ for k in WANT:
   curl https://rpc-bench-worker-cf.<your-subdomain>.workers.dev/
   # → {"phase":"worker_running","boot_at":"...","uptime_s":1,...} means it just started
   ```
-  Real incident (2026-06-01): the additive-methods rollout updated the generator
-  while CF was still on old code; the old container **crashed** on the unknown new
-  methods and stayed down — `wrangler deploy` alone (even with a fresh tag) did NOT
-  bring it back, because nothing re-triggered the DO. A single healthcheck `curl`
-  booted it onto the new image and samples resumed within ~90s. If CF shows zero
+  If the running container has exited or crashed (e.g. on a generator rollout that
+  introduced methods the old code doesn't recognize), `wrangler deploy` alone —
+  even with a fresh tag — does NOT bring it back, because nothing re-triggers the
+  DO. A single healthcheck `curl` boots it onto the new image. If CF shows zero
   samples after a deploy, curl the healthcheck **before** assuming the deploy failed.
 
 ### TeraSwitch (bare-metal SSH + systemd)
 - **Reads from working tree.** `deploy-tsw.sh` rsyncs the repo (uncommitted changes included) + installs/restarts a systemd unit. The remote `/etc/rpc-bench-worker.env` is composed from `/tmp/rpc-bench-worker.env.shared`.
 - **SSH flakes are common.** "Connection reset by peer" mid-rsync just retry — the script is idempotent.
-- **The orchestrator script bails on first TSW failure** (`set -e`), which prevents CF from deploying afterward. If TSW one box is flaky, run CF separately:
+- **The orchestrator script bails on first TSW failure** (`set -e`), which prevents CF from deploying afterward. If one TSW box is flaky, run CF separately:
   ```bash
   SKIP_AWS=1 SKIP_TSW=1 SKIP_GCP=1 bash infra/scripts/deploy-all-workers.sh
   ```
@@ -174,7 +170,7 @@ for k in WANT:
 ### Slow rollup blocks finality job (and anything else at tail)
 **Symptom:** `consensus_audit` stays empty even though challenges are eligible.
 
-**Cause:** `runRollupTick` is a single sequential pipeline; the leaderboard CTE alone can exceed 5 min under heavy v=2 traffic, and the in-flight lock skips overlapping firings. Anything at the END of the tick rarely runs.
+**Cause:** `runRollupTick` is a single sequential pipeline; the leaderboard CTE alone can exceed 5 min under heavy traffic, and the in-flight lock skips overlapping firings. Anything at the END of the tick rarely runs.
 
 **Fix:** Decouple critical periodic jobs onto their own `setInterval` (see `runFinalityRecheck` in `apps/generator/src/rollup.ts` + the standalone interval in `index.ts`).
 
@@ -204,16 +200,16 @@ for k in WANT:
 Symptom: every dispatch tick exceeds its 25s budget, the no-challenges watchdog
 restarts the generator task repeatedly, and the dashboard's challenge feed
 freezes (the web app is fine — the leader is starved). First response: check
-tick-duration logs and the task's CPU allocation (bumped 512→1024 on
-2026-06-11 for exactly this). Known follow-ups if it recurs: move the
-generator's read paths to pooled connections and set a statement_timeout so a
-slow query can't absorb the whole tick.
+tick-duration logs and the task's CPU allocation (raising it resolves the
+common case). Further mitigations: move the generator's read paths to pooled
+connections and set a statement_timeout so a slow query can't absorb the whole
+tick.
 
-### Rollback to v=1
-Code rollback is `git revert` + redeploy generator + workers in the standard order. The DB rollback is forward-only — schema migrations create new tables (`consensus_log`, `consensus_audit`) and drop one column (`providers.quorum_eligible`). The legacy `quorum_log` is preserved, so `/raw` of pre-cutover challenges still renders. No data loss.
+### Rollback
+Code rollback is `git revert` + redeploy generator + workers in the standard order. The DB rollback is forward-only — schema migrations create new tables (`consensus_log`, `consensus_audit`) and drop one column (`providers.quorum_eligible`). The legacy `quorum_log` is preserved, so `/raw` of older challenges still renders. No data loss.
 
 ### Auditor outage
-Helius gatekeeper goes down → every challenge's auditor cross-check returns `auditor_unavailable`. Samples are still scored on consensus alone (correctness denominators are unaffected). The dashboard's "Consensus integrity" panel shows the `auditor-down` rate spike, which is the operator signal.
+If the auditor (utility endpoint) goes down, every challenge's auditor cross-check returns `auditor_unavailable`. Samples are still scored on consensus alone (correctness denominators are unaffected). The dashboard's "Consensus integrity" panel shows the `auditor-down` rate spike, which is the operator signal.
 
 To recover: confirm the auditor endpoint is healthy, or swap `UTILITY_RPC_URL` to a backup endpoint and restart the generator. See § Roadmap: provisioning a panel-independent auditor removes the single-auditor dependency.
 
@@ -235,9 +231,9 @@ a different credential; an expired/insufficient one aborts that tier and, under
 `set -e`, everything after it):
 
 ```bash
-aws sso login --profile dev          # AWS (CDK/ECS) + the shared-env rebuild path
-gcloud auth login                    # GCP (terraform mints a token via `gcloud auth print-access-token`)
-wrangler login                       # Cloudflare (Workers + Containers)
+aws sso login --profile "$AWS_PROFILE"   # AWS (CDK/ECS) + the shared-env rebuild path
+gcloud auth login                        # GCP (terraform mints a token via `gcloud auth print-access-token`)
+wrangler login                           # Cloudflare (Workers + Containers)
 ```
 
 - **`wrangler login` is mandatory and easy to forget.** `deploy-cf.sh` calls
@@ -247,7 +243,7 @@ wrangler login                       # Cloudflare (Workers + Containers)
   accounts). Fix: `unset CLOUDFLARE_API_TOKEN` (an exported token shadows the
   OAuth session), then `wrangler logout && wrangler login`; or mint an API token
   with **Containers:Edit + Workers Scripts:Edit + Account Settings:Read**. The
-  account ID is hardcoded in `deploy-cf.sh`, so a 403 is always a scope problem,
+  account ID is configured in `deploy-cf.sh`, so a 403 is always a scope problem,
   not a wrong-account one.
 
 ```bash
@@ -256,7 +252,7 @@ pnpm db:migrate
 
 # 2. Generator (us-east-2 home region)
 cd infra/cdk
-cdk deploy RpcBenchGenerator --profile dev --exclusively --require-approval never
+cdk deploy RpcBenchGenerator --profile "$AWS_PROFILE" --exclusively --require-approval never
 cd ../..
 
 # 3. AWS workers (3 regions × A/B lanes)
@@ -264,7 +260,7 @@ cd infra/cdk
 cdk deploy RpcBenchWorkerA-us-east-2 RpcBenchWorkerB-us-east-2 \
             RpcBenchWorkerA-eu-central-1 RpcBenchWorkerB-eu-central-1 \
             RpcBenchWorkerA-ap-northeast-1 RpcBenchWorkerB-ap-northeast-1 \
-  --profile dev --exclusively --require-approval never --concurrency 1
+  --profile "$AWS_PROFILE" --exclusively --require-approval never --concurrency 1
 cd ../..
 
 # 4. GCP (force unique tag when working tree is dirty)
@@ -277,9 +273,7 @@ cd ../../..
 # 5. TSW + CF (force unique CF tag when working tree is dirty)
 # TSW box IPs come from your inventory (infra/bare-metal/hosts.env, gitignored).
 TAG="cf-$(date +%s)" bash infra/cloudflare/deploy-cf.sh
-bash infra/bare-metal/deploy-tsw.sh <ewr-box-ip>   ewr   tsw-ewr-1
-bash infra/bare-metal/deploy-tsw.sh <ams-box-ip>   ams   tsw-ams-1
-bash infra/bare-metal/deploy-tsw.sh <tokyo-box-ip> tokyo tsw-tokyo-1
+bash infra/bare-metal/deploy-tsw.sh <box-ip> <region> <egress_path>   # one per box
 
 # 6. Verify
 pnpm --filter @rpcbench/db exec tsx ../../infra/scripts/verify-deploy.ts
@@ -299,15 +293,15 @@ All four `worker_provider` values (aws, cloudflare, gcp, teraswitch) should appe
 
 | Surface | Where | Notes |
 |---|---|---|
-| Postgres | Neon (`rpc-perf-dash` project) | Pooled URL for workers (transaction pooler, no prepared statements); direct URL for generator + migrations. Point-in-time recovery via Neon. |
-| Secrets (canonical) | AWS Secrets Manager `rpcbench/env` (`us-east-2`, replicated to `eu-central-1` + `ap-northeast-1`) | Single JSON blob. Read by AWS task defs + by the shared-env rebuild path for TSW/CF/GCP. |
+| Postgres | Neon | Pooled URL for workers (transaction pooler, no prepared statements); direct URL for generator + migrations. Point-in-time recovery via Neon. |
+| Secrets (canonical) | AWS Secrets Manager `rpcbench/env` (home region, replicated to the worker regions) | Single JSON blob. Read by AWS task defs + by the shared-env rebuild path for TSW/CF/GCP. |
 | Secrets (GCP mirror) | GCP Secret Manager (the worker project) | One secret per key. Seeded via `infra/gcp/seed-secrets.sh` from `/tmp/rpc-bench-worker.env.shared`. Auto-replicated across GCP regions. |
 | Secrets (CF mirror) | Cloudflare Worker secrets (set via `wrangler secret put` from `deploy-cf.sh`) | **Reminder:** these are Worker-scope; the CF Container only sees them via the manual proxy in `infra/cloudflare/src/index.ts`. |
 | Worker code (AWS) | ECS image built by CDK from working tree | One stack per region (us-east-2 / eu-central-1 / ap-northeast-1), one service per egress lane (A/B). |
-| Worker code (GCP) | Artifact Registry image `us-central1-docker.pkg.dev/<project>/rpc-bench/worker` | Six Cloud Run services (one per region), each reads the image by tag. |
-| Worker code (CF) | Cloudflare managed registry image `rpc-bench-worker-cf`, wrapped by a Worker + Durable Object | 6 lanes via `max_instances`; CF scheduler places each at a different PoP. |
-| Worker code (TSW) | Bare-metal box, code rsync'd to `/opt/rpc-perf-dash`, run via systemd unit `rpc-bench-worker.service` | 3 boxes: ewr / ams / tokyo. |
-| Generator code | ECS Fargate (us-east-2 only) | 1 active + 1 hot standby via Postgres advisory-lock leader election. |
+| Worker code (GCP) | Artifact Registry image `us-central1-docker.pkg.dev/<project>/rpc-bench/worker` | Cloud Run services (one per region), each reads the image by tag. |
+| Worker code (CF) | Cloudflare managed registry image `rpc-bench-worker-cf`, wrapped by a Worker + Durable Object | Lanes via `max_instances`; CF scheduler places each at a different PoP. |
+| Worker code (TSW) | Bare-metal box, code rsync'd to `/opt/rpc-perf-dash`, run via systemd unit `rpc-bench-worker.service` | One box per region (inventory in the gitignored `infra/bare-metal/hosts.env`). |
+| Generator code | ECS Fargate (home region only) | 1 active + 1 hot standby via Postgres advisory-lock leader election. |
 | Web app | Vercel | Reads from Neon only. Decoupled from infra ops — can deploy independently. |
 
 ---
@@ -324,7 +318,7 @@ All four `worker_provider` values (aws, cloudflare, gcp, teraswitch) should appe
 - Scoring formula change (weights, components)
 - Projection rule change (what counts as "same answer")
 - Eligibility threshold change at the gate (loosening doesn't need a bump if it's TEST_MODE-only)
-- Consensus / quorum rule change
+- Consensus rule change
 
 **When NOT to bump:**
 - Operational toggles (auditor endpoint swap, rate-limit tuning)
@@ -359,7 +353,7 @@ Loosens eligibility thresholds for fresh dashboard rendering during local dev. *
 - **Direct** (`NEON_DATABASE_URL_DIRECT` / `_UNPOOLED`): for the generator + migrations + the CLI benchmark. Long-lived connection, full SQL support.
 
 ### Storage & retention (keep the DB bounded)
-Every table now has explicit retention, tiered to exactly what the dashboard reads (max display window is 720h / 30d; granularity coarsens as the window widens — see `apps/web/src/lib/chartData.ts`). The generator owns all of it:
+Every table has explicit retention, tiered to exactly what the dashboard reads (max display window is 720h / 30d; granularity coarsens as the window widens — see `apps/web/src/lib/chartData.ts`). The generator owns all of it:
 
 | Data | Retention | Where | Reader that sets the floor |
 |---|---|---|---|
@@ -376,7 +370,7 @@ Every table now has explicit retention, tiered to exactly what the dashboard rea
 The `reference_response` trim + control-table prune run on a dedicated 5-min interval (`runMaintenance`), decoupled from the rollup tick (the leaderboard CTE there can overrun and starve tail work). Both are batched (`ctid IN (SELECT … LIMIT n)`) and capped per firing, so the first post-deploy run drains the backlog over several ticks rather than one giant transaction. The trim's inner SELECT is backed by the partial index `challenges_ref_pending_idx`, and the eligibility prune by `eligibility_window_end_idx` (both migration 0022). The trim SELECT carries an `ORDER BY generated_at` that is **load-bearing**: non-null payloads are almost all <6h old, so the planner overestimates the `reference_response IS NOT NULL AND generated_at < 6h` match count (assumes the two predicates are independent) and, under `LIMIT`, would otherwise pick a full ~1.3GB seq scan of `challenges` every 5 min. The `ORDER BY` forces use of the partial index's ordering, bounding the scan to the genuinely-old rows. `ANALYZE` alone does **not** fix this (it's a cross-predicate correlation, not stale single-column stats) — do not remove the `ORDER BY`.
 
 ### One-time storage reclaim (nulling/deleting alone won't shrink Neon)
-Postgres marks tuples dead on UPDATE/DELETE but doesn't return the space to the OS, and Neon additionally retains old page versions for its history/PITR window. To actually reclaim the ~158 GB of historical `reference_response` after the trim job has drained the backlog:
+Postgres marks tuples dead on UPDATE/DELETE but doesn't return the space to the OS, and Neon additionally retains old page versions for its history/PITR window. To actually reclaim the historical `reference_response` payload after the trim job has drained the backlog:
 1. Confirm the trim has caught up: `SELECT count(*) FROM challenges WHERE reference_response IS NOT NULL AND generated_at < now() - interval '6 hours'` should be ~0.
 2. Physically rewrite `challenges` to drop the dead TOAST. Preferred: **pg_repack** (online, no long lock) — `CREATE EXTENSION IF NOT EXISTS pg_repack;` then `pg_repack -t challenges -d neondb`. If pg_repack isn't available on the Neon plan, fall back to `VACUUM FULL challenges` in a low-traffic window (takes an `ACCESS EXCLUSIVE` lock → blocks challenge inserts for the rewrite duration).
 3. Reduce the Neon **history/PITR retention** window (Neon console → project settings) so the freed pages age out — required for the reclaim (and the "History" line) to actually drop.
@@ -391,7 +385,7 @@ If you add a new JSON-RPC method to `packages/shared/src/types.ts:Method`:
 1. Write the per-method handler in `packages/methods/src/<method>.ts` exporting `handlers: MethodHandlers<P, R>` (deriveChallenge / project / classify / buckets).
 2. Register in `packages/methods/src/index.ts` `HANDLERS` map.
 3. Add a `paramsAsArray` branch in BOTH `apps/generator/src/index.ts` and `apps/generator/src/benchmark.ts`.
-4. Add to the per-method tables in `docs/methodology.md` § Projection & equivalence and § POC status.
+4. Add to the per-method tables in `docs/methodology.md` § Projection & equivalence and § Deployment status.
 5. If the method's auditor cross-check needs special tolerance handling (like `getSlot`'s time-drift problem), add it to `auditorMatchPredicateForMethod` in `packages/runner/src/record.ts`.
 6. Bump `METHODOLOGY_VERSION` if the method changes the score shape.
 
@@ -429,7 +423,7 @@ Read-only against the Neon DB. Independent of all other deploys.
 
 ## K-sampling (dispatch fan-out)
 
-Under v=2, each challenge is dispatched to **K = 3** randomly-sampled active vantages (`VANTAGE_SAMPLE_SIZE` in `apps/generator/src/index.ts`), not to every active vantage. The full-fanout pattern overshoots worker claim throughput ~3x — excess assignments expire unclaimed and produce no samples.
+Each challenge is dispatched to **K = 3** randomly-sampled active vantages (`VANTAGE_SAMPLE_SIZE` in `apps/generator/src/index.ts`), not to every active vantage. The full-fanout pattern overshoots worker claim throughput ~3x — excess assignments expire unclaimed and produce no samples.
 
 Why this is safe operationally:
 - Per (provider × method × region × 4h): ~20-300x the eligibility floor (50 samples).
@@ -442,13 +436,13 @@ Tuning K up or down:
 - Higher K → more worker load, faster eligibility convergence but risks regrowing the unclaimed queue.
 - Adaptive K based on observed claim rate is on the roadmap — see § Roadmap.
 
-Companion: `BACKPRESSURE_THRESHOLD` (currently 500 still-claimable unclaimed) skips a tick when workers fall behind. Counts only assignments still within their TTL — zombie unclaimed past TTL don't count (otherwise an accumulated zombie pile could freeze dispatch forever, as it did on 2026-05-28 before this guard was added). Should never fire in steady state; logs `back-pressure skip` when it does.
+Companion: `BACKPRESSURE_THRESHOLD` (currently 500 still-claimable unclaimed) skips a tick when workers fall behind. Counts only assignments still within their TTL — zombie unclaimed past TTL don't count (otherwise an accumulated zombie pile could freeze dispatch forever). Should never fire in steady state; logs `back-pressure skip` when it does.
 
-Companion: `expireStaleChallenges` + `expireStaleAssignments` crons run every minute (and once at startup), flipping `unclaimed AND past TTL` → `'expired'` on the assignments and `'ready' AND past TTL AND no samples` → `'expired'` on the parent challenges. Without these the UI says "dispatched" forever for stranded rows AND the back-pressure check is fooled by zombie pile-up. The startup run is critical: a deploy after an outage would otherwise see an enormous zombie queue and back-pressure-skip every tick (real incident, 521k zombies, 2026-05-28).
+Companion: `expireStaleChallenges` + `expireStaleAssignments` crons run every minute (and once at startup), flipping `unclaimed AND past TTL` → `'expired'` on the assignments and `'ready' AND past TTL AND no samples` → `'expired'` on the parent challenges. Without these the UI says "dispatched" forever for stranded rows AND the back-pressure check is fooled by zombie pile-up. The startup run is critical: a deploy after an outage would otherwise see an enormous zombie queue and back-pressure-skip every tick.
 
 ## Roadmap
 
 Known operator-followup items:
 
-- **Auditor independence.** Provision a panel-independent auditor URL and unset `AUDITOR_PANEL_OVERLAP_OK=1`. Our deployment currently uses a panel member's endpoint (Helius gatekeeper) as a disclosed stopgap, which makes the consensus cross-check self-refereeing on challenges that member serves. Scoring itself is unaffected (correctness is decided by panel majority); the finality re-verification job retains full integrity either way.
+- **Auditor independence.** Provision a panel-independent auditor URL and unset `AUDITOR_PANEL_OVERLAP_OK=1`. When the auditor shares an operator with a panel member, the consensus cross-check is self-refereeing on challenges that member serves. Scoring itself is unaffected (correctness is decided by panel majority); the finality re-verification job retains full integrity either way.
 - **Weighted K-sampling.** Dispatch probability ∝ recent claim rate per vantage, to eliminate the CF/lax residual backlog left by uniform K=3.

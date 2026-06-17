@@ -101,8 +101,8 @@ export const PROVIDERS: readonly ProviderRow[] = [
   // Benchmarked panel (votes on correctness via consensus)
   // ────────────────────────────────────────────────────────────
   {
-    // Helius public free tier — retired from the leaderboard 2026-05-26 once
-    // the Gatekeeper endpoint became the canonical "Helius" entry on the
+    // Helius public free tier — retired from the leaderboard once the
+    // Gatekeeper endpoint became the canonical "Helius" entry on the
     // leaderboard. Kept in the registry so historical samples and DB rows
     // referencing provider_id="helius" still resolve, but workers no longer
     // sample it (benchmarked: false) and it doesn't appear on the dashboard.
@@ -126,7 +126,7 @@ export const PROVIDERS: readonly ProviderRow[] = [
     ],
     pricing: { monthly_cost_usd: 0 },
     anti_gaming_flags: [],
-    notes: "Operator-internal: $0 at any tier for this team. See methodology § Operator vs reproducer cost.",
+    notes: "Costs the panel operator $0 to operate; reproducers pay their provider's rates. See methodology § Operator vs reproducer cost.",
   },
   {
     // ID stays "helius_gatekeeper" because it's a foreign key on millions of
@@ -178,7 +178,7 @@ export const PROVIDERS: readonly ProviderRow[] = [
     pricing: { monthly_cost_usd: 0 },
     anti_gaming_flags: [],
     // Alchemy returns -32600 "Unsupported method: getStakeMinimumDelegation on
-    // SOLANA_MAINNET" (verified 2026-06-01); the other three serve it and agree
+    // SOLANA_MAINNET"; the other three serve it and agree
     // on value:1. Declaring it unsupported drops Alchemy from that method's
     // panel (3 voters: Helius, Triton, QuickNode) instead of scoring its error
     // body as `incorrect`.
@@ -197,12 +197,12 @@ export const PROVIDERS: readonly ProviderRow[] = [
     pricing: { monthly_cost_usd: 0 },
     anti_gaming_flags: [],
     // simulateBundle is a Jito extension; QuickNode's Discover tier returns
-    // -32601 (Method not found) for it (verified 2026-05-31). Declaring it
-    // unsupported drops QuickNode from that method's panel (3 voters: Helius,
-    // Triton, Alchemy) instead of penalizing it on reliability.
+    // -32601 (Method not found) for it. Declaring it unsupported drops QuickNode
+    // from that method's panel (3 voters: Helius, Triton, Alchemy) instead of
+    // penalizing it on reliability.
     //
     // getTransactionsForAddress: QuickNode serves a NON-COMPARABLE variant,
-    // not an error (verified 2026-06-12): bare-array result instead of the
+    // not an error: bare-array result instead of the
     // {data, paginationToken} envelope; always full transaction details
     // (ignores transactionDetails: "signatures"); ignores filters.slot.lte
     // (returns tip-slot entries past the pin); rejects string commitment with
@@ -212,10 +212,10 @@ export const PROVIDERS: readonly ProviderRow[] = [
     unsupported_methods: ["simulateBundle", "getTransactionsForAddress"],
     notes: "QuickNode endpoint URL embeds the key.",
   },
-  // Flux removed from the benchmarked panel (2026-05-29): it was a near-zero
-  // correctness outlier across every method (e.g. getTransaction 0%, getBlock
-  // ~2.6%), served stale/divergent data, and disabled getProgramAccounts. The
-  // panel is now 4 benchmarked providers.
+  // Flux removed from the benchmarked panel: it was a near-zero correctness
+  // outlier across every method (e.g. getTransaction 0%, getBlock ~2.6%),
+  // served stale/divergent data, and disabled getProgramAccounts. The panel is
+  // now 4 benchmarked providers.
 
   // ────────────────────────────────────────────────────────────
   // Utility endpoint (generator preflight + neutral auditor)

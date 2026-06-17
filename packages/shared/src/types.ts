@@ -12,8 +12,8 @@ export type Method =
   | "getTokenLargestAccounts"
   | "getLatestBlockhash"
   | "getTokenAccountBalance"
-  // ── Batch added 2026-05-31: 24 additional read methods. See
-  // docs/methodology.md "Projection & equivalence" for each method's archetype.
+  // Additional read methods. See docs/methodology.md "Projection &
+  // equivalence" for each method's archetype.
   // Archetype A — deterministic byte-equal (pin to finalized data):
   | "getGenesisHash"
   | "getEpochSchedule"
@@ -46,7 +46,6 @@ export type Method =
   // Archetype F — simulation (hand-rolled tx):
   | "simulateTransaction"
   | "simulateBundle"
-  // ── Batch added 2026-06-01: 9 additional methods. ──
   // Archetype Z — mutable-structural byte-equal (excludes mutable balance):
   | "getMultipleAccounts"
   // Archetype A — deterministic byte-equal (pinned finalized / network constant):
@@ -61,7 +60,6 @@ export type Method =
   | "getLargestAccounts"
   // Hybrid value (value-majority byte-equal + freshness liveness fallback):
   | "getFeeForMessage"
-  // ── Batch added 2026-06-12. ──
   // Custom indexer-backed address-history method (Helius/Triton/Alchemy;
   // QuickNode serves a non-comparable variant → 3-voter panel). Slot-pinned
   // challenges, strict byte-equal — Archetype A:
@@ -71,11 +69,10 @@ export type Method =
  * Methods scored on LATENCY + RELIABILITY only — correctness is not validated
  * cross-provider.
  *
- * Empty under methodology_version 2: with majority consensus across the
- * benchmarked panel, the enumeration methods (getProgramAccounts,
- * getTokenAccountsByOwner) that v=1 had to skip can now form consensus.
- * Reserved as an extension point if a future method proves impossible to
- * reach consensus on.
+ * Empty: with majority consensus across the benchmarked panel, even the
+ * enumeration methods (getProgramAccounts, getTokenAccountsByOwner) form
+ * consensus. Reserved as an extension point if a future method proves
+ * impossible to reach consensus on.
  */
 export const LATENCY_ONLY_METHODS: ReadonlySet<Method> = new Set<Method>();
 
@@ -191,9 +188,9 @@ export const GEO_REGION_MAP: Record<string, Record<string, GeoRegion>> = {
   },
 };
 
-// Cloudflare used to be treated as "global" — that was a design oversight.
-// Each CF Containers instance runs at one specific PoP, which the running
-// worker now discovers at startup via cdn-cgi/trace and reports as a lowercased
+// Each CF Containers instance runs at one specific PoP (not "global"), which
+// the running worker discovers at startup via cdn-cgi/trace and reports as a
+// lowercased
 // IATA code (yyz, iad, lhr, ...). Mapped to a real geo region via the
 // GEO_REGION_MAP entry above. The "global" backwards-compat key in the CF
 // submap maps to na-east for any pre-PoP-detection rows.
@@ -238,10 +235,10 @@ export function cloudRegionsForGeo(
  * Map a requested window (hours) to the coarsest ROLLUP source table that
  * still satisfies it, for the latency CHART: ≤6h → 5-min grain, ≤7d → hourly,
  * >7d → daily. The 24h view reads hourly (not 5-min) — a 5-min scan of the
- * 9.3GB rollups_5m for the all-vantage Overview was ~11s; hourly is ~1s, and the
- * chart's client-side re-binner already coarsens, so the only change is 24h
- * showing hourly points. Returns a validated constant table name (never user
- * input) safe to splice via sql.raw.
+ * large rollups_5m table for the all-vantage Overview is far slower than the
+ * hourly grain, and the chart's client-side re-binner already coarsens, so 24h
+ * simply shows hourly points. Returns a validated constant table name (never
+ * user input) safe to splice via sql.raw.
  */
 export function rollupTableForWindow(windowHours: number): "rollups_5m" | "rollups_1h" | "rollups_1d" {
   if (windowHours <= 6) return "rollups_5m";
@@ -307,15 +304,15 @@ export type ExclusionReason =
   | "tier_rate_limited"
   /**
    * No usable majority among the benchmarked-panel voters for this
-   * (challenge, vantage, mode) — formerly `quorum_ambiguous` in v=1.
-   * Sample drops from both correctness and reliability denominators.
+   * (challenge, vantage, mode). Sample drops from both correctness and
+   * reliability denominators.
    */
   | "no_consensus"
   /**
    * Consensus formed, but the independent auditor (utility endpoint) returned
    * a projection that disagrees with the consensus answer. Every sample for
-   * this challenge × vantage × mode is excluded from scoring — we won't score
-   * against contested ground truth. New under methodology_version 2.
+   * this challenge × vantage × mode is excluded from scoring — contested
+   * ground truth is not scored against.
    */
   | "consensus_disputed"
   /**

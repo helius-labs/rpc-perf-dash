@@ -15,8 +15,8 @@
  * (see classify) and it measures real archive depth, not caches.
  *
  * Yields 2 × 3 × 1 × 1 = 6 buckets. The full 3 × 3 × 4 × 3 = 108-bucket matrix
- * was structurally unmeasurable across the three "finalized" camps measured on
- * the v=1-era panel (Helius/Triton; Alchemy/QN/Flux; SF Public): >99% of
+ * was structurally unmeasurable across the three "finalized" camps measured
+ * across the panel (Helius/Triton; Alchemy/QN/Flux; SF Public): >99% of
  * challenges went ambiguous because the
  * returned sig windows didn't overlap. The 6 retained buckets all share the
  * property that every camp returns essentially the same lifetime-tail list,
@@ -90,7 +90,7 @@ const DROP_KEYS = new Set(["blockTime", "memo"]);
  * Anchor the projection on the older 80% of the returned list, dropping
  * the newest 20% (by slot) before hashing.
  *
- * Why: live multi-provider probing (on the v=1-era panel) showed two distinct
+ * Why: live multi-provider probing showed two distinct
  * "finalized" semantics across the ecosystem. Helius / Helius Gatekeeper /
  * Triton returned identical lists. Alchemy / Flux / QuickNode returned lists
  * shifted ~30 slots (~12s) newer — they treated freshly-finalized signatures
@@ -280,7 +280,7 @@ export async function deriveSigsChallenge(
  * Set-overlap correctness for sigs.
  *
  * Two providers "agree" if their signature sets overlap ≥ JACCARD_THRESHOLD
- * (default 0.8). Live multi-provider probing (on the v=1-era panel) showed
+ * (default 0.8). Live multi-provider probing showed
  * providers cluster into three "finalized" camps that don't naturally agree
  * on the tip of the sig list:
  *
@@ -325,7 +325,7 @@ export const SIGS_MIN_TRIMMED = 3;
  * "abstention" (empty list, no data to vote with) from "active vote"
  * (non-empty list contributing to the consensus check).
  *
- * Motivation (observed on the v=1-era panel): SF Public retained only ~2 days
+ * Motivation (observed in early probing): SF Public retained only ~2 days
  * of sigs. For older-than-2-day addresses it returned an empty list while
  * Flux returned a full history.
  * Pre-fix, that flipped the decision to "ambiguous" (treating empty as a

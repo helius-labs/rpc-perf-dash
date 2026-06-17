@@ -1,10 +1,9 @@
 /**
  * Rollup loop, folded into the generator process.
  *
- * Originally lived in apps/rollup-cron — moved here so the deployment has
- * one fewer moving piece. The generator already holds the DB connection and
- * the leader-election advisory lock, so the rollup gets the same HA story
- * for free (only the active generator runs rollups).
+ * The rollup runs in-process with the generator, which already holds the DB
+ * connection and the leader-election advisory lock — so it gets the same HA
+ * story for free (only the active generator runs rollups).
  *
  * Cadence:
  *   - rollups_5m + partition maintenance + eligibility refresh: every 5 min
@@ -33,7 +32,7 @@ function isTestMode(): boolean {
 }
 function eligibilityThresholds() {
   const test = isTestMode();
-  // POC gate (M1): looser than the published 24h / 1000-sample methodology
+  // Eligibility gate: looser than the published 24h / 1000-sample methodology
   // gate, tighter than the local TEST_MODE bypass. Keeps reliability +
   // correctness floors close to production so rankings remain meaningful;
   // shortens the window + drops the volume floor so the leaderboard
@@ -233,9 +232,8 @@ export async function rollup1d(db: DbClient, lookback = "2 days"): Promise<void>
 // Retention is tiered to exactly what the dashboard reads (see
 // apps/web/src/lib/chartData.ts table-selection): rollups_5m only feeds charts
 // ≤24h (and the eligibility refresh's 4h window), so 2 days is ample buffer.
-// rollups_1h feeds 24h–7d, rollups_1d feeds >7d–30d. Keeping all three at 30d
-// (the old behaviour, and rollups_1h/1d previously unpruned entirely) was
-// storing ~15× more 5m rows than anything queries them.
+// rollups_1h feeds 24h–7d, rollups_1d feeds >7d–30d. Retaining rollups_5m for
+// the full 30d would store ~15× more 5m rows than anything queries.
 async function pruneOldRollups5m(db: DbClient): Promise<void> {
   await db.execute(sql`DELETE FROM rollups_5m WHERE window_start < now() - interval '2 days'`);
 }
@@ -630,11 +628,11 @@ let testModeWarned = false;
  * Folds samples → rollups_5m only. rollups_5m is the live chart's source, so
  * this must run reliably on cadence. It is deliberately isolated from the
  * heavier 1h/1d/eligibility work in `runHeavyRollups`: those read wider sample
- * ranges + percentile_cont and can outrun the 5-min interval under load. When
- * all of it shared a single tick + overlap guard, a slow heavy step skipped the
- * NEXT firing — including this cheap rollup5m — so the chart's latest 5-min
- * bucket lurched forward in ~10-15 min bursts. Splitting them keeps the chart
- * on cadence regardless of how long the heavy rollups take.
+ * ranges + percentile_cont and can outrun the 5-min interval under load. Under
+ * a single shared tick + overlap guard, a slow heavy step would skip the NEXT
+ * firing — including this cheap rollup5m — making the chart's latest 5-min
+ * bucket advance in bursts. Splitting them keeps the chart on cadence
+ * regardless of how long the heavy rollups take.
  */
 export async function runRollup5m(db: DbClient): Promise<void> {
   await rollup5m(db);

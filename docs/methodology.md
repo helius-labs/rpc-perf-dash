@@ -79,14 +79,14 @@ most methods. A provider whose tier structurally can't serve a method
 (declared via `unsupported_methods` in `packages/shared/src/providers.ts`) is
 a **non-voter** there: its samples are marked `tier_method_unsupported` and
 dropped from both the correctness and reliability denominators — disclosed
-limitation, not a failure. Two methods run as 3-voter panels today:
+limitation, not a failure. Two methods run as 3-voter panels:
 
 - `simulateBundle` — a Jito extension QuickNode's tier doesn't serve
   (-32601).
 - `getTransactionsForAddress` — QuickNode serves a **non-comparable variant**
   (bare-array result instead of the `{data, paginationToken}` envelope,
-  always-full transaction details, slot filter ignored; verified 2026-06-12),
-  so its answers can never match the panel's.
+  always-full transaction details, slot filter ignored), so its answers can
+  never match the panel's.
 
 On a structurally-3-voter panel, the "group of 3 or more" floor is lowered to
 a **2-1 strict majority** (it would otherwise demand unanimity, and a lone
@@ -306,9 +306,7 @@ hash, the revealed seed, each provider's response, the consensus result, and the
 independent reference's verdict. You can recompute the hash yourself and confirm
 the inputs were fixed before anyone answered: commitment = SHA-256(seed ‖
 canonical-JSON(params)), where canonical-JSON recursively sorts object keys —
-the same canonicalization used for projection hashing. (Challenges generated
-before the canonical-serialization change hashed insertion-order JSON instead;
-recompute those with `JSON.stringify(params)` as stored.) When the scoring or
+the same canonicalization used for projection hashing. When the scoring or
 comparison rules change, we bump the methodology version so past results stay
 coherent.
 
@@ -358,13 +356,13 @@ credits/mo cap is far below benchmark volume). This affects the cost of
 *reproducing* the benchmark, not the measurements themselves — anyone can run
 the same code against their own keys and recompute every score.
 
-## POC status
+## Deployment status
 
-This is an early deployment, so the qualification thresholds above are looser than
-our long-term targets while sample volume builds up. Workers currently run on AWS,
-TeraSwitch, Cloudflare, and GCP (with Latitude staged), the generator runs
-active + hot-standby, and the panel is Helius, Triton, Alchemy, and QuickNode.
-Honeypot tests (pre-seeded known answers) are active and gate leaderboard
-eligibility. Endpoint cycling was removed — each provider runs a single
-endpoint; it would only return if a provider publishes confirmed-equivalent
+During an early deployment the qualification thresholds above are looser than
+the long-term targets while sample volume builds up. Workers run across
+multiple clouds and providers (one process per region × egress vantage), the
+generator runs active + hot-standby, and the benchmarked panel is Helius,
+Triton, Alchemy, and QuickNode. Honeypot tests (pre-seeded known answers) are
+active and gate leaderboard eligibility. Each provider runs a single endpoint;
+endpoint cycling would only return if a provider publishes confirmed-equivalent
 alternate endpoints.

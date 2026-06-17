@@ -7,8 +7,8 @@
  * code (generator + worker fan-out) reads from the in-memory PROVIDERS
  * constant — so the table is purely there to satisfy the FK.
  *
- * v=2 schema: the `quorum_eligible` column was dropped in migration 0013
- * (consensus model replaced the rotating quorum). We do NOT write it.
+ * The `quorum_eligible` column was dropped in migration 0013, so it is not
+ * written here.
  */
 
 import { sql } from "drizzle-orm";

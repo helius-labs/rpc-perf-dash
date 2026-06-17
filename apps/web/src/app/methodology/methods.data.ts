@@ -7,11 +7,10 @@
  * correctness is verified. When a handler's bucket set, projection, or match
  * predicate changes, update the matching entry here (and docs/methodology.md).
  *
- * Verified against code on 2026-06-01: 44 methods emitted by the generator's
- * `allMethodBucketCombos` (apps/generator/src/index.ts), plus three
- * implemented-but-dormant methods (getSupply, getClusterNodes,
- * getLargestAccounts) that can't reach cross-provider consensus on the
- * current panel.
+ * 45 methods are emitted by the generator's `allMethodBucketCombos`
+ * (apps/generator/src/index.ts), plus three implemented-but-dormant methods
+ * (getSupply, getClusterNodes, getLargestAccounts) that can't reach
+ * cross-provider consensus on the current panel.
  */
 
 export type TechniqueKey =
@@ -187,7 +186,7 @@ export const METHODS: readonly MethodSpec[] = [
       "Byte-equal hash. Set-membership churn at a newer tip → stale, else incorrect.",
     voters: PANEL,
     notes: [
-      "Activated for correctness with the consensus model: the panel itself is now the reference, so enumeration methods get full scoring (the earlier neutral pool couldn't agree on the SPL Token program).",
+      "The panel itself is the reference, so enumeration methods get full correctness scoring via majority consensus across the panel.",
     ],
   },
   {
@@ -383,10 +382,6 @@ export const METHODS: readonly MethodSpec[] = [
       "Cannot reach a 3-voter consensus on the current panel at any timeout: only Triton (~6s) and Alchemy (~9s) compute it live and agree, QuickNode serves a stale cache, Helius hangs >30s. The handler stays registered (dormant) so any in-flight straggler resolves safely; re-enabling is a one-line add to allMethodBucketCombos.",
     voters: "—",
   },
-
-  // ====================================================================
-  // Batch added 2026-05-31 — 24 additional read methods.
-  // ====================================================================
 
   // ---- A · deterministic byte-equal (pinned to finalized data) ---------
   {
@@ -591,7 +586,7 @@ export const METHODS: readonly MethodSpec[] = [
       "Value tolerance compared like getBlockHeight, but with a much wider window (~thousands tx/s). The tolerance is an INITIAL estimate pending live tuning against the measured inter-provider spread.",
     voters: PANEL,
     notes: [
-      "Tolerance constants are unmeasured estimates until tuned post-cutover, so read the correctness number only after tuning.",
+      "Tolerance constants are unmeasured estimates pending live tuning, so read the correctness number only after tuning.",
     ],
   },
 
@@ -688,7 +683,7 @@ export const METHODS: readonly MethodSpec[] = [
     },
     projection: { keeps: "{ wellFormed }: leader is base58-32", drops: "the leader value (tip-dependent, never compared)" },
     match:
-      "Boolean well-formedness, byte-equal (availability/latency probe, C ≈ 100%). The current-slot leader is inherently tip-dependent: providers at slightly different tips return different leaders (leader rotates every 4 slots), so cross-provider value agreement is impossible in real time. Byte-equal scoring gave a misleading ~1.6%; use getSlotLeaders for the real leader-schedule correctness.",
+      "Boolean well-formedness, byte-equal (availability/latency probe, C ≈ 100%). The current-slot leader is inherently tip-dependent: providers at slightly different tips return different leaders (leader rotates every 4 slots), so cross-provider value agreement is impossible in real time. Byte-equal scoring would give a misleading low correctness; use getSlotLeaders for the real leader-schedule correctness.",
     voters: PANEL,
     notes: ["No cross-provider value check (same honest limitation as getSlot). See getSlotLeaders for the deterministic, pinned-finalized correctness signal."],
   },
@@ -741,7 +736,6 @@ export const METHODS: readonly MethodSpec[] = [
     ],
   },
 
-  // ---- Batch added 2026-06-01 ------------------------------------------
   {
     name: "getMultipleAccounts",
     technique: "byte-equal",
@@ -845,7 +839,7 @@ export const METHODS: readonly MethodSpec[] = [
       drops: "gossip/tpu/rpc endpoints and version (node-local, churns)",
     },
     match:
-      "Well-formedness, byte-equal (committed family). A Jaccard-over-pubkeys path is authored but the 2026-06-01 dry-run reached a 3-voter majority on only 1/8 challenges, and the ~4576-node payload only succeeded ~50% under fanout, so ≥3 voters rarely co-occur. Dormant pending re-validation from a deployed worker.",
+      "Well-formedness, byte-equal (committed family). A Jaccard-over-pubkeys path is authored but rarely reaches a 3-voter majority — the ~4576-node payload only succeeds ~50% under fanout, so ≥3 voters rarely co-occur. Dormant pending re-validation from a deployed worker.",
     voters: PANEL,
     dormant: true,
     notes: ["Dormant: all four providers serve it, but the large payload doesn't reliably reach the 3-voter consensus floor from the dry-run client. Re-enable + re-test from a deployed worker."],
@@ -858,7 +852,7 @@ export const METHODS: readonly MethodSpec[] = [
     input: { draws: "Nothing", from: "the request itself (network-wide top accounts)", buckets: "1: default", commitment: "finalized" },
     projection: { keeps: "the set of top-20 account addresses", drops: "all lamports balances (only addresses are kept)" },
     match:
-      "Jaccard ≥ 0.75 over the address set when served. NOT benchmarkable on the current panel: dry-run 2026-06-01 found only QuickNode serves it (Helius 500s, Triton rate-limits, Alchemy blocks the method), so it can never reach 3 voters.",
+      "Jaccard ≥ 0.75 over the address set when served. NOT benchmarkable on the current panel: only QuickNode serves it (Helius 500s, Triton rate-limits, Alchemy blocks the method), so it can never reach 3 voters.",
     voters: PANEL,
     dormant: true,
     notes: ["Dormant: only 1 of 4 panel providers serves getLargestAccounts (expensive full-account scan), so consensus is structurally impossible. Re-enable if the panel changes."],
@@ -883,7 +877,6 @@ export const METHODS: readonly MethodSpec[] = [
     voters: PANEL,
   },
 
-  // ---- Batch added 2026-06-12 --------------------------------------------
   {
     name: "getTransactionsForAddress",
     technique: "byte-equal",
@@ -902,12 +895,12 @@ export const METHODS: readonly MethodSpec[] = [
         "paginationToken (provider-internal cursor), blockTime, memo, confirmationStatus, transactionIndex (vote-tx counting parity unverified), and in full mode the message body, logs, innerInstructions, loadedAddresses, rewards, and version (Triton omits the field entirely)",
     },
     match:
-      "Byte-equal. \"The newest ≤limit txs at or before the pin\" is an immutable answer: the finalized-semantics tip drift that forces getSignaturesForAddress into a Jaccard tolerance lives at the tip, which the pin excludes. Verified live 2026-06-12: 3-provider byte-match on 12/12 signatures-mode and 6/6 full-mode probes.",
+      "Byte-equal. \"The newest ≤limit txs at or before the pin\" is an immutable answer: the finalized-semantics tip drift that forces getSignaturesForAddress into a Jaccard tolerance lives at the tip, which the pin excludes. Yields a 3-provider byte-match across signatures-mode and full-mode probes.",
     voters:
       "3 voters · Helius, Triton, Alchemy (QuickNode serves a non-comparable variant of getTransactionsForAddress → tier_method_unsupported)",
     notes: [
       "Custom indexer-backed method (not in the standard Solana JSON-RPC set). Params stick to the cross-provider common subset: no Helius-only tokenTransfer filter, no processed commitment, full-mode limit under Alchemy's cap.",
-      "QuickNode's variant returns a bare array (no {data, paginationToken} envelope), always-full details, and ignores the slot filter (verified 2026-06-12) — non-comparable by construction, so it's a non-voter rather than penalized.",
+      "QuickNode's variant returns a bare array (no {data, paginationToken} envelope), always-full details, and ignores the slot filter — non-comparable by construction, so it's a non-voter rather than penalized.",
       "3-voter panels decide by 2-1 strict majority (the usual ≥3-group floor would demand unanimity): a lone deviator — e.g. Triton's intermittent empty responses — is scored incorrect, and the auditor cross-check backstops the agreeing pair. All three must answer usably or the challenge is thrown out.",
       "The non-high-activity address filter is load-bearing: vote-authority addresses diverge massively across providers' indexers (vote-tx indexing differs), and filtering them is what makes byte-equal consensus possible.",
     ],

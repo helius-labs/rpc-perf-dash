@@ -22,18 +22,9 @@ import type { TLSSocket } from "node:tls";
 
 /**
  * Methodology version. Each bump forks rollup + leaderboard tables so
- * historical leaderboards stay coherent — no re-scoring.
- *
- * 2026-05-27 — the neutral rotating quorum was replaced with majority
- * consensus across the benchmarked panel plus an independent auditor
- * cross-check.
- *
- * 2026-06-12 — archival buckets rebanded from tip−1…10 epochs to
- * tip−182…365 epochs (≈1–2 years, true archive depth instead of warm
- * storage); a frozen `before`-anchored archival bucket added to
- * getSignaturesForAddress with strict byte-equal consensus; worker fanout
- * timeout raised to 10s for archival/honeypot buckets (cold archive reads;
- * within-bucket latency comparisons unaffected).
+ * historical leaderboards stay coherent — no re-scoring. Bump it when scoring,
+ * projection, eligibility, or consensus semantics change (see
+ * docs/operations.md § Methodology versioning).
  */
 export const METHODOLOGY_VERSION = 3 as const;
 

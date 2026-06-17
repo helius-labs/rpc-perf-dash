@@ -50,11 +50,10 @@ export async function ensurePartitions(db: DbClient): Promise<void> {
         -- Explicit column list = the columns samples_archived actually has,
         -- in attnum order. NEVER use 'INSERT ... SELECT *' here: it maps by
         -- position and silently breaks whenever 'samples' gains a column the
-        -- archive lacks. Migration 0006 added failure_category/failure_detail
-        -- to samples only; the resulting column-count mismatch crashlooped the
-        -- generator for ~28h on 2026-06-07 (first partition to cross the 30d
-        -- cutoff). Listing samples_archived's columns is position-safe and
-        -- drift-proof: samples-only columns are simply not archived.
+        -- archive lacks (e.g. migration 0006 added failure_category/
+        -- failure_detail to samples only). Listing samples_archived's columns
+        -- is position-safe and drift-proof: samples-only columns are simply
+        -- not archived.
         SELECT string_agg(quote_ident(attname), ', ' ORDER BY attnum)
           INTO cols
         FROM pg_attribute
@@ -78,8 +77,8 @@ export async function ensurePartitions(db: DbClient): Promise<void> {
           -- down. A partition that can't be archived (e.g. historical rows that
           -- violate a since-tightened CHECK like samples_egress_chk) is logged
           -- and LEFT IN PLACE — never dropped on a failed copy — and retried on
-          -- the next cron tick. Real incident 2026-06-07/08: a fatal archive
-          -- error here crashlooped the generator for ~28h.
+          -- the next cron tick. A fatal archive error here would otherwise
+          -- crashloop the generator.
           BEGIN
             EXECUTE format(
               'CREATE TABLE IF NOT EXISTS samples_archived_%s PARTITION OF samples_archived FOR VALUES FROM (%L) TO (%L)',

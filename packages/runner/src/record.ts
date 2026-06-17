@@ -1,12 +1,12 @@
 /**
  * Per-(challenge, vantage) sample-row construction.
  *
- * Under methodology_version 2 this is also where **consensus is decided**:
- * the worker (apps/worker/src/index.ts) and the on-demand benchmark CLI
+ * This is also where **consensus is decided**: the worker
+ * (apps/worker/src/index.ts) and the on-demand benchmark CLI
  * (apps/generator/src/benchmark.ts) each call fanout() to query all
- * benchmarked providers in parallel, then hand the results here. We have
- * every provider's response for this (challenge, vantage, mode) in memory,
- * so the majority vote happens locally — no DB round-trip, no separate
+ * benchmarked providers in parallel, then hand the results here. Every
+ * provider's response for this (challenge, vantage, mode) is in memory, so
+ * the majority vote happens locally — no DB round-trip, no separate
  * reference-fetching phase.
  *
  * Flow per mode (cold / warm — independent votes):
@@ -50,7 +50,7 @@ import {
   getSlot as slotMod,
   getTokenLargestAccounts as tlaMod,
   freshness as freshnessMod,
-  // Batch added 2026-05-31 — non-byte-equal predicates for the new methods.
+  // Non-byte-equal predicates for the additional methods.
   getEpochInfo as epochMod,
   getBlockHeight as blockHeightMod,
   getTransactionCount as txCountMod,
@@ -84,9 +84,9 @@ export interface BuildSampleRowsInput {
   worker_id: string;
   egress_path: string;
   /**
-   * Auditor reference hash (methodology_version 2) — projection hash of the
-   * UTILITY/auditor's answer to this challenge, captured at challenge
-   * generation. For honeypots, this is the pre-seeded known answer instead.
+   * Auditor reference hash — projection hash of the UTILITY/auditor's answer
+   * to this challenge, captured at challenge generation. For honeypots, this
+   * is the pre-seeded known answer instead.
    */
   reference_hash: Buffer;
   /** Full auditor reference response (or honeypot known answer). */
@@ -111,12 +111,7 @@ export interface BuildSampleRowsOutput {
 
 /**
  * Build sample rows + the optional consensus-log rows for one (challenge,
- * vantage). Returns the rows; the caller persists them.
- *
- * Backwards-compat: workers and the CLI used to receive `SampleRow[]`. To
- * avoid signature churn at every call site, we also export
- * `buildSampleRowsLegacy` that returns just `SampleRow[]` — the new code path
- * should prefer the structured return.
+ * vantage). Returns the structured rows; the caller persists them.
  */
 export function buildSampleRowsV2(input: BuildSampleRowsInput): BuildSampleRowsOutput {
   const rows: SampleRow[] = [];
@@ -479,9 +474,9 @@ function decideProviderOutcome(
     return { correctness: "incorrect", exclusion_reason: "reliability_failure" };
   }
 
-  // 3) Unparseable / RPC-error bodies — count as correctness failures, like
-  //    today. (`categorizeFailure` will refine into `body_invalid` /
-  //    `rpc_error` for the failure-breakdown table.)
+  // 3) Unparseable / RPC-error bodies — count as correctness failures.
+  //    (`categorizeFailure` will refine into `body_invalid` / `rpc_error` for
+  //    the failure-breakdown table.)
   if (d.attempt.outcome === "body_invalid" || d.attempt.outcome === "rpc_error") {
     return { correctness: "incorrect", exclusion_reason: "correctness_failure" };
   }

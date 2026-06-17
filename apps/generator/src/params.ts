@@ -57,7 +57,6 @@ export function paramsAsArray(method: Method, p: unknown): unknown[] {
     const x = p as { tokenAccount: string; options: unknown };
     return [x.tokenAccount, x.options];
   }
-  // ── Batch added 2026-05-31 ────────────────────────────────────────
   // No-param methods.
   if (
     method === "getGenesisHash" ||
@@ -139,7 +138,6 @@ export function paramsAsArray(method: Method, p: unknown): unknown[] {
     const x = p as { bundle: unknown; options: unknown };
     return [x.bundle, x.options];
   }
-  // ── Batch added 2026-06-01 ────────────────────────────────────────
   if (method === "getMultipleAccounts") {
     const x = p as { pubkeys: string[]; options: unknown };
     return [x.pubkeys, x.options];
@@ -164,7 +162,6 @@ export function paramsAsArray(method: Method, p: unknown): unknown[] {
     const x = p as { message: string; options: unknown };
     return [x.message, x.options];
   }
-  // ── Batch added 2026-06-12 ────────────────────────────────────────
   if (method === "getTransactionsForAddress") {
     const x = p as { address: string; options: unknown };
     return [x.address, x.options];

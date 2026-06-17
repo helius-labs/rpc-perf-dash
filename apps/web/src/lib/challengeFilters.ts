@@ -15,7 +15,7 @@ import { WINDOW_VALUES } from "@/lib/windows";
  * for current traffic). The UI relabels `ready` → "dispatched" to match the
  * home-page tooltip — that's the actual dispatch-lifecycle meaning.
  *
- * Old DB rows from before the consensus cutover (a few thousand) have
+ * Legacy DB rows (a few thousand) have
  * `ambiguous` / `pending_quorum` statuses; they'll show up under "All" with
  * their raw status text but aren't exposed as filter options since no new
  * challenges land in those states.

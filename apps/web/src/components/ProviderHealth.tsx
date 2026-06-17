@@ -87,10 +87,10 @@ export function ProviderHealth({ benchmarked, auditor, infra, windowLabel }: Pro
   });
 
   const auditorItems = (() => {
-    // The "Endpoint last OK" chip was removed — utility_rpc_status only
-    // records the *publisher's* last successful publish, not the auditor's
-    // actual liveness from the deferred-finality job's POV. It read "never"
-    // permanently and was misleading. Liveness signal lives in the
+    // There is intentionally no "Endpoint last OK" chip — utility_rpc_status
+    // only records the *publisher's* last successful publish, not the auditor's
+    // actual liveness from the deferred-finality job's POV, so it would read
+    // "never" permanently and mislead. Liveness signal lives in the
     // Accuracy chip (a populated accuracy % implies the auditor is
     // answering) and the Consensus Integrity panel (auditor_unavailable
     // count).

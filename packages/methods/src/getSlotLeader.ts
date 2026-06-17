@@ -5,9 +5,9 @@
  * commitment (no slot param), so it is inherently tip-dependent: providers sit
  * at slightly different tips and the leader rotates every 4 slots, so they
  * rarely return the same pubkey at the same instant. Byte-equal cross-provider
- * agreement in real time is impossible — same class as getSlot. Live data
- * (2026-05-31) confirmed this: byte-equal scoring gave a misleading ~1.6%
- * correctness that measured tip jitter, not provider correctness.
+ * agreement in real time is impossible — same class as getSlot: byte-equal
+ * scoring would give a misleading low correctness that measures tip jitter, not
+ * provider correctness.
  *
  * So getSlotLeader is scored like getIdentity: project a BOOLEAN well-formedness
  * verdict (`{ wellFormed }` — the leader is a base58-32 pubkey). Serving

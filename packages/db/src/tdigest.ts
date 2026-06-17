@@ -1,11 +1,10 @@
 /**
  * (Storage portability shim.)
  *
- * Originally these helpers wrapped the `tdigest` extension's aggregate
- * functions, but Neon's allowed-extensions list excludes tdigest. POC now
- * uses scalar p50/p95/p99 columns on rollups (computed via percentile_cont
- * in the rollup cron), and reads percentiles directly from `samples` for
- * the leaderboard view.
+ * These helpers are no-op placeholders. Quantiles use scalar p50/p95/p99
+ * columns on rollups (computed via percentile_cont in the rollup cron), and
+ * the leaderboard view reads percentiles directly from `samples` — no tdigest
+ * extension (managed Postgres providers commonly disallow it).
  *
  * Helpers below are kept as no-op placeholders so the API surface for
  * downstream callers stays stable. If we ever land somewhere with tdigest

@@ -1,14 +1,9 @@
 /**
  * Multi-endpoint utility-RPC client with per-endpoint health tracking and
  * a circuit-breaker, so the generator survives a single upstream going
- * 403/5xx/dead.
- *
- * Background — 2026-05-24 outage:
- *   The generator used a single `createRpcClient(env:UTILITY_RPC_URL)` and the
- *   SlotObserver's `.catch(() => {})` ate every error. When Chainstack
- *   started returning HTTP 403 for our key, slot polling silently froze;
- *   `deriveChallenge` couldn't build any challenges (no slots in
- *   `recentSlots`); the whole fleet went 2 days without producing a sample.
+ * 403/5xx/dead. With a single utility endpoint, a 403 freezes slot polling,
+ * `deriveChallenge` can't build challenges (no slots in `recentSlots`), and
+ * the whole fleet stops producing samples.
  *
  * Design:
  *   - Takes a list of endpoint URLs in priority order. Skips falsy/unset.
@@ -22,7 +17,7 @@
  *
  * NOT a generic provider client: scoped to the generator's utility role
  * (SlotObserver getSlot + honeypot derivation + benchmark.ts pre-flight).
- * The quorum and worker code paths keep their existing per-call clients.
+ * The worker code paths keep their existing per-call clients.
  */
 
 import type { RpcCallOptions, RpcClient } from "@rpcbench/shared";

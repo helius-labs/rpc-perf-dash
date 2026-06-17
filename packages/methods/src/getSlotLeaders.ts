@@ -9,8 +9,8 @@
  * cross-provider leader-schedule correctness signal that getSlotLeader can't
  * provide.
  *
- * RECENT-EPOCH ONLY (no archival bucket): live data (2026-06-01) showed the
- * archival bucket scoring ~50% incorrect while recent_finalized was 100%.
+ * RECENT-EPOCH ONLY (no archival bucket): an archival bucket scores ~50%
+ * incorrect while recent_finalized is 100%.
  * Agave serves getSlotLeaders from an in-memory leader-schedule cache that only
  * covers recent epochs; for slots many epochs back, providers return divergent
  * or empty results (it is NOT a retained, deterministic artifact like a block).

@@ -3,10 +3,10 @@
  *
  * Workers only ever read from `challenges_worker_view` — they never see is_honeypot.
  *
- * Under methodology_version 2 the challenge has no "pending_quorum" phase:
- * the generator captures the auditor (utility) reference and writes the
- * challenge + assignments in one step. Correctness is decided per-sample in
- * the worker via majority consensus across the benchmarked panel.
+ * A challenge has no "pending_quorum" phase: the generator captures the
+ * auditor (utility) reference and writes the challenge + assignments in one
+ * step. Correctness is decided per-sample in the worker via majority consensus
+ * across the benchmarked panel.
  */
 
 import { sql } from "drizzle-orm";

@@ -353,7 +353,7 @@ export function FailureBreakdownList({
 
 // ---------------------------------------------------------------------------
 // Raw aggregate row from the server query + helpers to turn it into rows the
-// leaderboard renders. Moved out of page.tsx 2026-05-26 so the client-side
+// leaderboard renders. Kept out of page.tsx so the client-side
 // IndexLeaderboard can rebuild rows as weights change (no server round-trip
 // per slider tick).
 // ---------------------------------------------------------------------------

@@ -8,10 +8,10 @@
  *
  *   1. trimReferenceResponses — nulls challenges.reference_response once a
  *      challenge is >6h old. That JSON (full getBlock/getTransaction payloads)
- *      was ~158 GB / >40% of the DB and is dead weight after the ~30s active
- *      window: scoring + runFinalityRecheck use the small reference_hash, and
- *      only /raw renders the payload (now guarded to show "trimmed" past 6h).
- *      The row and reference_hash are kept forever.
+ *      dominates DB size and is dead weight after the ~30s active window:
+ *      scoring + runFinalityRecheck use the small reference_hash, and only /raw
+ *      renders the payload (guarded to show "trimmed" past 6h). The row and
+ *      reference_hash are kept forever.
  *
  *   2. pruneControlTables — caps the unbounded control-plane tables at 31 days
  *      (one day past the dashboard's 720h max window). Deleting a challenge
@@ -34,9 +34,9 @@ const CONTROL_RETENTION = "31 days";
 const TRIM_BATCH = 5_000;
 const DELETE_BATCH = 10_000;
 
-// Safety cap on batches per invocation so a one-time backlog (≈1.4M rows on
-// first deploy) doesn't pin a single tick indefinitely — it simply resumes on
-// the next interval. At TRIM_BATCH=5k this is up to 1M rows/tick.
+// Safety cap on batches per invocation so a large one-time backlog doesn't pin
+// a single tick indefinitely — it simply resumes on the next interval. At
+// TRIM_BATCH=5k this is up to 1M rows/tick.
 const MAX_BATCHES_PER_RUN = 200;
 
 /** Number of rows returned by a `... RETURNING 1` statement. */

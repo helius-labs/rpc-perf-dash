@@ -11,7 +11,6 @@ import * as getTokenSupply from "./getTokenSupply.js";
 import * as getTokenLargestAccounts from "./getTokenLargestAccounts.js";
 import * as getLatestBlockhash from "./getLatestBlockhash.js";
 import * as getTokenAccountBalance from "./getTokenAccountBalance.js";
-// ── Batch added 2026-05-31 ──────────────────────────────────────────
 import * as getGenesisHash from "./getGenesisHash.js";
 import * as getEpochSchedule from "./getEpochSchedule.js";
 import * as getInflationGovernor from "./getInflationGovernor.js";
@@ -37,7 +36,6 @@ import * as getSlotLeader from "./getSlotLeader.js";
 import * as getSlotLeaders from "./getSlotLeaders.js";
 import * as simulateTransaction from "./simulateTransaction.js";
 import * as simulateBundle from "./simulateBundle.js";
-// ── Batch added 2026-06-01 ──────────────────────────────────────────
 import * as getMultipleAccounts from "./getMultipleAccounts.js";
 import * as getSignatureStatuses from "./getSignatureStatuses.js";
 import * as getMinimumBalanceForRentExemption from "./getMinimumBalanceForRentExemption.js";
@@ -47,7 +45,6 @@ import * as getRecentPrioritizationFees from "./getRecentPrioritizationFees.js";
 import * as getClusterNodes from "./getClusterNodes.js";
 import * as getLargestAccounts from "./getLargestAccounts.js";
 import * as getFeeForMessage from "./getFeeForMessage.js";
-// ── Batch added 2026-06-12 ──────────────────────────────────────────
 import * as getTransactionsForAddress from "./getTransactionsForAddress.js";
 import * as freshness from "./freshness.js";
 import type { Method, MethodHandlers } from "@rpcbench/shared";

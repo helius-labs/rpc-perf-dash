@@ -16,7 +16,7 @@
 
 ## Reproducing published results
 
-The Helius-operated production benchmark uses operator-internal endpoints (specifically Helius traffic is $0 to operate). A third-party reproducer running this repo against the public Helius free tier will hit the published ~1M-credit/mo cap and won't be able to sustain shared cadence on Helius without a paid tier. See `docs/methodology.md` § "Operator vs reproducer cost" for the full disclosure.
+The production benchmark Helius operates runs on its own internal endpoints (Helius traffic is $0 for it to operate). A third-party reproducer running this repo against the public Helius free tier will hit the published ~1M-credit/mo cap and won't be able to sustain shared cadence on Helius without a paid tier. See `docs/methodology.md` § "Operator vs reproducer cost" for the full disclosure.
 
 ## Secret safety
 

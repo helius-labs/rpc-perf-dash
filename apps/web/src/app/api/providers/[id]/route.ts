@@ -58,7 +58,7 @@ export async function GET(
   }
 
   // Default overall = preset method-blend (Balanced); an explicit method= keeps
-  // the legacy single-method overall (Option A).
+  // the legacy single-method overall.
   const presetRaw = q.get("preset");
   const board = await fetchLeaderboard({
     region: "overall",

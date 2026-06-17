@@ -63,9 +63,8 @@ interface SampleRow {
 }
 
 /**
- * Consensus log row (per challenge × vantage × mode). For old pre-cutover
- * challenges, the legacy `quorum_log` table is still queried and rendered
- * as a fallback section.
+ * Consensus log row (per challenge × vantage × mode). For legacy challenges,
+ * the `quorum_log` table is still queried and rendered as a fallback section.
  */
 interface ConsensusLogRow {
   worker_provider: string;
@@ -203,7 +202,7 @@ export default async function RawPage({
       `);
       consensus = cnRows as unknown as ConsensusLogRow[];
 
-      // Legacy quorum_log only meaningful for pre-cutover challenges;
+      // Legacy quorum_log only meaningful for legacy challenges;
       // query unconditionally so /raw still renders historical detail.
       const qRows = await db().execute(sql`SELECT * FROM quorum_log WHERE challenge_id = ${id}::uuid`);
       qlog = (qRows as unknown as QuorumLogRow[])[0] ?? null;
@@ -338,7 +337,7 @@ export default async function RawPage({
       </Collapsible>
 
       {qlog && (
-        <Collapsible className="mt-3" title="Legacy quorum log (pre-cutover)">
+        <Collapsible className="mt-3" title="Legacy quorum log">
           <pre className={PRE_CLS}>{safeStringify(qlog)}</pre>
         </Collapsible>
       )}

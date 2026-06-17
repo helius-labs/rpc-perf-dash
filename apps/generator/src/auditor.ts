@@ -1,10 +1,10 @@
 /**
  * Independent auditor (utility-RPC) reference fetching.
  *
- * Methodology_version 2 replaces the rotating neutral quorum with majority
- * consensus across the benchmarked panel. The utility endpoint is repurposed
- * as a single neutral AUDITOR whose answer is recorded per challenge as the
- * `reference_response` / `reference_hash` / `reference_tip_slot` columns:
+ * Correctness is decided by majority consensus across the benchmarked panel.
+ * The utility endpoint serves as a single neutral AUDITOR whose answer is
+ * recorded per challenge as the `reference_response` / `reference_hash` /
+ * `reference_tip_slot` columns:
  *
  *   - The worker's record.ts cross-checks panel consensus against this
  *     reference. A disagreement marks every sample for the challenge as
@@ -14,8 +14,6 @@
  *   - The deferred finality re-verification job (rollup.ts) re-queries the
  *     auditor once challenges are deeply finalized and writes the result to
  *     consensus_audit.
- *
- * Replaces apps/generator/src/quorum.ts (deleted).
  */
 
 import { HANDLERS } from "@rpcbench/methods";

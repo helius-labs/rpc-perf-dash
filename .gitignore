@@ -32,3 +32,4 @@ packages/shared/scripts/check-secrets.local
 # Operator-internal docs — not part of the public repo.
 CLAUDE.md
 docs/plan-tiers.md
+docs/operations-internal.md

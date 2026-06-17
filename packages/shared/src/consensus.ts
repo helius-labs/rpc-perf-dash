@@ -1,9 +1,9 @@
 /**
- * Consensus decision rules (methodology_version 2).
+ * Consensus decision rules.
  *
- * Replaces the neutral-quorum vote (decideQuorum3/5) with a majority vote
- * across the benchmarked panel itself. Inputs are the provider responses
- * the worker already collected via fanout(); no separate RPC round is needed.
+ * Correctness is decided by a majority vote across the benchmarked panel
+ * itself. Inputs are the provider responses the worker already collected via
+ * fanout(); no separate RPC round is needed.
  *
  * Decision (first match wins):
  *
@@ -30,10 +30,7 @@
  *                        consensus with one dissenter — two byte-equal
  *                        agreements out of three independent providers is
  *                        decisive, and the auditor cross-check still backstops
- *                        a wrong-pair. Added 2026-06-12; before that, 3-voter
- *                        methods required unanimity and a lone deviator
- *                        ambiguated the whole challenge instead of being
- *                        scored incorrect.
+ *                        a wrong-pair.
  *   n<3                → ambiguous (too few voters; e.g. ≥3 timeouts)
  *
  * The `match` predicate is method-specific: byte-equal hash for immutable

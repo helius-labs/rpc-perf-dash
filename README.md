@@ -6,7 +6,7 @@ Continuous, regional, non-gameable benchmarking of Solana RPC providers.
 
 A multi-vantage benchmark that fires randomized, commit-revealed challenges at public Solana RPC providers from several clouds and geos, decides correctness by majority consensus across the benchmarked panel, cross-checks each consensus answer against an independent auditor endpoint, and publishes a filterable leaderboard scoring latency, win rate, reliability, correctness, and freshness.
 
-Current method coverage: ~44 read methods, from the high-volume trio (`getBlock`, `getTransaction`, `getSignaturesForAddress`) through account/token reads to chain-metadata calls — the canonical emitted list is `allMethodBucketCombos()` in `apps/generator/src/index.ts`. Every challenge, every sample, and every score is open data — recomputable from this repo against your own infrastructure.
+Current method coverage: ~45 read methods, from the high-volume trio (`getBlock`, `getTransaction`, `getSignaturesForAddress`) through account/token reads to chain-metadata calls — the canonical emitted list is `allMethodBucketCombos()` in `apps/generator/src/index.ts`. Every challenge, every sample, and every score is open data — recomputable from this repo against your own infrastructure.
 
 ## Architecture
 
@@ -40,7 +40,7 @@ cp .env.example .env.local
 
 Fill in `.env.local`:
 
-- `NEON_DATABASE_URL_POOLED` / `NEON_DATABASE_URL_DIRECT` — your Postgres connection strings (the names are historical; any Postgres works).
+- `NEON_DATABASE_URL_POOLED` / `NEON_DATABASE_URL_DIRECT` — your Postgres connection strings (the `NEON_` prefix is just a naming convention; any Postgres works).
 - `HELIUS_API_KEY`, `TRITON_URL`, `ALCHEMY_URL`, `QUICKNODE_URL`, etc. — your provider endpoints. Any provider whose env is unset is silently skipped, so you can benchmark a subset.
 - `UTILITY_RPC_URL` (+ optional `UTILITY_RPC_URL_2`, `UTILITY_RPC_URL_3` for failover) — an RPC endpoint that is **not** on the leaderboard, used for generator-side preflight (challenge derivation) AND as the neutral **auditor** that cross-checks panel consensus. The endpoint operator MUST be independent of every benchmarked provider — `assertAuditorIndependent()` fails the generator at startup if the host overlaps a panel member's host, but confirming the configured endpoint's real operator is a manual prerequisite. A paid, full-archive third-party endpoint works well.
 - `GENERATOR_SECRET` — HMAC secret for the commit-reveal protocol. Generate with `openssl rand -hex 32`.
@@ -52,8 +52,8 @@ pnpm db:migrate
 ```
 
 No extensions are required — percentile aggregation uses plain
-`percentile_cont()` (the original `tdigest`-extension path was dropped in
-migration 0003 because managed Postgres providers commonly don't allow it).
+`percentile_cont()`, since managed Postgres providers commonly don't allow
+custom extensions like `tdigest`.
 
 ### 4. Run it
 
@@ -72,6 +72,33 @@ pnpm benchmark
 ```
 
 This produces a small batch of challenges, scores the providers, and prints a per-provider summary.
+
+### Minimal local eval
+
+To stand the whole system up on one machine with the smallest possible config, set just these in `.env.local`:
+
+```bash
+# One Postgres database — pooled and direct can point at the same URL locally.
+NEON_DATABASE_URL_POOLED=postgresql://localhost/rpcbench
+NEON_DATABASE_URL_DIRECT=postgresql://localhost/rpcbench
+
+# One provider is enough — any provider whose env is unset is silently skipped.
+HELIUS_API_KEY=your-key-here
+
+# The auditor. For a single-provider local run it can reuse that provider's
+# endpoint, which requires the override below. Production REQUIRES an
+# operator-independent auditor (assertAuditorIndependent() fails closed otherwise).
+UTILITY_RPC_URL=https://mainnet.helius-rpc.com/?api-key=your-key-here
+AUDITOR_PANEL_OVERLAP_OK=1   # local only — never set in a real deployment
+
+# Commit-reveal secret.
+GENERATOR_SECRET=            # openssl rand -hex 32
+
+# Loosen eligibility so the leaderboard ranks within minutes instead of hours.
+TEST_MODE=1                  # dev only — weakens the public eligibility gate
+```
+
+Then run `pnpm db:migrate` once, start the three processes (`pnpm dev:generator`, `pnpm dev:worker`, `pnpm dev:web`), and open `http://localhost:3000`. Under `TEST_MODE=1` the single provider should appear on the leaderboard within a few minutes.
 
 ### Multi-region
 

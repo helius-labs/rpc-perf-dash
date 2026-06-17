@@ -1,12 +1,12 @@
 /**
  * getRecentPerformanceSamples — well-formedness-only (Archetype D fallback).
  *
- * Returns the last N per-slot performance samples. Live validation (2026-05-31)
- * showed each provider samples at its OWN slots (~150 slots / 60s apart) with
- * essentially ZERO overlap across providers, so the planned Jaccard-on-sample-
- * slots never converges (maj=1). As the plan's documented fallback, we score it
- * like the node-identity methods: project a BOOLEAN well-formedness verdict
- * (an array of ≥1 samples, each with finite numTransactions / numSlots /
+ * Returns the last N per-slot performance samples. Each provider samples at its
+ * OWN slots (~150 slots / 60s apart) with essentially ZERO overlap across
+ * providers, so a Jaccard-on-sample-slots approach never converges (maj=1). As a
+ * fallback, it is scored like the node-identity methods: project a BOOLEAN
+ * well-formedness verdict (an array of ≥1 samples, each with finite
+ * numTransactions / numSlots /
  * samplePeriodSecs / slot). Serving providers all hash `true` → byte-equal
  * consensus → correct; a malformed-but-200 body dissents. Measures availability
  * + structural well-formedness, not cross-provider sample equality.

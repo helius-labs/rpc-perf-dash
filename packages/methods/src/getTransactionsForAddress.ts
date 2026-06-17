@@ -7,9 +7,8 @@
  * `unsupported_methods` comment in packages/shared/src/providers.ts), so the
  * panel is 3 voters. On a structurally-3-voter panel the consensus floor is
  * lowered to a 2-1 strict majority (record.ts passes minGroup=2), so a lone
- * deviator — e.g. Triton's intermittent empty responses, observed live
- * 2026-06-12 — is scored `incorrect` rather than ambiguating the whole
- * challenge. See docs/methodology.md.
+ * deviator — e.g. Triton's intermittent empty responses — is scored `incorrect`
+ * rather than ambiguating the whole challenge. See docs/methodology.md.
  *
  * Bucketing (2, both slot-pinned):
  *   sigs__desc__pinned__l1000 — transactionDetails: "signatures", limit 1000
@@ -22,14 +21,13 @@
  * `pin`" is an immutable answer: cross-camp drift lives at the tip, which the
  * pin excludes, and desc-over-pin keeps data recent so archival indexer-depth
  * divergence doesn't bite. Result: strict byte-equal projection for BOTH
- * modes (verified live 2026-06-12 — 3-provider byte-match on 12/12 sigs-mode
- * and 6/6 full-mode probes).
+ * modes (3-provider byte-match across sigs-mode and full-mode probes).
  *
  * The non-high activity filter in derivation is LOAD-BEARING for this method,
  * not just a payload-variance bound: vote-authority addresses (which classify
- * `high`) showed massive cross-provider divergence in live probing (vote-tx
- * indexing differs per provider). Filtering them out is what makes byte-equal
- * consensus possible. Don't relax it.
+ * `high`) exhibit massive cross-provider divergence (vote-tx indexing differs
+ * per provider). Filtering them out is what makes byte-equal consensus possible.
+ * Don't relax it.
  *
  * Common-subset params only: no Helius-only `filters.tokenTransfer`, no
  * `processed` commitment, json encoding. Full-mode limit 25 is storage-driven

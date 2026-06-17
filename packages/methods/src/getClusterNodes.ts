@@ -38,13 +38,13 @@ export const BUCKETS = ["default"] as const;
 export type GetClusterNodesBucket = (typeof BUCKETS)[number];
 
 /**
- * Committed scoring family. Dry-run (2026-06-01) showed the Jaccard path reached
- * a 3-voter majority on only 1/8 challenges despite all four providers serving
- * ~4576 nodes each (counts within 7) — the gossip views diverge / churn enough
- * that the large sets don't converge at 0.8, the same failure mode that pushed
- * getRecentPerformanceSamples off Jaccard. So the committed family is the
- * well-formedness fallback: all serving providers hash `true` → byte-equal
- * consensus. Flip back to true only if a future panel/threshold converges.
+ * Committed scoring family. A Jaccard path over the node set rarely reaches a
+ * 3-voter majority: all four providers serve ~4576 nodes each (counts within 7),
+ * but the gossip views diverge / churn enough that the large sets don't converge
+ * at 0.8 — the same failure mode as getRecentPerformanceSamples. So the committed
+ * family is the well-formedness fallback: all serving providers hash `true` →
+ * byte-equal consensus. Flip back to true only if a future panel/threshold
+ * converges.
  */
 const USE_JACCARD = false;
 

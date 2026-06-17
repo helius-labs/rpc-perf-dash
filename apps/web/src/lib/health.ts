@@ -73,12 +73,11 @@ async function fetchProviderHealthImpl(): Promise<ProviderHealthSnapshot> {
   //
   // Sample throughput is computed per WORKER_ID, not per (provider, region,
   // egress_path) triple — Cloudflare actively migrates a lane's container
-  // between PoPs while keeping its identity. Counting samples by triple
-  // produced a misleading "yellow flicker" for ~60-90s after every CF
-  // migration: the new PoP card had a fresh heartbeat but 0 samples (because
-  // the lane's recent samples were tagged with the old PoP), so it rendered
-  // as degraded. Counting by worker_id makes the card track the lane, not
-  // the PoP — accurate for "is this lane productive?" semantics.
+  // between PoPs while keeping its identity. Counting samples by triple would
+  // mislead right after a CF migration: the new PoP card has a fresh heartbeat
+  // but 0 samples (the lane's recent samples are tagged with the old PoP), so
+  // it would render as degraded. Counting by worker_id makes the card track the
+  // lane, not the PoP — accurate for "is this lane productive?" semantics.
   //
   // For AWS / TSW / GCP / Latitude (none migrate), worker_id is 1:1 with the
   // triple so the join produces identical results as the old triple-keyed

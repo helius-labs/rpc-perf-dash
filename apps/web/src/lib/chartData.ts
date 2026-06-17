@@ -78,15 +78,15 @@ async function fetchLatencySeriesImpl(opts: ChartQuery): Promise<ChartSeries[]> 
   // Tier the source rollup to the window so long views read far fewer buckets:
   // ≤6h → rollups_5m, ≤7d → rollups_1h, >7d → rollups_1d. rollupTableForWindow
   // returns a validated constant table name (never user input), safe for sql.raw.
-  // 24h reads hourly (not 5-min): a 5-min all-vantage scan of the 9.3GB
-  // rollups_5m was ~11s; hourly is ~1s. The client-side re-binning in
-  // LatencyChart already handles coarser input. Semantics are otherwise
-  // unchanged: still the all-samples latency_p95, sample-count-weighted.
+  // 24h reads hourly (not 5-min): a 5-min all-vantage scan of the large
+  // rollups_5m table is far slower than the hourly grain. The client-side
+  // re-binning in LatencyChart already handles coarser input. Semantics are
+  // otherwise the same: all-samples latency_p95, sample-count-weighted.
   const sourceTable = sql.raw(rollupTableForWindow(opts.windowHours));
 
-  // Join the providers table so retired providers (benchmarked=false, e.g.
-  // the Helius free tier retired 2026-05-26) automatically disappear from
-  // the chart without needing to purge their rollup rows. This is the
+  // Join the providers table so retired providers (benchmarked=false)
+  // automatically disappear from the chart without needing to purge their
+  // rollup rows. This is the
   // single source of truth — keeps the chart in lockstep with the
   // leaderboard, which filters the same way.
   const rows = await db().execute(sql`

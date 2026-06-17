@@ -10,10 +10,10 @@ import { db } from "@/lib/db";
  *
  * The design treats the system as a FUNNEL — generator dispatches → challenges
  * carry a valid TTL → workers claim → workers write samples. A healthy pipeline
- * is green at every stage; the FIRST red stage is the broken link. This is what
- * the binary "is data arriving" dot couldn't tell us during the 2026-05-29
- * clock-skew outage, when the generator + workers were both alive and only the
- * claim→sample step silently produced nothing.
+ * is green at every stage; the FIRST red stage is the broken link. This
+ * pinpoints the broken link in a way a binary "is data arriving" dot can't —
+ * e.g. when the generator and workers are both alive but the claim→sample step
+ * silently produces nothing.
  */
 
 export type StageState = "ok" | "warn" | "down" | "unknown";
@@ -300,9 +300,9 @@ async function fetchPipelineStatusImpl(): Promise<PipelineStatus> {
 
 /**
  * NOT unstable_cache'd. /status is force-dynamic and must reflect LIVE DB state.
- * A 20s data-cache wrapper here previously got stuck serving a >1d-old snapshot
- * while AutoRefresh + LiveAge kept advancing the "N ago" clocks — making a
- * fully-healthy fleet (heartbeats 0–3s old) read as "1d 10h ago · Healthy". The
+ * A data-cache wrapper here can get stuck serving a stale snapshot while
+ * AutoRefresh + LiveAge keep advancing the "N ago" clocks — making a
+ * fully-healthy fleet (heartbeats 0–3s old) read as stale-but-"Healthy". The
  * queries are cheap, indexed, recent-slice scans, so each render fetches fresh;
  * AutoRefresh (20s) and LiveAge keep an open tab current.
  */

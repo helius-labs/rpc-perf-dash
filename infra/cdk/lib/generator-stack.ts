@@ -28,10 +28,9 @@ export class GeneratorStack extends Stack {
   constructor(scope: Construct, id: string, props: GeneratorStackProps) {
     super(scope, id, props);
 
-    // 1 vCPU / 2GB — bumped 2026-06-11 from 512/1024: the dispatch tick was
-    // chronically exceeding its 25s budget (every tick for 24h+) and the
-    // no-challenges watchdog was restarting the task ~3x/hour. See
-    // docs/operations.md § generator saturation.
+    // 1 vCPU / 2GB. Smaller sizing lets the dispatch tick exceed its 25s
+    // budget under load, which trips the no-challenges watchdog into
+    // restarting the task. See docs/operations.md § Generator saturation.
     const taskDef = new FargateTaskDefinition(this, "GeneratorTask", {
       cpu: 1024,
       memoryLimitMiB: 2048,

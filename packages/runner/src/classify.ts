@@ -30,8 +30,7 @@ const RATE_LIMIT_RE = /rate.?limit|too many requests|throttled/i;
 
 /**
  * Bucketize a non-correct sample into a finer-grained failure category.
- * Precedence is documented in the plan; first match wins. `correct` samples
- * short-circuit to NULL/NULL.
+ * First match wins. `correct` samples short-circuit to NULL/NULL.
  */
 export function categorizeFailure(input: CategorizeFailureInput): CategorizeFailureOutput {
   // Rule 1 — short-circuit for correct samples.
@@ -155,9 +154,9 @@ function detectVendorQuota(body: string): string {
 }
 
 // ────────────────────────────────────────────────────────────────────────
-// Per-response projection. Replaces the body of the v=1 classify():
-// the consensus orchestrator in record.ts uses this to build voters and
-// then re-uses classifyAgainstReference() to score each provider.
+// Per-response projection. The consensus orchestrator in record.ts uses this
+// to build voters and then re-uses classifyAgainstReference() to score each
+// provider.
 // ────────────────────────────────────────────────────────────────────────
 
 export interface ProjectAttempt {

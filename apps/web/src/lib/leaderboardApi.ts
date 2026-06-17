@@ -3,7 +3,7 @@
  * fetchers + scoring the dashboard SSR uses, so the API ranks providers
  * identically to the UI:
  *   - region="overall" (default) ranks by the workload-preset method-blend
- *     (fetchRankedPreset, default Balanced) — Option A, so "overall" is the same
+ *     (fetchRankedPreset, default Balanced), so "overall" is the same
  *     number the homepage shows;
  *   - region="overall" WITH an explicit method= falls back to the legacy
  *     single-method cross-region blend (fetchRankedOverall);

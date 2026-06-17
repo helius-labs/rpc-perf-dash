@@ -1,9 +1,8 @@
 /**
  * Shared well-formedness primitives.
  *
- * `BASE58_32` was originally module-private in getLatestBlockhash.ts; it is the
- * shape gate for base58-encoded 32-byte values (pubkeys, blockhashes, validator
- * identities, leader pubkeys). Extracted here so the gate is defined once and
+ * `BASE58_32` is the shape gate for base58-encoded 32-byte values (pubkeys,
+ * blockhashes, validator identities, leader pubkeys). Defined once here and
  * reused by getLatestBlockhash, getIdentity, getSlotLeader, isBlockhashValid.
  */
 

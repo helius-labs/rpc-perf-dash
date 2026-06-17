@@ -32,7 +32,7 @@ export const PROFILES: readonly WorkloadProfile[] = [
       getTokenLargestAccounts: 0,
       getLatestBlockhash: 0,
       getTokenAccountBalance: 0,
-      // Batch added 2026-05-31 — 0 in every profile mix until per-workload tuned.
+      // 0 in every profile mix until per-workload tuned.
       getGenesisHash: 0,
       getEpochSchedule: 0,
       getInflationGovernor: 0,
@@ -58,7 +58,7 @@ export const PROFILES: readonly WorkloadProfile[] = [
       getSlotLeaders: 0,
       simulateTransaction: 0,
       simulateBundle: 0,
-      // Batch added 2026-06-01 — 0 in every profile mix until per-workload tuned.
+      // 0 in every profile mix until per-workload tuned.
       getMultipleAccounts: 0,
       getSignatureStatuses: 0,
       getMinimumBalanceForRentExemption: 0,
@@ -68,7 +68,7 @@ export const PROFILES: readonly WorkloadProfile[] = [
       getClusterNodes: 0,
       getLargestAccounts: 0,
       getFeeForMessage: 0,
-      // Batch added 2026-06-12 — 0 in every profile mix until per-workload tuned.
+      // 0 in every profile mix until per-workload tuned.
       getTransactionsForAddress: 0,
     },
     archive_heavy: false,
@@ -91,7 +91,7 @@ export const PROFILES: readonly WorkloadProfile[] = [
       getTokenLargestAccounts: 0,
       getLatestBlockhash: 0,
       getTokenAccountBalance: 0,
-      // Batch added 2026-05-31 — 0 in every profile mix until per-workload tuned.
+      // 0 in every profile mix until per-workload tuned.
       getGenesisHash: 0,
       getEpochSchedule: 0,
       getInflationGovernor: 0,
@@ -117,7 +117,7 @@ export const PROFILES: readonly WorkloadProfile[] = [
       getSlotLeaders: 0,
       simulateTransaction: 0,
       simulateBundle: 0,
-      // Batch added 2026-06-01 — 0 in every profile mix until per-workload tuned.
+      // 0 in every profile mix until per-workload tuned.
       getMultipleAccounts: 0,
       getSignatureStatuses: 0,
       getMinimumBalanceForRentExemption: 0,
@@ -127,7 +127,7 @@ export const PROFILES: readonly WorkloadProfile[] = [
       getClusterNodes: 0,
       getLargestAccounts: 0,
       getFeeForMessage: 0,
-      // Batch added 2026-06-12 — 0 in every profile mix until per-workload tuned.
+      // 0 in every profile mix until per-workload tuned.
       getTransactionsForAddress: 0,
     },
     archive_heavy: false,
@@ -150,7 +150,7 @@ export const PROFILES: readonly WorkloadProfile[] = [
       getTokenLargestAccounts: 0,
       getLatestBlockhash: 0,
       getTokenAccountBalance: 0,
-      // Batch added 2026-05-31 — 0 in every profile mix until per-workload tuned.
+      // 0 in every profile mix until per-workload tuned.
       getGenesisHash: 0,
       getEpochSchedule: 0,
       getInflationGovernor: 0,
@@ -176,7 +176,7 @@ export const PROFILES: readonly WorkloadProfile[] = [
       getSlotLeaders: 0,
       simulateTransaction: 0,
       simulateBundle: 0,
-      // Batch added 2026-06-01 — 0 in every profile mix until per-workload tuned.
+      // 0 in every profile mix until per-workload tuned.
       getMultipleAccounts: 0,
       getSignatureStatuses: 0,
       getMinimumBalanceForRentExemption: 0,
@@ -186,7 +186,7 @@ export const PROFILES: readonly WorkloadProfile[] = [
       getClusterNodes: 0,
       getLargestAccounts: 0,
       getFeeForMessage: 0,
-      // Batch added 2026-06-12 — 0 in every profile mix until per-workload tuned.
+      // 0 in every profile mix until per-workload tuned.
       getTransactionsForAddress: 0,
     },
     archive_heavy: false,
@@ -209,7 +209,7 @@ export const PROFILES: readonly WorkloadProfile[] = [
       getTokenLargestAccounts: 0,
       getLatestBlockhash: 0,
       getTokenAccountBalance: 0,
-      // Batch added 2026-05-31 — 0 in every profile mix until per-workload tuned.
+      // 0 in every profile mix until per-workload tuned.
       getGenesisHash: 0,
       getEpochSchedule: 0,
       getInflationGovernor: 0,
@@ -235,7 +235,7 @@ export const PROFILES: readonly WorkloadProfile[] = [
       getSlotLeaders: 0,
       simulateTransaction: 0,
       simulateBundle: 0,
-      // Batch added 2026-06-01 — 0 in every profile mix until per-workload tuned.
+      // 0 in every profile mix until per-workload tuned.
       getMultipleAccounts: 0,
       getSignatureStatuses: 0,
       getMinimumBalanceForRentExemption: 0,
@@ -245,7 +245,7 @@ export const PROFILES: readonly WorkloadProfile[] = [
       getClusterNodes: 0,
       getLargestAccounts: 0,
       getFeeForMessage: 0,
-      // Batch added 2026-06-12 — 0 in every profile mix until per-workload tuned.
+      // 0 in every profile mix until per-workload tuned.
       getTransactionsForAddress: 0,
     },
     archive_heavy: true,

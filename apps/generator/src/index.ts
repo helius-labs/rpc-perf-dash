@@ -45,11 +45,11 @@ const TICK_INTERVAL_MS = 30_000;
 const TICK_TIMEOUT_MS = 25_000;
 
 /**
- * How many vantages each challenge is dispatched to. Fan-out used to be
- * "all active vantages" but that overshot worker claim throughput by ~3x —
- * the excess assignments expired unclaimed, never producing samples. K=3
- * matches dispatch (45 combos/tick × 3 = 135/tick = 270/min) under the
- * measured ~450/min worker claim rate with headroom for slow lanes.
+ * How many vantages each challenge is dispatched to. Dispatching to every
+ * active vantage overshoots worker claim throughput by ~3x — the excess
+ * assignments expire unclaimed, never producing samples. K=3 matches dispatch
+ * (45 combos/tick × 3 = 135/tick = 270/min) under the ~450/min worker claim
+ * rate with headroom for slow lanes.
  *
  * If |active vantages| < K, every vantage is selected (sampling is min(K, N)).
  *
@@ -240,7 +240,6 @@ function allMethodBucketCombos(): Array<{ method: Method; bucket: string }> {
     "getTokenLargestAccounts",
     "getLatestBlockhash",
     "getTokenAccountBalance",
-    // ── Batch added 2026-05-31: 24 additional read methods. ──────────
     "getGenesisHash",
     "getEpochSchedule",
     "getInflationGovernor",
@@ -266,7 +265,6 @@ function allMethodBucketCombos(): Array<{ method: Method; bucket: string }> {
     "getSlotLeaders",
     "simulateTransaction",
     "simulateBundle",
-    // ── Batch added 2026-06-01 ──────────────────────────────────────
     "getMultipleAccounts",
     "getSignatureStatuses",
     "getMinimumBalanceForRentExemption",
@@ -274,17 +272,16 @@ function allMethodBucketCombos(): Array<{ method: Method; bucket: string }> {
     "getBlocksWithLimit",
     "getRecentPrioritizationFees",
     "getFeeForMessage",
-    // ── Batch added 2026-06-12 ──────────────────────────────────────
     // Custom indexer-backed method; 3-voter panel (QuickNode serves a
     // non-comparable variant — see providers.ts).
     "getTransactionsForAddress",
     // getClusterNodes and getLargestAccounts are intentionally NOT emitted
-    // (dormant, like getSupply). Dry-run 2026-06-01: getLargestAccounts is
-    // served only by QuickNode (Helius 500s, Triton rate-limits, Alchemy
-    // blocks it) so it can never reach 3 voters; getClusterNodes' ~4576-node
-    // payload only succeeds ~50% under fanout, so ≥3 voters rarely co-occur on
-    // a challenge. Handlers stay registered; re-enable here if a future
-    // panel/network converges. See docs/methodology.md.
+    // (dormant, like getSupply). getLargestAccounts is served only by
+    // QuickNode (Helius 500s, Triton rate-limits, Alchemy blocks it) so it can
+    // never reach 3 voters; getClusterNodes' ~4576-node payload only succeeds
+    // ~50% under fanout, so ≥3 voters rarely co-occur on a challenge. Handlers
+    // stay registered; re-enable here if a future panel/network converges.
+    // See docs/methodology.md.
   ];
   const out: Array<{ method: Method; bucket: string }> = [];
   for (const m of methods) {
@@ -421,10 +418,10 @@ async function main() {
   //     load (acquire + heartbeat), so it never contends.
   //   - db (pooled, max 20): everything else — the per-tick challenge inserts
   //     (~46 combos in parallel) plus the rollup/leaderboard CTEs and the cron
-  //     jobs. Previously these shared the direct client's 4 connections and
-  //     starved the tick (CPU idle, ticks > 25s, watchdog restarts ~7x/30min)
-  //     even though no query was individually slow. The pooler multiplexes, so
-  //     20 client slots clear the fan-out without connection-acquisition waits.
+  //     jobs. On a small direct-connection pool these starve the tick (CPU
+  //     idle, ticks > 25s) even though no query is individually slow. The
+  //     pooler multiplexes, so 20 client slots clear the fan-out without
+  //     connection-acquisition waits.
   const lockDb = createDb({ mode: "direct" });
   const db = createDb({ mode: "pooled" });
 
@@ -545,11 +542,10 @@ async function main() {
     console.error("[utility-status]", (err as Error).message),
   );
 
-  // Liveness watchdog. The 2026-05-24 outage went 2 days undetected because
-  // the heartbeat row + ECS health were both "fresh" while challenge insertion
-  // was silently stalled. Treat "challenges flowing" as the real liveness
-  // signal; if it stops for too long while we're leader, exit so ECS replaces
-  // the task and alerts can fire on the restart.
+  // Liveness watchdog. A fresh heartbeat row + healthy ECS task can coexist
+  // with silently-stalled challenge insertion, so treat "challenges flowing"
+  // as the real liveness signal; if it stops for too long while we're leader,
+  // exit so ECS replaces the task and alerts can fire on the restart.
   const WATCHDOG_INTERVAL_MS = 60_000;
   const WATCHDOG_STALE_THRESHOLD_MS = 5 * 60_000;
   setInterval(() => {
@@ -573,13 +569,12 @@ async function main() {
   }, WATCHDOG_INTERVAL_MS);
 
   // Tick loop. Each tick fans out across ALL (method, bucket) combinations.
-  // Per-combo flow under methodology_version 2:
+  // Per-combo flow:
   //   1. derive challenge params via per-method handler.deriveChallenge
   //   2. fetch the auditor (utility) reference for the cross-check
   //   3. createReadyChallenge: write challenge + one assignment per vantage
   //   4. workers pick up the assignment, query all benchmarked providers,
   //      compute consensus locally in record.ts, and stamp correctness.
-  // No more pre-flight quorum round → faster challenge dispatch.
   let tickInFlight = false;
   await refreshActiveVantages(db);
   if (_activeVantages.length === 0) {
@@ -637,10 +632,10 @@ async function main() {
 
   // Fast rollup — every 5 min, OWN interval + overlap guard. Folds samples →
   // rollups_5m, the live chart's source. Kept separate from the heavy rollups
-  // below so a slow heavy tick can never skip this one: when both shared a
-  // single guard, a slow rollup1h/1d/eligibility step dropped the next firing —
-  // including rollup5m — and the chart's latest 5-min bucket lurched forward in
-  // ~10-15 min bursts instead of advancing every 5 min.
+  // below so a slow heavy tick can never skip this one: sharing a single guard
+  // would let a slow rollup1h/1d/eligibility step drop the next firing —
+  // including rollup5m — making the chart's latest 5-min bucket advance in
+  // bursts instead of every 5 min.
   let rollup5mInFlight = false;
   const runFastRollup = (label: string) => {
     if (rollup5mInFlight) {
@@ -727,8 +722,8 @@ async function main() {
   // Storage-bounding maintenance — own interval + overlap guard, decoupled from
   // the rollup tick (its long CTE would otherwise starve this). Trims old
   // reference_response payloads and caps the control-plane tables at 31d. The
-  // first post-deploy run drains the ~1.4M-row reference_response backlog over
-  // several ticks (MAX_BATCHES_PER_RUN per firing). Run at startup too.
+  // first post-deploy run drains any reference_response backlog over several
+  // ticks (MAX_BATCHES_PER_RUN per firing). Run at startup too.
   let maintenanceInFlight = false;
   const runMaintenanceJob = () => {
     if (maintenanceInFlight) {

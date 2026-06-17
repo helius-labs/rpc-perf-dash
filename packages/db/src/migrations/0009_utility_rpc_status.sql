@@ -5,12 +5,10 @@
 -- ProviderHealth "Utility RPC" row. See packages/db/src/schema.ts for the
 -- column-level commentary.
 --
--- Motivation: on 2026-05-24 a single utility-RPC provider (Chainstack)
--- started returning HTTP 403 for the generator. The SlotObserver swallowed
--- the errors silently and the whole fleet went dark for 2 days because
--- nothing surfaced the failing endpoint. This table is the visibility hook;
--- the multi-endpoint client (apps/generator/src/utility-client.ts) is the
--- fail-over mechanism.
+-- Motivation: a single utility-RPC provider returning HTTP 403 can freeze the
+-- generator's slot polling silently, with nothing surfacing the failing
+-- endpoint. This table is the visibility hook; the multi-endpoint client
+-- (apps/generator/src/utility-client.ts) is the fail-over mechanism.
 
 CREATE TABLE IF NOT EXISTS utility_rpc_status (
   endpoint_index integer PRIMARY KEY,

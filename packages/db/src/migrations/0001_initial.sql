@@ -6,11 +6,10 @@
 -- ────────────────────────────────────────────────────────────────────────
 -- Extensions
 -- ────────────────────────────────────────────────────────────────────────
--- Originally we used `CREATE EXTENSION tdigest` for workload-mix quantile
--- composition, but Neon's allowed-extensions list excludes it. Migration
--- 0003 replaces tdigest with scalar percentile columns + native
--- percentile_cont — see methodology.md "Quantile composition" section.
--- (No extensions needed for POC.)
+-- No extensions are used. Quantile composition relies on scalar percentile
+-- columns + native percentile_cont (managed Postgres providers commonly
+-- disallow custom extensions like tdigest) — see methodology.md
+-- "Quantile composition" section.
 
 -- ────────────────────────────────────────────────────────────────────────
 -- Control plane

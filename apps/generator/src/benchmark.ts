@@ -1,10 +1,10 @@
 /**
  * On-demand one-shot benchmark CLI.
  *
- * Methodology_version 2: same flow as continuous mode minus the dispatch-
- * via-DB step. We generate fresh challenges, fetch each one's AUDITOR
- * reference from the utility endpoint, run fanout+buildSampleRows (which
- * decides consensus locally in the runner), and print a ranked report.
+ * Same flow as continuous mode minus the dispatch-via-DB step: generate fresh
+ * challenges, fetch each one's AUDITOR reference from the utility endpoint, run
+ * fanout+buildSampleRowsV2 (which decides consensus locally in the runner), and
+ * print a ranked report.
  *
  *   pnpm benchmark
  *   pnpm benchmark --challenges 100
@@ -57,7 +57,6 @@ const VALID_METHODS: Method[] = [
   "getTokenLargestAccounts",
   "getLatestBlockhash",
   "getTokenAccountBalance",
-  // ── Batch added 2026-05-31 ──────────────────────────────────────────
   "getGenesisHash",
   "getEpochSchedule",
   "getInflationGovernor",
@@ -83,7 +82,6 @@ const VALID_METHODS: Method[] = [
   "getSlotLeaders",
   "simulateTransaction",
   "simulateBundle",
-  // ── Batch added 2026-06-01 ──────────────────────────────────────────
   "getMultipleAccounts",
   "getSignatureStatuses",
   "getMinimumBalanceForRentExemption",
@@ -91,7 +89,6 @@ const VALID_METHODS: Method[] = [
   "getBlocksWithLimit",
   "getRecentPrioritizationFees",
   "getFeeForMessage",
-  // ── Batch added 2026-06-12 ──────────────────────────────────────────
   "getTransactionsForAddress",
   // Dormant (not in allMethodBucketCombos) but kept CLI-testable for
   // re-validation — see docs/methodology.md / index.ts.

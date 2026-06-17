@@ -1,7 +1,7 @@
 /**
  * verify-deploy.ts — post-deploy health check for the whole fleet.
  *
- * Methodology v=2. Confirms after running deploy-all-workers.sh that:
+ * Confirms after running deploy-all-workers.sh that:
  *   - every expected vantage is heartbeating with low staleness
  *   - assignments are being fanned out to every vantage
  *   - samples are flowing
@@ -9,7 +9,7 @@
  *     per-provider benchmark latency
  *   - the consensus_log shows mostly verified outcomes (no-consensus and
  *     auditor-disputed rates are reported but not gated)
- *   - the v=1 quorum-node providers are no longer in the DB
+ *   - the legacy quorum-node providers are no longer in the DB
  *
  * Run via the db workspace so loadEnv() finds .env.local:
  *   pnpm --filter @rpcbench/db exec tsx ../../infra/scripts/verify-deploy.ts
@@ -39,14 +39,13 @@ const ALL_METHODS = [
   "getTokenLargestAccounts",
   "getLatestBlockhash",
   "getTokenAccountBalance",
-  // NOTE: the 2026-05-31 / 2026-06-01 method batches were never added here —
-  // the "is flowing" check doesn't cover them yet.
-  // ── Batch added 2026-06-12 ──────────────────────────────────────────
+  // NOTE: the later method batches were never added here — the "is flowing"
+  // check doesn't cover them yet.
   "getTransactionsForAddress",
 ];
-// LATENCY_ONLY_METHODS is empty under methodology v=2 — every method is
-// correctness-scored. Helper retained as `false` so the per-method block below
-// reads cleanly without a structural rewrite.
+// LATENCY_ONLY_METHODS is empty — every method is correctness-scored. Helper
+// retained as `false` so the per-method block below reads cleanly without a
+// structural rewrite.
 const isLatencyOnly = (_m: string) => false;
 
 const EXPECTED_VANTAGES: Array<{ provider: string; region: string }> = [
@@ -181,7 +180,7 @@ async function main() {
   }
 
   // ── 4. Per-method: challenges generated + consensus outcomes ───────────
-  // v=2: consensus_log is written selectively (disputed / ambiguous / 1%
+  // consensus_log is written selectively (disputed / ambiguous / 1%
   // archive), so the counts here are a *sample* of traffic, not the full
   // population — interpret rates, not absolute counts.
   head(`Challenges + consensus by method (last ${METHOD_WINDOW_MIN} min)`);
@@ -297,16 +296,16 @@ async function main() {
   `;
   console.table(benchRows);
 
-  // ── 7. v=2 invariant: no v=1 quorum nodes seeded in providers table ─────
+  // ── 7. Invariant: no legacy quorum nodes seeded in providers table ─────
   head("Quorum-era providers removed from providers table");
   const ghostRows = await sql<Array<{ id: string }>>`
     SELECT id FROM providers
     WHERE id IN ('solana_foundation_public','chainstack','ankr','drpc','blockdaemon')
   `;
   if (ghostRows.length === 0) {
-    pass("v=1 quorum providers removed (migration 0013 applied)");
+    pass("legacy quorum providers removed (migration 0013 applied)");
   } else {
-    fail(`v=1 quorum providers still in DB: ${ghostRows.map((r) => r.id).join(", ")} — migration 0013 not applied?`);
+    fail(`legacy quorum providers still in DB: ${ghostRows.map((r) => r.id).join(", ")} — migration 0013 not applied?`);
     failures++;
   }
 

@@ -1,9 +1,9 @@
 -- Precomputed latency-distribution histograms.
 --
 -- The Performance page's "Latency distribution" metric (CDF / histogram / box)
--- previously read the raw `samples` table with percentile_cont + width_bucket,
--- which scanned ~67MB of heap per 6h query (~2-11s, worse cold). These tables
--- let the generator precompute, per rollup bucket, a 60-bin log-spaced histogram
+-- is expensive to compute from the raw `samples` table (percentile_cont +
+-- width_bucket scanning large heaps per query). These tables let the generator
+-- precompute, per rollup bucket, a 60-bin log-spaced histogram
 -- (+ count + exact min) per (geo, infra-or-'__all__', provider, method, mode).
 -- Bin counts are ADDITIVE across buckets, so a window read just sums the JSONB
 -- bin maps and reconstructs density / CDF / box — ~10-50ms at any window.

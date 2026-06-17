@@ -1,10 +1,9 @@
 /**
  * One-shot CLI: seed the honeypot pool by sampling deeply-finalized history.
  *
- * Methodology_version 2: ground truth comes from the AUDITOR (utility)
- * endpoint directly. The rotating quorum is gone, so honeypot seeding now
- * trusts the auditor's archival fetch. Operator should spot-check the
- * resulting honeypot rows before flipping injection on in production.
+ * Ground truth comes from the AUDITOR (utility) endpoint directly: honeypot
+ * seeding trusts the auditor's archival fetch. Operator should spot-check the
+ * resulting honeypot rows before enabling injection in production.
  *
  * Run with:
  *   pnpm --filter generator seed-honeypots --method getBlock --count 100
