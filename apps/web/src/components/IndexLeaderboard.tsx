@@ -167,10 +167,27 @@ const IndexLeaderboardRow = memo(function IndexLeaderboardRow({
                 <b>{(p.winRate * 100).toFixed(0)}</b>
                 <i>% win</i>
               </span>
-              <span className="idx-rowstat">
-                <b>{(p.success * 100).toFixed(1)}</b>
-                <i>% correct</i>
-              </span>
+              {/* Same failure-breakdown tooltip as the expanded "correct" metric,
+                  so it's reachable from the collapsed row beside the score. */}
+              {p.failed > 0 ? (
+                <span onClick={(e) => e.stopPropagation()}>
+                  <FloatingTooltip title="Failure breakdown" trigger={
+                    <span className="idx-rowstat" style={{ cursor: "help" }}>
+                      <b>{(p.success * 100).toFixed(1)}</b>
+                      <i>% correct</i>
+                    </span>
+                  }>
+                    <div className="text-left font-normal normal-case tracking-normal leading-normal">
+                      <FailureBreakdownList breakdown={p.failure_breakdown} totalFailed={p.failed} />
+                    </div>
+                  </FloatingTooltip>
+                </span>
+              ) : (
+                <span className="idx-rowstat">
+                  <b>{(p.success * 100).toFixed(1)}</b>
+                  <i>% correct</i>
+                </span>
+              )}
             </>
           ) : (
             <span className="idx-rowstat">
@@ -347,19 +364,28 @@ const IndexLeaderboardRow = memo(function IndexLeaderboardRow({
                       </span>
                     }>
                       <div className="text-left font-normal normal-case tracking-normal leading-normal">
-                        <div className="font-mono text-[11px] text-neutral-400 mb-1">
+                        <div className="font-mono text-[11px] text-neutral-400 mb-1 px-1.5">
                           Region weights in the overall blend
                         </div>
                         {[...p.regionBlend]
                           .sort((a, b) => b.weight - a.weight)
                           .map((r) => {
+                            // Strongest regions are marked with a faint light
+                            // highlight behind the whole row, so the text stays
+                            // its normal colour and reads well.
                             const isTop = topSet.has(r.label);
                             return (
-                              <div key={r.label} className="flex justify-between gap-6 text-[11px] leading-snug">
-                                <span className={isTop ? "text-accent font-medium" : "text-neutral-300"}>
+                              <div
+                                key={r.label}
+                                className={
+                                  "flex justify-between gap-6 text-[11px] leading-snug rounded px-1.5 py-0.5 " +
+                                  (isTop ? "bg-[color-mix(in_srgb,var(--text)_9%,transparent)]" : "")
+                                }
+                              >
+                                <span className={isTop ? "text-neutral-300 font-medium" : "text-neutral-300"}>
                                   {r.label}
                                 </span>
-                                <span className={"font-mono tabular-nums " + (isTop ? "text-accent" : "text-neutral-400")}>
+                                <span className="font-mono tabular-nums text-neutral-400">
                                   {(r.weight * 100).toFixed(0)}%
                                 </span>
                               </div>

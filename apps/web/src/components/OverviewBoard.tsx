@@ -4,17 +4,18 @@
 
 /**
  * OverviewBoard — the Overview page body: an intro row (blurb + stats, with a
- * brand hero visual of the current winner), a row of workload-preset chips over
- * the component-weight sliders, the blended-methods panel + scope line, and the
- * ranked leaderboard.
+ * brand hero visual of the current winner), the workload-preset chips + a
+ * Methods select and a Customize dropdown, a scope line, and the ranked
+ * leaderboard.
  *
  * The headline score is a WORKLOAD-PRESET blend: a provider's score is blended
  * across the preset's methods AND regions. Switching preset is a navigation
  * (?preset=) so the server refetches the right method/region cube; within a
- * preset the user tunes the component weights (sliders) and per-method weights
- * (MethodWeightPanel) client-side, re-ranking instantly. The board rows are
- * built ONCE here (buildPresetLeaderRows) and shared with the hero so #1 here
- * === #1 in the list below.
+ * preset the user tunes which methods are in the blend (Methods pill), the
+ * component weights (Customize → sliders) and the region subset (Customize →
+ * region buttons) client-side, re-ranking instantly. The board rows are built
+ * ONCE here (buildPresetLeaderRows) and shared with the hero so #1 here === #1
+ * in the list below.
  */
 
 import { useMemo, useState } from "react";
@@ -23,41 +24,51 @@ import type { Route } from "next";
 import { useSearchParams } from "next/navigation";
 import {
   DEFAULT_REGION_WEIGHTS,
-  type MethodWeights,
   type RegionWeights,
   type ScoringWeights,
 } from "@rpcbench/shared/scoring";
 import { GEO_REGIONS, type GeoRegion, type Method } from "@rpcbench/shared/types";
+import { ALL_METHODS } from "@/lib/methods";
 import { brandColorFor, logoFor, animatedLogoFor } from "@/lib/providerColors";
 import {
   SCORE_PRESETS,
-  methodWeightsFor,
+  equalMethodWeights,
   presetById,
   type PresetId,
 } from "@/lib/workloadPresets";
-import { WINDOW_VALUES } from "@/lib/windows";
+import { WINDOWS, WINDOW_VALUES } from "@/lib/windows";
 import { type ShareFilters } from "@/lib/share";
 import { ShareButton } from "./ShareButton";
 import { buildPresetLeaderRows, type MethodGeoRows } from "./leaderboardShared";
 import { IndexLeaderboard, type MethodRegionLatency } from "./IndexLeaderboard";
-import { MethodWeightPanel } from "./MethodWeightPanel";
 import { ComponentWeightPanel } from "./ComponentWeightPanel";
 import { RegionSelector } from "./RegionSelector";
+import { MethodSelectPill } from "./MethodSelectPill";
 import { LiveSampleCounter } from "./LiveSampleCounter";
 import type { SampleCount } from "@/lib/sampleCount";
+
+/** Shared pill styling for the preset chips, the Methods select, and the
+ *  Customize trigger so they read as one control row. Fixed height (h-9) so a
+ *  pill's width never changes its height. */
+const PILL_BASE =
+  "inline-flex items-center justify-center gap-1.5 h-9 px-3.5 rounded-full border text-[11px] sm:text-[12px] font-medium transition-colors hover:no-underline cursor-pointer";
+const PILL_ACTIVE = "bg-accent border-accent text-accentfg";
+const PILL_IDLE = "border-line2 text-fg2 hover:text-fg hover:border-fg2";
+/** Fixed width for the Methods + Customize pills — narrower than the flex-1
+ *  preset pills, which grow to fill the rest of the full-width row. */
+const CONTROL_PILL_W = "w-[100px] sm:w-[116px] shrink-0";
 
 /** Distinct cloud infrastructures the benchmark vantages run on. */
 const CLOUD_INFRA_COUNT = 4;
 
-/** High-signal core methods shown in the expanded-row latency grid when a preset
- *  blends too many to list (e.g. Balanced = all 45). The SCORE still blends the
- *  full set; this only caps the per-method latency table. */
-const CORE_GRID_METHODS: readonly Method[] = [
-  "getTransaction",
-  "getAccountInfo",
-  "getTokenAccountsByOwner",
-];
-const GRID_METHOD_CAP = 8;
+/** Max methods listed in the expanded-row latency grid. The SCORE still blends
+ *  every selected method; this only caps the per-method latency table — extra
+ *  selected methods are counted in the "Showing 6 of N" note but not rendered. */
+const GRID_METHOD_CAP = 6;
+
+/** All benchmarked methods, alphabetised — the Methods dropdown always lists the
+ *  full set; presets only change which are pre-selected. */
+const ALL_METHODS_SORTED: readonly Method[] = [...ALL_METHODS].sort((a, b) => a.localeCompare(b));
 
 interface RankedProvider {
   id: string;
@@ -96,53 +107,55 @@ function HeroLogo({ provider }: { provider: RankedProvider }) {
 
 export function OverviewBoard({
   cube,
-  cubeGeos,
   presetId,
   methodRegionLatency,
   sampleCount,
   methodCount,
 }: {
-  /** Per-(method, geo) preset cube — the client re-blends it on weight changes. */
+  /** Per-(method, geo) preset cube — blended into the board with preset defaults. */
   cube: MethodGeoRows[];
-  /** All geos present in the cube (active geos) — the region selector's options. */
-  cubeGeos: GeoRegion[];
   presetId: PresetId;
   methodRegionLatency: MethodRegionLatency;
   sampleCount: SampleCount;
   methodCount: number;
 }) {
   const preset = presetById(presetId);
-  // State seeds from the preset's defaults.
+
+  // Client tuning state — seeded from the active preset. Switching preset resets
+  // these in place (NOT a key remount, which would reload the winner hero
+  // iframe and replay its animation on every switch).
   const [componentWeights, setComponentWeights] = useState<ScoringWeights>(preset.weights);
-  const [methodWeights, setMethodWeights] = useState<MethodWeights>(() => methodWeightsFor(preset));
-  // Which regions count toward the score (+ their relative weights). Seeded from
-  // the preset's region subset; the user can toggle any active region in/out.
   const [regionWeights, setRegionWeights] = useState<Partial<RegionWeights>>(
     () => ({ ...preset.regionWeights }),
   );
+  const [selectedMethods, setSelectedMethods] = useState<Set<Method>>(
+    () => new Set(preset.methods),
+  );
+  const [customizeOpen, setCustomizeOpen] = useState(false);
 
-  // Reset client tuning to the new preset's defaults when the workload changes.
-  // This replaces an old key={presetId} remount in page.tsx — remounting also
-  // tore down the winner's hero logo <iframe>, reloading/replaying its animation
-  // on every preset switch. Resetting in-place lets the subtree reconcile, so an
-  // unchanged #1 provider keeps the same iframe (no reload). React's documented
-  // "store info from previous render" pattern; runs during render, no flash.
   const [prevPresetId, setPrevPresetId] = useState(presetId);
   if (presetId !== prevPresetId) {
     setPrevPresetId(presetId);
     setComponentWeights(preset.weights);
-    setMethodWeights(methodWeightsFor(preset));
     setRegionWeights({ ...preset.regionWeights });
+    setSelectedMethods(new Set(preset.methods));
   }
 
-  // Region chips, in canonical order, restricted to geos with data.
-  const regionOptions = GEO_REGIONS.filter((g) => cubeGeos.includes(g));
+  // Region buttons' options — the geos present in the cube (active geos).
+  const cubeGeos = useMemo(() => {
+    const seen = new Set<GeoRegion>();
+    for (const c of cube) seen.add(c.geo);
+    return GEO_REGIONS.filter((g) => seen.has(g));
+  }, [cube]);
   const selectedRegionSet = new Set<string>(GEO_REGIONS.filter((g) => regionWeights[g] != null));
 
-  // Expanded-row latency grid: the preset's methods when there are few, else the
-  // core trio (so Balanced's 45-method blend doesn't render a 45-row table).
-  const gridMethods =
-    preset.methods.length > GRID_METHOD_CAP ? CORE_GRID_METHODS : preset.methods;
+  // Expanded-row latency grid: the selected methods when there are few, else the
+  // core trio (so a 45-method blend doesn't render a 45-row table).
+  // First GRID_METHOD_CAP selected methods (insertion order — so adding more
+  // doesn't displace the ones already shown). scoreMethodCount carries the full
+  // selected count, so the note reads "Showing 6 of N".
+  const gridMethods = useMemo(() => [...selectedMethods].slice(0, GRID_METHOD_CAP), [selectedMethods]);
+
   const toggleRegion = (geo: GeoRegion) =>
     setRegionWeights((rw) => {
       const next = { ...rw };
@@ -156,24 +169,40 @@ export function OverviewBoard({
       return next;
     });
 
-  // Reset the WHOLE preset: component weights, per-method weights, and the
-  // region selection all return to the active preset's defaults.
-  const resetAll = () => {
-    setComponentWeights(preset.weights);
-    setMethodWeights(methodWeightsFor(preset));
-    setRegionWeights({ ...preset.regionWeights });
-  };
+  const toggleMethod = (m: Method) =>
+    setSelectedMethods((prev) => {
+      const next = new Set(prev);
+      if (next.has(m)) {
+        if (next.size <= 1) return next; // keep at least one method
+        next.delete(m);
+      } else {
+        next.add(m);
+      }
+      return next;
+    });
+  const selectOnlyMethod = (m: Method) => setSelectedMethods(new Set([m]));
 
-  // The single preset blend — shared by the hero and the board.
-  const presetRows = useMemo(
-    () =>
-      buildPresetLeaderRows(cube, {
-        componentWeights,
-        methodWeights,
-        regionWeights,
-      }),
-    [cube, componentWeights, methodWeights, regionWeights],
-  );
+  // Apply a preset's defaults — component weights, region subset, and method
+  // set. Used by the preset pills (so clicking one always re-applies it, even
+  // when it's already the selected preset and the URL won't change) and Reset.
+  const applyPreset = (p: (typeof SCORE_PRESETS)[number]) => {
+    setComponentWeights(p.weights);
+    setRegionWeights({ ...p.regionWeights });
+    setSelectedMethods(new Set(p.methods));
+  };
+  const resetAll = () => applyPreset(preset);
+
+  // The single blend — shared by the hero and the board. Only the SELECTED
+  // methods (equal-weighted) over the SELECTED regions are blended; the cube is
+  // filtered to the chosen methods so deselected ones drop out entirely.
+  const presetRows = useMemo(() => {
+    const active = cube.filter((c) => selectedMethods.has(c.method as Method));
+    return buildPresetLeaderRows(active, {
+      componentWeights,
+      methodWeights: equalMethodWeights([...selectedMethods]),
+      regionWeights,
+    });
+  }, [cube, selectedMethods, componentWeights, regionWeights]);
 
   const winner = useMemo<RankedProvider | null>(() => {
     const top = presetRows.find((r) => r.coverage_ok && r.total > 0) ?? presetRows[0];
@@ -187,9 +216,35 @@ export function OverviewBoard({
     };
   }, [presetRows]);
 
+  // Whether the current tuning still equals the active preset's defaults. Once
+  // the user diverges (component weights, method set, or region set), no preset
+  // pill is shown as active.
+  const matchesPreset = useMemo(() => {
+    const w = preset.weights;
+    const cw = componentWeights;
+    if (
+      cw.latency !== w.latency ||
+      cw.winRate !== w.winRate ||
+      cw.reliability !== w.reliability ||
+      cw.correctness !== w.correctness ||
+      cw.freshness !== w.freshness
+    ) {
+      return false;
+    }
+    if (selectedMethods.size !== preset.methods.length) return false;
+    for (const m of preset.methods) if (!selectedMethods.has(m)) return false;
+    const presetRegions = Object.keys(preset.regionWeights);
+    if (GEO_REGIONS.filter((g) => regionWeights[g] != null).length !== presetRegions.length) {
+      return false;
+    }
+    for (const g of presetRegions) if (regionWeights[g as GeoRegion] == null) return false;
+    return true;
+  }, [preset, componentWeights, selectedMethods, regionWeights]);
+
   const searchParams = useSearchParams();
   const windowParam = Number(searchParams.get("window"));
   const windowHours = WINDOW_VALUES.has(windowParam) ? windowParam : 24;
+  const windowLabel = WINDOWS.find((w) => w.value === windowHours)?.label ?? `${windowHours}h`;
   const presetHref = (id: PresetId): Route => {
     const qs = new URLSearchParams();
     if (id !== "balanced") qs.set("preset", id);
@@ -200,8 +255,8 @@ export function OverviewBoard({
 
   const shareFilters: ShareFilters = {
     presetId,
-    methods: preset.methods,
-    methodWeights,
+    methods: [...selectedMethods],
+    methodWeights: equalMethodWeights([...selectedMethods]),
     regions: GEO_REGIONS.filter((g) => regionWeights[g] != null),
     weights: componentWeights,
     mode: "cold",
@@ -254,65 +309,103 @@ export function OverviewBoard({
           </div>
         </div>
 
-        {/* Control bar — preset chips (navigation) over the component-weight sliders. */}
-        <div className="flex flex-col gap-2 py-3 border-y border-line">
+        {/* Control bar — workload preset chips, a Methods select, and a
+            Customize dropdown (region buttons + metric-weight sliders below). */}
+        <div className="flex flex-col py-3 border-y border-line">
+          {/* "Workload" label inline with the full-width pill row. */}
           <div className="flex items-center gap-2 sm:gap-3">
             <span className="font-geistmono text-[10.5px] tracking-[0.14em] uppercase text-muted shrink-0 hidden sm:inline">
               Workload
             </span>
-            <div className="flex flex-1 min-w-0 gap-1.5">
+            {/* 3 flex-1 preset pills + fixed-width Methods and Customize pills,
+                all the same height; fills the rest of the row. */}
+            <div className="flex items-stretch gap-1.5 flex-1 min-w-0">
               {SCORE_PRESETS.map((pr) => {
-                const active = presetId === pr.id;
+                // Active only when this is the selected preset AND the tuning is
+                // still its defaults — customizing deactivates the pill.
+                const active = presetId === pr.id && matchesPreset;
                 return (
                   <Link
                     key={pr.id}
                     href={presetHref(pr.id)}
                     scroll={false}
+                    onClick={() => applyPreset(pr)}
                     title={pr.caption}
                     aria-pressed={active}
-                    className={
-                      "flex-1 min-w-0 truncate text-center text-[11px] sm:text-[12px] font-medium px-2 sm:px-3.5 py-[7px] rounded-full border transition-colors hover:no-underline " +
-                      (active
-                        ? "bg-accent border-accent text-accentfg"
-                        : "border-line2 text-fg2 hover:text-fg hover:border-fg2")
-                    }
+                    className={"flex-1 min-w-0 " + PILL_BASE + " " + (active ? PILL_ACTIVE : PILL_IDLE)}
                   >
-                    {pr.short}
+                    <span className="truncate">{pr.short}</span>
                   </Link>
                 );
               })}
+              {/* Methods select — which methods are blended (preset-pill styling). */}
+              <MethodSelectPill
+                options={ALL_METHODS_SORTED}
+                selected={selectedMethods}
+                onToggle={toggleMethod}
+                onOnly={selectOnlyMethod}
+                className={CONTROL_PILL_W}
+                triggerClass={"w-full " + PILL_BASE + " " + PILL_IDLE}
+              />
+              {/* Customize — toggles the region buttons + metric-weight sliders. */}
+              <button
+                type="button"
+                onClick={() => setCustomizeOpen((o) => !o)}
+                aria-expanded={customizeOpen}
+                className={CONTROL_PILL_W + " " + PILL_BASE + " " + (customizeOpen ? PILL_ACTIVE : PILL_IDLE)}
+              >
+                <span className="truncate">Customize</span>
+                <svg viewBox="0 0 24 24" width="11" height="11" aria-hidden="true" className={"shrink-0 " + (customizeOpen ? "rotate-180 transition-transform" : "transition-transform")}>
+                  <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
             </div>
           </div>
 
-          {/* Metric weights — inline sliders on desktop, dropdown on mobile.
-              Reset restores the whole preset (component + method weights +
-              region selection). */}
-          <ComponentWeightPanel
-            weights={componentWeights}
-            onChange={(k, value) => setComponentWeights((w) => ({ ...w, [k]: value }))}
-            onReset={resetAll}
-          />
+          {/* Expanded customize content — region buttons + metric-weight sliders.
+              Same grid-rows reveal as the leaderboard provider-row expand. */}
+          <div
+            className={
+              "grid transition-[grid-template-rows] duration-300 ease-out motion-reduce:transition-none " +
+              (customizeOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]")
+            }
+          >
+            <div
+              className={
+                "overflow-hidden transition-opacity duration-300 ease-out " +
+                (customizeOpen ? "opacity-100" : "opacity-0")
+              }
+            >
+              {/* pb-2 leaves room for the slider thumbs (14px circle on a 6px
+                  track overflows ~4px) so overflow-hidden doesn't clip them. */}
+              <div className="flex flex-col gap-3 pt-3 pb-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-geistmono text-[10px] tracking-[0.12em] uppercase text-muted shrink-0">
+                    Regions
+                  </span>
+                  <RegionSelector options={cubeGeos} selected={selectedRegionSet} onToggle={toggleRegion} />
+                </div>
+                <ComponentWeightPanel
+                  weights={componentWeights}
+                  onChange={(k, value) => setComponentWeights((w) => ({ ...w, [k]: value }))}
+                  onReset={resetAll}
+                />
+              </div>
+            </div>
+          </div>
         </div>
 
-      {/* Scope of the ranking — blended method set + regions (both tunable) +
-          cold start + window, on one row. Regions are inline pills on desktop
-          and a dropdown on mobile (see RegionSelector). Full matrix on
-          /performance. Share sits at the right. */}
-      <div className="mt-1.5 -mb-2 flex items-center gap-2 flex-wrap">
+      {/* Scope of the ranking — the selected method/region span + cold start +
+          window. Share sits at the right. */}
+      <div className="-mt-2.5 -mb-3 flex items-center gap-2 flex-wrap">
         <div className="flex items-center flex-wrap gap-x-1.5 font-geistmono text-[9.5px] sm:text-[10px] tracking-[0.12em] uppercase text-muted leading-snug">
-          <MethodWeightPanel
-            methods={preset.methods}
-            weights={methodWeights}
-            onChange={(m, value) => setMethodWeights((w) => ({ ...w, [m]: value }))}
-            onReset={() => setMethodWeights(methodWeightsFor(preset))}
-          />
-          <span aria-hidden>·</span>
-          <RegionSelector
-            options={regionOptions}
-            selected={selectedRegionSet}
-            onToggle={toggleRegion}
-          />
-          <span>{" · cold start · last 24h"}</span>
+          <span>
+            {selectedMethods.size} method{selectedMethods.size === 1 ? "" : "s"}
+            {" · "}
+            {selectedRegionSet.size} region{selectedRegionSet.size === 1 ? "" : "s"}
+            {" · cold start · last "}
+            {windowLabel}
+          </span>
         </div>
         <div className="ml-auto">
           <ShareButton filters={shareFilters} pagePath="/" />
@@ -325,7 +418,7 @@ export function OverviewBoard({
         regionWeights={regionWeights}
         methodRegionLatency={methodRegionLatency}
         gridMethods={gridMethods}
-        scoreMethodCount={preset.methods.length}
+        scoreMethodCount={selectedMethods.size}
       />
       </div>
     </section>

@@ -647,8 +647,8 @@ export interface ScoreSeries {
 }
 
 export interface ScoreQuery {
-  /** null = Overall (blend across active geos); otherwise a single geo. */
-  selectedGeo: GeoRegion | null;
+  /** Region subset blended into the score. Empty = Overall (all active geos). */
+  selectedGeos: GeoRegion[];
   windowHours: number;
   connectionMode: "cold" | "warm";
   /** Infra pill — undefined pools every cloud (POOLED_INFRA). */
@@ -674,8 +674,8 @@ export interface ScoreQuery {
  * score precompute, so at ≤24h this is coarser than the latency series (5-min).
  */
 async function fetchScoreSeriesImpl(opts: ScoreQuery): Promise<ScoreSeries[]> {
-  const targets: GeoRegion[] = opts.selectedGeo
-    ? [opts.selectedGeo]
+  const targets: GeoRegion[] = opts.selectedGeos.length > 0
+    ? opts.selectedGeos
     : (await fetchActiveGeos());
   const geos = targets.length > 0 ? targets : [...GEO_REGIONS];
   const methods = [...new Set(opts.methods)].sort();
@@ -791,16 +791,16 @@ async function fetchScoreSeriesImpl(opts: ScoreQuery): Promise<ScoreSeries[]> {
     const t = new Date(ms);
     const perMethod = new Map<string, ScoredProvider[]>();
     for (const [method, geoMap] of methodMap) {
-      if (opts.selectedGeo) {
-        const rows = geoMap.get(opts.selectedGeo) ?? [];
-        perMethod.set(method, score(rows.map(rowToMetrics), DEFAULT_WEIGHTS));
-      } else {
-        const perRegion = new Map<GeoRegion, ScoredProvider[]>();
-        for (const [geo, rows] of geoMap) {
-          perRegion.set(geo, score(rows.map(rowToMetrics), DEFAULT_WEIGHTS));
-        }
-        perMethod.set(method, blendRegionScores(perRegion, DEFAULT_REGION_WEIGHTS, { subs: true }));
+      // The SQL already restricts rows to the selected geo subset, so always
+      // region-blend whatever geos are present (DEFAULT_REGION_WEIGHTS,
+      // renormalized over present geos). A single selected geo renormalizes to
+      // itself; Overall blends all active geos — same weighting in every case,
+      // matching the leaderboard board + the /performance ScoreStrip.
+      const perRegion = new Map<GeoRegion, ScoredProvider[]>();
+      for (const [geo, rows] of geoMap) {
+        perRegion.set(geo, score(rows.map(rowToMetrics), DEFAULT_WEIGHTS));
       }
+      perMethod.set(method, blendRegionScores(perRegion, DEFAULT_REGION_WEIGHTS, { subs: true }));
     }
     const { ranked } = blendMethodScores(perMethod, methodWeights, 0);
     for (const sp of ranked) {

@@ -69,7 +69,7 @@ export async function ChartPanel({
   connectionMode,
   initialBenchmarked,
   filters,
-  selectedGeo,
+  selectedGeos,
   workerProvider,
 }: {
   cloudPairs: readonly CloudPair[];
@@ -81,19 +81,19 @@ export async function ChartPanel({
    *  full series is always fetched and passed unfiltered. */
   initialBenchmarked: readonly string[];
   filters: ReactNode;
-  /** Score-query inputs — null geo = Overall (blend across active geos). */
-  selectedGeo: GeoRegion | null;
+  /** Score-query region subset — empty = Overall (blend across active geos). */
+  selectedGeos: GeoRegion[];
   workerProvider?: string | undefined;
 }) {
   // Both series are fetched up front so the client-side Latency/Score toggle
   // switches without a refetch / Suspense flash. The score series blends ALL
-  // selected methods (even weight); a single method is the common case. Methods
+  // selected methods (even weight) over the selected region subset. Methods
   // are sorted so the fetchScoreSeries cache key is order-independent.
   const sortedMethods = [...new Set(methods)].sort();
   const [series, scoreSeries] = await Promise.all([
     fetchLatencySeries({ cloudPairs, methods, windowHours, connectionMode }),
     sortedMethods.length > 0
-      ? fetchScoreSeries({ selectedGeo, windowHours, connectionMode, methods: sortedMethods, workerProvider })
+      ? fetchScoreSeries({ selectedGeos, windowHours, connectionMode, methods: sortedMethods, workerProvider })
       : Promise.resolve([]),
   ]);
   return (
@@ -106,7 +106,7 @@ export async function ChartPanel({
       showRpcFilter
       initialBenchmarked={initialBenchmarked}
       method={methods.length === 1 ? methods[0] : undefined}
-      selectedGeo={selectedGeo}
+      selectedGeos={selectedGeos}
       workerProvider={workerProvider}
     />
   );

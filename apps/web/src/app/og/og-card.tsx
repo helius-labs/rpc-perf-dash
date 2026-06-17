@@ -112,7 +112,7 @@ function Row({ row, rank }: { row: CardRow; rank: number }) {
       style={{
         display: "flex",
         alignItems: "center",
-        height: first ? 104 : 78,
+        height: first ? 92 : 70,
         padding: "0 26px",
         borderRadius: first ? 16 : 0,
         background: first ? SURFACE : "transparent",
@@ -223,7 +223,7 @@ export function LeaderboardCard(props: CardProps) {
 
       {/* Leaderboard */}
       {ranked.length > 0 ? (
-        <div style={{ display: "flex", flexDirection: "column", marginTop: 22 }}>
+        <div style={{ display: "flex", flexDirection: "column", marginTop: 16 }}>
           {ranked.map((r, i) => (
             <Row key={r.provider_id} row={r} rank={i + 1} />
           ))}
@@ -235,7 +235,7 @@ export function LeaderboardCard(props: CardProps) {
       )}
 
       {/* Footer — host only */}
-      <div style={{ display: "flex", alignItems: "center", marginTop: "auto", paddingTop: 18 }}>
+      <div style={{ display: "flex", alignItems: "center", marginTop: "auto", paddingTop: 14 }}>
         <span style={{ display: "flex", fontFamily: MONO, fontSize: 15, color: FAINT, letterSpacing: "0.04em" }}>
           {siteUrl}
         </span>

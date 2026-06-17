@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { Metadata, Route } from "next";
-import { GEO_REGIONS, type GeoRegion } from "@rpcbench/shared";
+import { GEO_REGIONS } from "@rpcbench/shared";
 import { ALL_METHODS } from "@/lib/methods";
 import { WINDOWS } from "@/lib/windows";
 import { ogImagePath, parseShareParams } from "@/lib/share";
@@ -59,26 +59,25 @@ export default async function OverviewPage({
   let cube: MethodGeoRows[] = [];
   let methodRegionLatency: MethodRegionLatency = {};
   let sampleCount = EMPTY_SAMPLE_COUNT;
-  let cubeGeos: GeoRegion[] = [];
   let error: string | null = null;
 
   try {
     const activeGeos = await fetchActiveGeos();
-    // Fetch the cube for ALL active geos (not just the preset's region subset),
-    // so the Overview region selector can toggle any region in/out of the blend
-    // client-side without a refetch. The preset still seeds which are selected.
+    // Fetch the cube for ALL active geos; buildPresetLeaderRows blends only the
+    // preset's region subset, so extra geos are harmlessly ignored.
     const targets = activeGeos.length > 0 ? activeGeos : [...GEO_REGIONS];
-    cubeGeos = targets;
 
-    // One multi-method query per geo: the whole preset cube. Balanced = 45
-    // methods × ≤6 geos = ≤6 queries, not 270.
+    // One multi-method query per geo over ALL methods (≤6 queries, not 270): the
+    // preset only pre-selects which of them are blended, but the Methods dropdown
+    // lists every method and any can be toggled in client-side, so the cube must
+    // carry them all.
     const [byGeo, sampleData] = await Promise.all([
       Promise.all(
         targets.map(async (geo) => ({
           geo,
           byMethod: await fetchAggregatesForGeoByMethod({
             geoRegion: geo,
-            methods: preset.methods,
+            methods: ALL_METHODS,
             windowHours,
             connectionMode: OVERVIEW_MODE,
           }),
@@ -119,12 +118,11 @@ export default async function OverviewPage({
         </div>
       )}
 
-      {/* Intro + preset chips + weights + leaderboard. The client weight state
-          resets on workload change inside OverviewBoard (not via a remount key,
-          which would reload the winner's hero logo iframe on every switch). */}
+      {/* Intro + preset chips + leaderboard. The only control is the workload
+          preset (a ?preset= navigation); all weight/region tuning lives on
+          /performance. */}
       <OverviewBoard
         cube={cube}
-        cubeGeos={cubeGeos}
         presetId={preset.id}
         methodRegionLatency={methodRegionLatency}
         sampleCount={sampleCount}

@@ -83,34 +83,33 @@ function RowCells({
         const best = v != null && v === min && vals.length > 1;
         const pct = v != null && max > 0 ? Math.max(6, (v / (max * 1.1)) * 100) : 0;
         return (
-          <td key={p.id} className={cellCls}>
+          // The row's winner is marked with a faint white highlight behind the
+          // whole cell (subtle enough to keep the white/accent text legible).
+          <td
+            key={p.id}
+            className={
+              cellCls + (best ? " bg-[color-mix(in_srgb,var(--text)_9%,transparent)]" : "")
+            }
+          >
             {v == null ? (
               <span className="text-muted font-geistmono text-[12px]">—</span>
             ) : (
-              // Orange line spans the full height (number + bar) for winners; a
-              // transparent spacer keeps non-winners aligned.
-              <div className="flex items-stretch gap-1.5">
+              <div className="flex flex-col gap-0.5 min-w-0">
                 <span
-                  aria-hidden="true"
-                  className={"w-[3px] rounded-sm shrink-0 " + (best ? "bg-accent" : "bg-transparent")}
-                />
-                <div className="flex flex-col gap-0.5 flex-1 min-w-0">
+                  className={
+                    "font-geistmono text-[12.5px] leading-none tabular-nums " +
+                    (best ? "text-accent font-medium" : "text-fg")
+                  }
+                >
+                  {v.toFixed(1)}
+                  <span className="text-muted ml-0.5">ms</span>
+                </span>
+                <span className="block h-[4px] rounded-sm bg-line2 overflow-hidden">
                   <span
-                    className={
-                      "font-geistmono text-[12.5px] leading-none tabular-nums " +
-                      (best ? "text-accent font-medium" : "text-fg")
-                    }
-                  >
-                    {v.toFixed(1)}
-                    <span className="text-muted ml-0.5">ms</span>
-                  </span>
-                  <span className="block h-[4px] rounded-sm bg-line2 overflow-hidden">
-                    <span
-                      className="block h-full rounded-sm"
-                      style={{ width: pct + "%", background: dotColor(p.id), opacity: best ? 1 : 0.55 }}
-                    />
-                  </span>
-                </div>
+                    className="block h-full rounded-sm"
+                    style={{ width: pct + "%", background: dotColor(p.id), opacity: best ? 1 : 0.55 }}
+                  />
+                </span>
               </div>
             )}
           </td>

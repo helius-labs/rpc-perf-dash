@@ -62,8 +62,9 @@ interface Props {
    *  metric (fetched lazily from /api/distribution). Optional: callers without
    *  it (provider deep-dive) just don't get the distribution toggle. */
   method?: Method | undefined;
-  /** Current geo filter (null = Overall) — forwarded to the distribution fetch. */
-  selectedGeo?: GeoRegion | null;
+  /** Current geo subset (empty = Overall) — forwarded to the distribution fetch,
+   *  which scopes to a single region only when exactly one is selected. */
+  selectedGeos?: readonly GeoRegion[];
   /** Current infra filter — forwarded to the distribution fetch (pools clouds when omitted). */
   workerProvider?: string | undefined;
 }
@@ -115,9 +116,12 @@ export function LatencyChart({
   showRpcFilter = false,
   initialBenchmarked,
   method,
-  selectedGeo = null,
+  selectedGeos = [],
   workerProvider,
 }: Props) {
+  // The distribution fetch is single-region scoped: pass a region only when
+  // exactly one geo is selected; any other count pools across clouds.
+  const distRegion: GeoRegion | null = selectedGeos.length === 1 ? selectedGeos[0]! : null;
   // Latency vs Score. The toggle only appears when a score series was supplied
   // (the provider deep-dive page passes none → latency-only, no dead toggle).
   const hasScore = scoreSeries !== undefined;
@@ -204,7 +208,7 @@ export function LatencyChart({
     setDistLoading(true);
     setDistError(null);
     const qs = new URLSearchParams({ method, mode: connectionMode, hours: String(windowHours) });
-    if (selectedGeo) qs.set("region", selectedGeo);
+    if (distRegion) qs.set("region", distRegion);
     if (workerProvider) qs.set("wp", workerProvider);
     fetch(`/api/distribution?${qs.toString()}`, { signal: ctrl.signal })
       .then((r) => {
@@ -221,7 +225,7 @@ export function LatencyChart({
         setDistLoading(false);
       });
     return () => ctrl.abort();
-  }, [isDist, method, connectionMode, windowHours, selectedGeo, workerProvider]);
+  }, [isDist, method, connectionMode, windowHours, distRegion, workerProvider]);
   // Compact mode shrinks the chart for mobile viewports — smaller height,
   // fewer x-axis ticks, in-SVG legend moved below the SVG. Tap-to-pin replaces
   // hover-crosshair on touch devices.

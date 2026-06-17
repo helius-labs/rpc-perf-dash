@@ -3,7 +3,6 @@ import type { Metadata } from "next";
 import { FilterPill } from "@/components/FilterPill";
 import { FilterGroup } from "@/components/FilterGroup";
 import { MethodFilter } from "@/components/MethodFilter";
-import { ShareButton } from "@/components/ShareButton";
 import {
   BENCHMARKED_PROVIDERS,
   GEO_REGIONS,
@@ -13,18 +12,16 @@ import {
   type Method,
   WORKER_PROVIDER_LABELS,
 } from "@rpcbench/shared";
-import { DEFAULT_REGION_WEIGHTS, DEFAULT_WEIGHTS } from "@rpcbench/shared/scoring";
+import { type MethodWeights } from "@rpcbench/shared/scoring";
 import { ALL_METHODS } from "@/lib/methods";
-import { equalMethodWeights } from "@/lib/workloadPresets";
 import { WINDOWS } from "@/lib/windows";
-import { ogImagePath, parseShareParams, type ShareFilters } from "@/lib/share";
+import { ogImagePath, parseShareParams } from "@/lib/share";
 import { Suspense } from "react";
 import { ChartPanel, ChartLoading } from "@/components/ChartSection";
 import { MethodRegionTabs } from "@/components/MethodRegionTabs";
-import { ScoreStrip } from "@/components/ScoreStrip";
+import { PerfScoreboard } from "@/components/PerfScoreboard";
 import {
   buildMiniScoreRows,
-  buildPresetLeaderRows,
   type MethodGeoRows,
   type MiniScoreRow,
 } from "@/components/leaderboardShared";
@@ -45,12 +42,17 @@ import { DB_ERROR_MESSAGE } from "@/lib/db";
 export const dynamic = "force-dynamic";
 
 interface SearchParams {
+  /** Comma-separated geo subset blended into the chart + score. Empty = Overall. */
+  regions?: string;
+  /** Legacy single-region links (pre multi-select) — still accepted as a fallback. */
   region?: string;
   window?: string;
   mode?: string;
   wp?: string;
   bp?: string;
   method?: string;
+  /** Sparse per-method weight overrides (`method:weight,…`), shared via ShareButton. */
+  mw?: string;
 }
 
 function urlWith(
@@ -69,13 +71,13 @@ function urlWith(
 
 /**
  * Build the (worker_provider, region) pair set for the chart query, respecting
- * the selected geo (or all geos for Overall) and the Infra filter.
+ * the selected geo subset (or all geos for Overall) and the Infra filter.
  */
 function chartCloudPairs(
-  selectedGeo: GeoRegion | null,
+  selectedGeos: GeoRegion[],
   selectedProvider: string | null,
 ): Array<{ worker_provider: string; region: string }> {
-  const geos: readonly GeoRegion[] = selectedGeo ? [selectedGeo] : GEO_REGIONS;
+  const geos: readonly GeoRegion[] = selectedGeos.length > 0 ? selectedGeos : GEO_REGIONS;
   const out: Array<{ worker_provider: string; region: string }> = [];
   for (const g of geos) {
     for (const p of cloudRegionsForGeo(g)) {
@@ -117,9 +119,13 @@ export default async function PerformancePage({
   searchParams: Promise<SearchParams>;
 }) {
   const params = await searchParams;
-  const selectedGeo = (GEO_REGIONS as readonly string[]).includes(params.region ?? "")
-    ? (params.region as GeoRegion)
-    : null;
+  // `?regions=` is a comma-separated geo subset; empty = Overall (all active).
+  // Legacy single `?region=` links still resolve (one-geo subset).
+  const geoSet = new Set<string>(GEO_REGIONS);
+  const selectedGeos: GeoRegion[] = (params.regions ?? params.region ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s): s is GeoRegion => geoSet.has(s));
   const windowHours = WINDOWS.some((w) => w.value === parseInt(params.window ?? "", 10))
     ? parseInt(params.window!, 10)
     : 24;
@@ -132,8 +138,8 @@ export default async function PerformancePage({
 
   const DEFAULT_METHOD: Method = "getTransaction";
   // `?method=` is a comma-separated list; the chart blends the score across all
-  // of them (even weight). The breakdown/region tables are per-method, so they
-  // key off the first selected method.
+  // of them. The breakdown/region tables are per-method, so they key off the
+  // first selected method.
   const methodSet = new Set<string>(ALL_METHODS);
   const selectedMethods: Method[] = (params.method ?? "")
     .split(",")
@@ -144,6 +150,15 @@ export default async function PerformancePage({
   const selectedMethodSet = new Set<string>(selectedMethods);
   const chartMethods: readonly Method[] = selectedMethods;
 
+  // Sparse per-method weight overrides from `?mw=` (method:weight,…) — seeds the
+  // scoreboard's tunable weights so a shared link reproduces the tuned view.
+  const mwOverrides: MethodWeights = {};
+  for (const pair of (params.mw ?? "").split(",")) {
+    const [m, wStr] = pair.split(":");
+    const w = Number(wStr);
+    if (m && methodSet.has(m) && Number.isFinite(w) && w >= 0) mwOverrides[m as Method] = w;
+  }
+
   type GeoRows = { geo: GeoRegion; rows: Awaited<ReturnType<typeof fetchAggregatesForGeo>> };
   let regionTableCold: GeoRows[] = [];
   let regionTableWarm: GeoRows[] = [];
@@ -152,8 +167,9 @@ export default async function PerformancePage({
   let activeProviders: string[] = [];
   let methodLat: MethodLatencyRow[] = [];
   let methodGeoLat: MethodGeoLatencyRow[] = [];
-  // Blended ScoreStrip rows when >1 method is selected (null → single-method path).
-  let multiMethodMini: MiniScoreRow[] | null = null;
+  // Per-(method, geo) cube for the tunable scoreboard — built only when >1 method
+  // is selected (single method has nothing to reweight → cheaper prebuilt path).
+  let cube: MethodGeoRows[] | null = null;
   let error: string | null = null;
 
   try {
@@ -190,13 +206,14 @@ export default async function PerformancePage({
     methodLat = ml;
     methodGeoLat = mgl;
 
-    // ScoreStrip board: when multiple methods are selected, blend them the same
-    // way the homepage board does (eligibility + coverage gated via
-    // buildPresetLeaderRows) so the board reflects the whole selection, not just
-    // the first method. Single-method keeps the cheaper buildMiniScoreRows path.
+    // Tunable scoreboard cube: when multiple methods are selected, fetch the
+    // per-(method, geo) aggregates over the selected region subset (or all
+    // active geos for Overall) and hand them to PerfScoreboard, which re-blends
+    // client-side as the user tunes per-method weights. Single-method uses the
+    // cheaper prebuilt buildMiniScoreRows path below (no extra fan-out).
     if (selectedMethods.length > 1) {
-      const targets = selectedGeo ? [selectedGeo] : activeGeos;
-      const cube: MethodGeoRows[] = [];
+      const targets = selectedGeos.length > 0 ? selectedGeos : activeGeos;
+      const built: MethodGeoRows[] = [];
       await Promise.all(
         targets.map(async (geo) => {
           const byMethod = await fetchAggregatesForGeoByMethod({
@@ -210,20 +227,11 @@ export default async function PerformancePage({
             const eligible = rows.filter(
               (r) => r.eligible === true && r.p50_ms != null && r.p95_ms != null,
             );
-            cube.push({ method, geo, rows, eligible });
+            built.push({ method, geo, rows, eligible });
           }
         }),
       );
-      const blended = buildPresetLeaderRows(cube, {
-        componentWeights: DEFAULT_WEIGHTS,
-        methodWeights: equalMethodWeights(selectedMethods),
-        regionWeights: selectedGeo ? { [selectedGeo]: 1 } : DEFAULT_REGION_WEIGHTS,
-      });
-      multiMethodMini = blended.map((r) => ({
-        provider_id: r.provider_id,
-        provider_name: r.provider_name,
-        total: r.total,
-      }));
+      cube = built;
     }
   } catch (err) {
     console.error("[/performance]", err);
@@ -295,32 +303,48 @@ export default async function PerformancePage({
     if (!infraByGeo.has(geo)) infraByGeo.set(geo, new Set());
     infraByGeo.get(geo)!.add(worker_provider);
   }
+  const selectedGeoSet = new Set<GeoRegion>(selectedGeos);
+  // A region is disabled when a single infra is selected that has no workers
+  // there — but never disable a currently-selected region (so it can be toggled
+  // off to unwind an impossible URL).
   const regionDisabled = (g: GeoRegion): boolean =>
-    selectedProvider !== null && g !== selectedGeo && !(geosByInfra.get(selectedProvider)?.has(g) ?? false);
+    selectedProvider !== null &&
+    !selectedGeoSet.has(g) &&
+    !(geosByInfra.get(selectedProvider)?.has(g) ?? false);
+  // An infra is disabled when a region subset is selected and none of those
+  // regions have that infra's workers.
   const infraDisabled = (p: string): boolean =>
-    selectedGeo !== null && p !== selectedProvider && !(infraByGeo.get(selectedGeo)?.has(p) ?? false);
+    selectedGeos.length > 0 &&
+    p !== selectedProvider &&
+    !selectedGeos.some((g) => infraByGeo.get(g)?.has(p) ?? false);
 
   const chartFilters = (
     <>
       <FilterGroup label="Region">
-        <FilterPill active={selectedGeo === null} href={urlWith(params, { region: null })}>
-          Overall
+        <FilterPill active={selectedGeos.length === 0} href={urlWith(params, { regions: null })}>
+          All
         </FilterPill>
-        {activeGeos.map((g) => (
-          <FilterPill
-            key={g}
-            active={g === selectedGeo}
-            href={urlWith(params, { region: g })}
-            disabled={regionDisabled(g)}
-            title={
-              regionDisabled(g)
-                ? `No ${WORKER_PROVIDER_LABELS[selectedProvider!] ?? selectedProvider} workers in ${GEO_REGION_LABELS[g]}`
-                : undefined
-            }
-          >
-            {GEO_REGION_LABELS[g]}
-          </FilterPill>
-        ))}
+        {activeGeos.map((g) => {
+          // Toggle g in/out of the selected subset. Clearing the last one falls
+          // back to All (regions removed from the URL).
+          const inSel = selectedGeoSet.has(g);
+          const next = inSel ? selectedGeos.filter((x) => x !== g) : [...selectedGeos, g];
+          return (
+            <FilterPill
+              key={g}
+              active={inSel}
+              href={urlWith(params, { regions: next.length > 0 ? next.join(",") : null })}
+              disabled={regionDisabled(g)}
+              title={
+                regionDisabled(g)
+                  ? `No ${WORKER_PROVIDER_LABELS[selectedProvider!] ?? selectedProvider} workers in ${GEO_REGION_LABELS[g]}`
+                  : undefined
+              }
+            >
+              {GEO_REGION_LABELS[g]}
+            </FilterPill>
+          );
+        })}
       </FilterGroup>
       {activeProviders.length > 1 && (
         <FilterGroup label="Infra">
@@ -335,7 +359,7 @@ export default async function PerformancePage({
               disabled={infraDisabled(p)}
               title={
                 infraDisabled(p)
-                  ? `No ${WORKER_PROVIDER_LABELS[p] ?? p} workers in ${GEO_REGION_LABELS[selectedGeo!]}`
+                  ? `No ${WORKER_PROVIDER_LABELS[p] ?? p} workers in the selected regions`
                   : undefined
               }
             >
@@ -388,35 +412,31 @@ export default async function PerformancePage({
     </>
   );
 
-  // Overall-score board (above the chart) — reuses the Overview's scoring
-  // pipeline over the already-fetched per-geo aggregates for the active
-  // connection mode, so it tracks the current region/infra/window/method.
+  // Overall-score board (above the chart). Multi-method → hand the cube to
+  // PerfScoreboard for client-side, tunable re-blending; single method → the
+  // cheaper prebuilt path: blend the selected region subset (or all geos for
+  // Overall) of the already-fetched per-geo aggregates, no extra fan-out.
   const scoreTable = connectionMode === "warm" ? regionTableWarm : regionTableCold;
-  // Multi-method → the method-blended board (built in the try); else single method.
-  const miniScores = multiMethodMini ?? buildMiniScoreRows(scoreTable, selectedGeo);
-  const scoresRanked = miniScores.some((r) => r.total > 0);
+  const filteredScoreTable =
+    selectedGeos.length > 0 ? scoreTable.filter((o) => selectedGeoSet.has(o.geo)) : scoreTable;
+  // When a cube is built (multi-method), PerfScoreboard ignores prebuiltRows; keep
+  // it an array so the prop type stays exact under exactOptionalPropertyTypes.
+  const prebuiltRows: MiniScoreRow[] =
+    cube != null ? [] : buildMiniScoreRows(filteredScoreTable, null);
+
+  // Effective regions for the share card: the selection, or all active geos when
+  // Overall (so the OG card matches the on-screen blend).
+  const shareRegions: GeoRegion[] = selectedGeos.length > 0 ? selectedGeos : activeGeos;
+  // Reset the scoreboard's weight state when the method/region selection changes.
+  const scoreboardKey = [selectedMethods.join(","), [...selectedGeos].sort().join(",")].join("|");
 
   const chartKey = [
-    selectedGeo ?? "all",
+    selectedGeos.join(",") || "all",
     windowHours,
     connectionMode,
     [...selectedMethods].sort().join(","),
     selectedProvider ?? "all",
   ].join("|");
-
-  // Share-card filters mirror the on-screen ScoreStrip: the selected methods
-  // blended (even weight) over the active region(s)/mode/window/infra, at the
-  // default component weights (Performance doesn't tune those).
-  const shareFilters: ShareFilters = {
-    presetId: "balanced",
-    methods: selectedMethods,
-    methodWeights: equalMethodWeights(selectedMethods),
-    regions: selectedGeo ? [selectedGeo] : activeGeos,
-    weights: DEFAULT_WEIGHTS,
-    mode: connectionMode,
-    windowHours,
-    infra: selectedProvider ?? undefined,
-  };
 
   return (
     <div>
@@ -435,10 +455,16 @@ export default async function PerformancePage({
           </p>
         </div>
         <div className="w-full lg:w-[360px] shrink-0 lg:pt-3">
-          <ScoreStrip rows={miniScores} ranked={scoresRanked} methodCount={selectedMethods.length} />
-          <div className="flex justify-end mt-3">
-            <ShareButton filters={shareFilters} pagePath="/performance" />
-          </div>
+          <PerfScoreboard
+            key={scoreboardKey}
+            {...(cube ? { cube } : { prebuiltRows })}
+            selectedMethods={selectedMethods}
+            regions={shareRegions}
+            mwOverrides={mwOverrides}
+            windowHours={windowHours}
+            mode={connectionMode}
+            infra={selectedProvider ?? undefined}
+          />
         </div>
       </header>
 
@@ -460,13 +486,13 @@ export default async function PerformancePage({
 
         <Suspense key={chartKey} fallback={<ChartLoading filters={chartFilters} windowHours={windowHours} />}>
           <ChartPanel
-            cloudPairs={chartCloudPairs(selectedGeo, selectedProvider)}
+            cloudPairs={chartCloudPairs(selectedGeos, selectedProvider)}
             methods={chartMethods}
             windowHours={windowHours}
             connectionMode={connectionMode}
             initialBenchmarked={[...selectedBenchmarkedSet]}
             filters={chartFilters}
-            selectedGeo={selectedGeo}
+            selectedGeos={selectedGeos}
             workerProvider={selectedProvider ?? undefined}
           />
         </Suspense>
