@@ -86,13 +86,14 @@ export async function ChartPanel({
   workerProvider?: string | undefined;
 }) {
   // Both series are fetched up front so the client-side Latency/Score toggle
-  // switches without a refetch / Suspense flash. The score series reads the
-  // single selected method (the chart shows one method at a time).
-  const method = methods[0];
+  // switches without a refetch / Suspense flash. The score series blends ALL
+  // selected methods (even weight); a single method is the common case. Methods
+  // are sorted so the fetchScoreSeries cache key is order-independent.
+  const sortedMethods = [...new Set(methods)].sort();
   const [series, scoreSeries] = await Promise.all([
     fetchLatencySeries({ cloudPairs, methods, windowHours, connectionMode }),
-    method
-      ? fetchScoreSeries({ selectedGeo, windowHours, connectionMode, method, workerProvider })
+    sortedMethods.length > 0
+      ? fetchScoreSeries({ selectedGeo, windowHours, connectionMode, methods: sortedMethods, workerProvider })
       : Promise.resolve([]),
   ]);
   return (
@@ -104,7 +105,7 @@ export async function ChartPanel({
       filters={filters}
       showRpcFilter
       initialBenchmarked={initialBenchmarked}
-      method={method}
+      method={methods.length === 1 ? methods[0] : undefined}
       selectedGeo={selectedGeo}
       workerProvider={workerProvider}
     />

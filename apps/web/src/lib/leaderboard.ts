@@ -21,21 +21,26 @@ import {
 import {
   DEFAULT_REGION_WEIGHTS,
   DEFAULT_WEIGHTS,
+  blendMethodScores,
   blendRegionScores,
   score,
+  type MethodWeights,
+  type RegionWeights,
   type ScoredProvider,
   type ScoringWeights,
 } from "@rpcbench/shared/scoring";
 import { db } from "@/lib/db";
 import {
   buildOverallLeaderRows,
-  buildSingleLeaderRows,
+  buildPresetLeaderRows,
   rowToMetrics,
   scorePerGeo,
+  type MethodGeoRows,
   type OverallLeaderRow,
+  type PresetLeaderRow,
   type RowAgg,
-  type SingleLeaderRow,
 } from "@/components/leaderboardShared";
+import { equalMethodWeights, methodWeightsFor, presetById } from "@/lib/workloadPresets";
 
 /**
  * Cache TTL for all server-side data fetchers. The dashboard updates on the
@@ -276,18 +281,164 @@ export const fetchAggregatesForGeo = unstable_cache(
   { revalidate: CACHE_TTL_S },
 );
 
+export interface AggregateByMethodOpts {
+  geoRegion: GeoRegion;
+  methods: readonly Method[];
+  windowHours: number;
+  connectionMode: "cold" | "warm";
+  workerProvider?: string;
+}
+
 /**
- * Full Overall leaderboard, ranked — the same blend the home page shows for the
- * default view (all active geos, getTransaction, cold, 24h, default weights). The
- * provider deep-dive uses this to resolve a provider's rank + composite score +
- * blended latency/win-rate/sample stats without re-deriving the maths.
+ * Multi-method variant of `fetchAggregatesForGeo`: one query per geo returning
+ * the full RowAgg (incl. failure_breakdown) for EVERY requested method, keyed by
+ * method. Used by the preset method-blend (Overview cube + `fetchRankedPreset`)
+ * so Balanced (45 methods × 6 geos) is 6 queries, not 270.
+ *
+ * Methods are a fixed `Method` enum, so we inline them as an escaped literal
+ * `IN (...)` list and a `VALUES` table — NOT `= ANY(${array})`, which the Neon
+ * pooler (prepare:false) silently binds as a scalar (see fetchScoreSeriesImpl /
+ * the geoLiteral convention). The literal stays an indexed prefix on
+ * `leaderboard_agg_*_read (geo, worker_provider, method, …)`.
+ */
+async function fetchAggregatesForGeoByMethodImpl(
+  opts: AggregateByMethodOpts,
+): Promise<Array<{ method: Method; rows: RowAgg[] }>> {
+  // Returns an ARRAY (not a Map): unstable_cache JSON-serializes its result, and
+  // a Map doesn't survive that round-trip. Callers reconstruct as needed.
+  const out = new Map<Method, RowAgg[]>();
+  // Sorted + deduped so the cache key is order-independent and the literal list
+  // is deterministic.
+  const methods = [...new Set(opts.methods)].sort();
+  if (methods.length === 0) return [];
+
+  const floor = eligibilityFloors(opts.windowHours);
+  const aggTable = sql.raw(leaderboardTableForWindow(opts.windowHours));
+  const chalTable = sql.raw(leaderboardChallengesTableForWindow(opts.windowHours));
+  const failTable = sql.raw(leaderboardFailuresTableForWindow(opts.windowHours));
+  const wpKey = opts.workerProvider ?? POOLED_INFRA;
+  const esc = (m: string) => `'${m.replace(/'/g, "''")}'`;
+  const methodInList = sql.raw(methods.map(esc).join(","));
+  const methodValues = sql.raw(
+    `(VALUES ${methods.map((m) => `(${esc(m)})`).join(",")}) AS mlist(method)`,
+  );
+
+  const rows = await db().execute(sql`
+    WITH agg AS (
+      SELECT
+        provider_id, method,
+        round(sum(latency_p50_correct::bigint * sample_count_valid)::numeric
+              / NULLIF(sum(sample_count_valid) FILTER (WHERE latency_p50_correct IS NOT NULL), 0))::int AS p50_ms,
+        round(sum(latency_p95_correct::bigint * sample_count_valid)::numeric
+              / NULLIF(sum(sample_count_valid) FILTER (WHERE latency_p95_correct IS NOT NULL), 0))::int AS p95_ms,
+        round(sum(latency_p99_correct::bigint * sample_count_valid)::numeric
+              / NULLIF(sum(sample_count_valid) FILTER (WHERE latency_p99_correct IS NOT NULL), 0))::int AS p99_ms,
+        (sum(latency_stddev * sample_count_valid)
+              / NULLIF(sum(sample_count_valid) FILTER (WHERE latency_stddev IS NOT NULL), 0))::real AS stddev_ms,
+        sum(sample_count_valid)::int  AS sample_count_valid,
+        sum(sample_count_total)::int  AS sample_count_total,
+        sum(sample_count_failed)::int AS sample_count_failed,
+        sum(honeypot_pass_count)::int AS honeypot_pass_count,
+        sum(honeypot_total)::int      AS honeypot_total,
+        (sum(success_num)::real      / NULLIF(sum(sample_count_total)::real, 0))::real AS success_rate,
+        (sum(correctness_num)::real  / NULLIF(sum(correctness_den)::real, 0))::real    AS correctness_rate,
+        (sum(completeness_num)::real / NULLIF(sum(completeness_den)::real, 0))::real   AS completeness_rate,
+        round(sum(freshness_p95_lag::bigint * sample_count_total)::numeric
+              / NULLIF(sum(sample_count_total) FILTER (WHERE freshness_p95_lag IS NOT NULL), 0))::int AS freshness_p95_lag,
+        sum(n_wins)::int AS n_wins
+      FROM ${aggTable}
+      WHERE geo = ${opts.geoRegion}
+        AND worker_provider = ${wpKey}
+        AND method IN (${methodInList})
+        AND connection_mode = ${opts.connectionMode}
+        AND window_start > now() - make_interval(hours => ${opts.windowHours})
+      GROUP BY provider_id, method
+    ),
+    chal AS (
+      SELECT method, coalesce(sum(n_challenges), 0)::int AS n_challenges_with_winner
+      FROM ${chalTable}
+      WHERE geo = ${opts.geoRegion}
+        AND worker_provider = ${wpKey}
+        AND method IN (${methodInList})
+        AND connection_mode = ${opts.connectionMode}
+        AND window_start > now() - make_interval(hours => ${opts.windowHours})
+      GROUP BY method
+    ),
+    fails AS (
+      SELECT provider_id, method,
+             jsonb_agg(jsonb_build_object('category', failure_category, 'n', n) ORDER BY n DESC) AS failure_breakdown
+      FROM (
+        SELECT provider_id, method, failure_category, sum(n)::int AS n
+        FROM ${failTable}
+        WHERE geo = ${opts.geoRegion}
+          AND worker_provider = ${wpKey}
+          AND method IN (${methodInList})
+          AND connection_mode = ${opts.connectionMode}
+          AND window_start > now() - make_interval(hours => ${opts.windowHours})
+        GROUP BY provider_id, method, failure_category
+      ) f
+      GROUP BY provider_id, method
+    )
+    SELECT
+      mlist.method AS method,
+      p.id   AS provider_id,
+      a.p50_ms, a.p95_ms, a.p99_ms, a.stddev_ms,
+      coalesce(a.sample_count_valid, 0)  AS sample_count_valid,
+      coalesce(a.sample_count_total, 0)  AS sample_count_total,
+      coalesce(a.sample_count_failed, 0) AS sample_count_failed,
+      a.success_rate, a.correctness_rate, a.completeness_rate,
+      a.freshness_p95_lag,
+      coalesce(a.honeypot_pass_count, 0) AS honeypot_pass_count,
+      coalesce(a.honeypot_total, 0)      AS honeypot_total,
+      coalesce(a.n_wins, 0)              AS n_wins,
+      coalesce(fa.failure_breakdown, '[]'::jsonb) AS failure_breakdown,
+      coalesce(c.n_challenges_with_winner, 0) AS n_challenges_with_winner,
+      (coalesce(a.sample_count_valid, 0) >= ${floor.minValid}
+        AND coalesce(a.success_rate, 0)     >= ${floor.minReliability}
+        AND coalesce(a.correctness_rate, 0) >= ${floor.minCorrectness}
+        AND wilson_lower_bound(coalesce(a.honeypot_pass_count, 0), coalesce(a.honeypot_total, 0), 1.96)
+              >= ${floor.minHoneypotLb}) AS eligible,
+      CASE
+        WHEN coalesce(a.sample_count_valid, 0) < ${floor.minValid}     THEN 'insufficient_samples'
+        WHEN coalesce(a.success_rate, 0)     < ${floor.minReliability}  THEN 'reliability_below_threshold'
+        WHEN coalesce(a.correctness_rate, 0) < ${floor.minCorrectness}  THEN 'correctness_below_threshold'
+        WHEN wilson_lower_bound(coalesce(a.honeypot_pass_count, 0), coalesce(a.honeypot_total, 0), 1.96)
+              < ${floor.minHoneypotLb}                                  THEN 'honeypot_pass_below_threshold'
+        ELSE NULL
+      END AS failing_reason
+    FROM (SELECT id FROM providers WHERE benchmarked = true) p
+    CROSS JOIN ${methodValues}
+    LEFT JOIN agg a   ON a.provider_id = p.id AND a.method = mlist.method
+    LEFT JOIN fails fa ON fa.provider_id = p.id AND fa.method = mlist.method
+    LEFT JOIN chal c  ON c.method = mlist.method
+  `);
+
+  for (const r of rows as unknown as Array<RowAgg & { method: Method }>) {
+    const { method, ...rest } = r;
+    const arr = out.get(method) ?? [];
+    arr.push(rest as RowAgg);
+    out.set(method, arr);
+  }
+  return [...out.entries()].map(([method, rows]) => ({ method, rows }));
+}
+
+export const fetchAggregatesForGeoByMethod = unstable_cache(
+  fetchAggregatesForGeoByMethodImpl,
+  ["fetchAggregatesForGeoByMethod"],
+  { revalidate: CACHE_TTL_S },
+);
+
+/**
+ * Legacy SINGLE-METHOD overall leaderboard (region-blend of one method). Under
+ * Option A the headline "overall" is now the preset method-blend
+ * (`fetchRankedPreset`); this remains for the explicit-`method=` API drill-down
+ * and the per-region share card, which still rank by one method.
  */
 export async function fetchRankedOverall(opts?: {
   windowHours?: number;
   connectionMode?: "cold" | "warm";
   method?: Method;
-  /** Per-axis scoring weights — defaults to DEFAULT_WEIGHTS so existing callers
-   *  (provider deep-dive, leaderboardApi) are unaffected. The share-card route
+  /** Per-axis scoring weights — defaults to DEFAULT_WEIGHTS. The share-card route
    *  passes the sharer's tuned weights so the card matches the on-screen board.
    *  The region blend always uses DEFAULT_REGION_WEIGHTS. */
   weights?: ScoringWeights;
@@ -316,36 +467,65 @@ export async function fetchRankedOverall(opts?: {
 }
 
 /**
- * Single-geo ranked leaderboard — the same rows IndexLeaderboard builds for a
- * specific region (RowAgg → eligibility filter → scorePerGeo → buildSingleLeaderRows).
- * Used by the share-card route for `region != overall`. Weights default to
- * DEFAULT_WEIGHTS; the card route passes the sharer's tuned weights.
+ * Workload-preset ranking — the method-blended "overall" board. This is the
+ * single server-side source of the preset score: the provider deep-dive, the
+ * public API, and the OG share card all call it so a provider's overall rank is
+ * the same number everywhere (Option A — "overall" = the preset blend, default
+ * Balanced). Composes the cached multi-method cube fetch per geo (restricted to
+ * the preset's region subset) and the shared `buildPresetLeaderRows` blend.
  */
-export async function fetchRankedSingle(opts: {
-  geoRegion: GeoRegion;
+export async function fetchRankedPreset(opts?: {
+  presetId?: string;
   windowHours?: number;
   connectionMode?: "cold" | "warm";
-  workerProvider?: string | undefined;
-  method?: Method;
-  weights?: ScoringWeights;
-}): Promise<SingleLeaderRow[]> {
-  const windowHours = opts.windowHours ?? 24;
-  const connectionMode = opts.connectionMode ?? "cold";
-  const method: Method = opts.method ?? "getTransaction";
-  const weights = opts.weights ?? DEFAULT_WEIGHTS;
+  /** Optional overrides (share card / tuned board); default to the preset. */
+  componentWeights?: ScoringWeights;
+  methodWeights?: MethodWeights;
+  /** Override the method set (e.g. a /performance ad-hoc selection). */
+  methods?: readonly Method[];
+  /** Override the region subset (+ relative weights). */
+  regionWeights?: Partial<RegionWeights>;
+  /** Infra pill — undefined pools every cloud (POOLED_INFRA). */
+  workerProvider?: string;
+}): Promise<PresetLeaderRow[]> {
+  const preset = presetById(opts?.presetId);
+  const windowHours = opts?.windowHours ?? 24;
+  const connectionMode = opts?.connectionMode ?? "cold";
+  const methods = opts?.methods ?? preset.methods;
+  const componentWeights = opts?.componentWeights ?? preset.weights;
+  // When the method set is overridden, the weights must be rebased to THAT set
+  // (even) — using the preset's 45-method weights against a 1-method cube would
+  // make coverage ~1/45 < MIN_METHOD_COVERAGE and exclude everyone.
+  const methodWeights =
+    opts?.methodWeights ?? (opts?.methods ? equalMethodWeights(methods) : methodWeightsFor(preset));
+  const regionWeights = opts?.regionWeights ?? preset.regionWeights;
 
-  const rows = await fetchAggregatesForGeo({
-    geoRegion: opts.geoRegion,
-    windowHours,
-    connectionMode,
-    method,
-    ...(opts.workerProvider ? { workerProvider: opts.workerProvider } : {}),
-  });
-  const eligible = rows.filter(
-    (r) => r.eligible === true && r.p50_ms !== null && r.p95_ms !== null,
+  const active = await fetchActiveGeos();
+  const presetGeos = new Set(Object.keys(regionWeights) as GeoRegion[]);
+  const targets = (active.length > 0 ? active : [...GEO_REGIONS]).filter((g) =>
+    presetGeos.has(g),
   );
-  const scored = scorePerGeo({ eligible }, weights);
-  return buildSingleLeaderRows({ geo: opts.geoRegion, rows, eligible, scored }).rows;
+
+  const cube: MethodGeoRows[] = [];
+  await Promise.all(
+    targets.map(async (geo) => {
+      const byMethod = await fetchAggregatesForGeoByMethod({
+        geoRegion: geo,
+        methods,
+        windowHours,
+        connectionMode,
+        ...(opts?.workerProvider ? { workerProvider: opts.workerProvider } : {}),
+      });
+      for (const { method, rows } of byMethod) {
+        const eligible = rows.filter(
+          (r) => r.eligible === true && r.p50_ms != null && r.p95_ms != null,
+        );
+        cube.push({ method, geo, rows, eligible });
+      }
+    }),
+  );
+
+  return buildPresetLeaderRows(cube, { componentWeights, methodWeights, regionWeights });
 }
 
 export interface MethodLatencyRow {
@@ -474,20 +654,22 @@ export interface ScoreQuery {
   connectionMode: "cold" | "warm";
   /** Infra pill — undefined pools every cloud (POOLED_INFRA). */
   workerProvider?: string | undefined;
-  method: Method;
+  /** One or more methods — multiple are blended (even weight) per bucket. Pass a
+   *  pre-sorted, deduped list so the unstable_cache key is order-independent. */
+  methods: Method[];
 }
 
 /**
  * Point-in-time overall score per provider over time. Reads the leaderboard
- * precompute (leaderboard_agg_1h / _1d) grouped by time bucket — each row is one
- * (geo, provider, bucket) aggregate — and scores EACH bucket independently with
- * the same formula the leaderboard uses (score() per geo, blendRegionScores()
- * across geos for the Overall view). Mirrors fetchLatencySeries, but the value
- * is the composite 0-100 score instead of latency.
+ * precompute (leaderboard_agg_1h / _1d) grouped by time bucket and scores EACH
+ * bucket independently with the same formula the leaderboard uses (score() per
+ * (method, geo), blendRegionScores() across geos, blendMethodScores() across the
+ * selected methods — even weight). Mirrors fetchLatencySeries, but the value is
+ * the composite 0-100 score instead of latency.
  *
- * No eligibility gate (unlike the leaderboard): any provider with p50+p95 in a
- * bucket is scored, so lines stay continuous. Scores are relative within each
- * bucket, so sparse buckets where only one provider reported can spike to ~100.
+ * No eligibility / coverage gate (unlike the leaderboard board): any provider
+ * with p50+p95 in a bucket is scored and whatever methods it has that bucket are
+ * blended, so lines stay continuous. Scores are relative within each bucket.
  *
  * Grain note: leaderboard_agg is hourly (≤7d) / daily (>7d) — there is no 5-min
  * score precompute, so at ≤24h this is coarser than the latency series (5-min).
@@ -497,22 +679,24 @@ async function fetchScoreSeriesImpl(opts: ScoreQuery): Promise<ScoreSeries[]> {
     ? [opts.selectedGeo]
     : (await fetchActiveGeos());
   const geos = targets.length > 0 ? targets : [...GEO_REGIONS];
+  const methods = [...new Set(opts.methods)].sort();
+  if (methods.length === 0) return [];
 
   const aggTable = sql.raw(leaderboardTableForWindow(opts.windowHours));
   const chalTable = sql.raw(leaderboardChallengesTableForWindow(opts.windowHours));
   const wpKey = opts.workerProvider ?? POOLED_INFRA;
-  // `geo IN (...)` as an escaped literal list. postgres.js (Neon pooler,
-  // prepare:false) rejects `= ANY(${jsArray})` — the param binds as a scalar —
-  // so use the repo's literal-list convention (chartData.ts pairLiteral). Geos
-  // are a fixed enum, so this is safe.
+  // Escaped literal `IN (...)` lists. postgres.js (Neon pooler, prepare:false)
+  // rejects `= ANY(${jsArray})` — the param binds as a scalar — so use the
+  // repo's literal-list convention. Geos and methods are fixed enums → safe.
   const geoLiteral = sql.raw(geos.map((g) => `'${g.replace(/'/g, "''")}'`).join(","));
+  const methodLiteral = sql.raw(methods.map((m) => `'${m.replace(/'/g, "''")}'`).join(","));
 
-  // One row per (window_start, geo, provider_id) — guaranteed by the agg PK once
-  // worker_provider/method/connection_mode/methodology_version are pinned.
+  // One row per (window_start, geo, method, provider_id).
   const aggRows = (await db().execute(sql`
     SELECT
       r.window_start,
       r.geo,
+      r.method,
       r.provider_id,
       r.latency_p50_correct AS p50_ms,
       r.latency_p95_correct AS p95_ms,
@@ -525,13 +709,15 @@ async function fetchScoreSeriesImpl(opts: ScoreQuery): Promise<ScoreSeries[]> {
     JOIN providers p ON p.id = r.provider_id AND p.benchmarked = true
     WHERE r.geo IN (${geoLiteral})
       AND r.worker_provider = ${wpKey}
-      AND r.method = ${opts.method}
-      AND r.connection_mode = ${opts.connectionMode}      AND r.window_start > now() - make_interval(hours => ${opts.windowHours})
+      AND r.method IN (${methodLiteral})
+      AND r.connection_mode = ${opts.connectionMode}
+      AND r.window_start > now() - make_interval(hours => ${opts.windowHours})
       AND r.latency_p50_correct IS NOT NULL
       AND r.latency_p95_correct IS NOT NULL
   `)) as unknown as Array<{
     window_start: Date | string;
     geo: GeoRegion;
+    method: Method;
     provider_id: string;
     p50_ms: number | null;
     p95_ms: number | null;
@@ -542,33 +728,35 @@ async function fetchScoreSeriesImpl(opts: ScoreQuery): Promise<ScoreSeries[]> {
     n_wins: number;
   }>;
 
-  // Win-rate denominator per (window_start, geo): challenges with any winner.
+  // Win-rate denominator per (window_start, geo, method): challenges with a winner.
   const chalRows = (await db().execute(sql`
-    SELECT window_start, geo, sum(n_challenges)::int AS n_challenges
+    SELECT window_start, geo, method, sum(n_challenges)::int AS n_challenges
     FROM ${chalTable}
     WHERE geo IN (${geoLiteral})
       AND worker_provider = ${wpKey}
-      AND method = ${opts.method}
-      AND connection_mode = ${opts.connectionMode}      AND window_start > now() - make_interval(hours => ${opts.windowHours})
-    GROUP BY window_start, geo
+      AND method IN (${methodLiteral})
+      AND connection_mode = ${opts.connectionMode}
+      AND window_start > now() - make_interval(hours => ${opts.windowHours})
+    GROUP BY window_start, geo, method
   `)) as unknown as Array<{
     window_start: Date | string;
     geo: GeoRegion;
+    method: Method;
     n_challenges: number;
   }>;
 
   const tms = (v: Date | string): number =>
     (v instanceof Date ? v : new Date(v)).getTime();
-  const chalByBucketGeo = new Map<string, number>();
+  const chalByKey = new Map<string, number>();
   for (const c of chalRows) {
-    chalByBucketGeo.set(`${tms(c.window_start)}|${c.geo}`, c.n_challenges ?? 0);
+    chalByKey.set(`${tms(c.window_start)}|${c.geo}|${c.method}`, c.n_challenges ?? 0);
   }
 
-  // bucketMs -> geo -> RowAgg[] (only the fields rowToMetrics reads are needed).
-  const byBucket = new Map<number, Map<GeoRegion, RowAgg[]>>();
+  // bucketMs -> method -> geo -> RowAgg[].
+  const byBucket = new Map<number, Map<string, Map<GeoRegion, RowAgg[]>>>();
   for (const r of aggRows) {
     const ms = tms(r.window_start);
-    const nChal = chalByBucketGeo.get(`${ms}|${r.geo}`) ?? 0;
+    const nChal = chalByKey.get(`${ms}|${r.geo}|${r.method}`) ?? 0;
     const row = {
       provider_id: r.provider_id,
       p50_ms: r.p50_ms,
@@ -580,32 +768,43 @@ async function fetchScoreSeriesImpl(opts: ScoreQuery): Promise<ScoreSeries[]> {
       n_wins: r.n_wins ?? 0,
       n_challenges_with_winner: nChal,
     } as RowAgg;
-    let geoMap = byBucket.get(ms);
+    let methodMap = byBucket.get(ms);
+    if (!methodMap) {
+      methodMap = new Map();
+      byBucket.set(ms, methodMap);
+    }
+    let geoMap = methodMap.get(r.method);
     if (!geoMap) {
       geoMap = new Map();
-      byBucket.set(ms, geoMap);
+      methodMap.set(r.method, geoMap);
     }
     const arr = geoMap.get(r.geo) ?? [];
     arr.push(row);
     geoMap.set(r.geo, arr);
   }
 
-  // Score each bucket, then collect per-provider points across buckets.
+  // Even per-method weights (renormalized by blendMethodScores); no coverage gate.
+  const methodWeights: MethodWeights = Object.fromEntries(methods.map((m) => [m, 1]));
+
+  // Score each bucket: per (method, geo) → region-blend → method-blend.
   const byProvider = new Map<string, ScorePoint[]>();
-  for (const [ms, geoMap] of byBucket) {
+  for (const [ms, methodMap] of byBucket) {
     const t = new Date(ms);
-    let totals: ScoredProvider[];
-    if (opts.selectedGeo) {
-      const rows = geoMap.get(opts.selectedGeo) ?? [];
-      totals = score(rows.map(rowToMetrics), DEFAULT_WEIGHTS);
-    } else {
-      const perRegion = new Map<GeoRegion, ScoredProvider[]>();
-      for (const [geo, rows] of geoMap) {
-        perRegion.set(geo, score(rows.map(rowToMetrics), DEFAULT_WEIGHTS));
+    const perMethod = new Map<string, ScoredProvider[]>();
+    for (const [method, geoMap] of methodMap) {
+      if (opts.selectedGeo) {
+        const rows = geoMap.get(opts.selectedGeo) ?? [];
+        perMethod.set(method, score(rows.map(rowToMetrics), DEFAULT_WEIGHTS));
+      } else {
+        const perRegion = new Map<GeoRegion, ScoredProvider[]>();
+        for (const [geo, rows] of geoMap) {
+          perRegion.set(geo, score(rows.map(rowToMetrics), DEFAULT_WEIGHTS));
+        }
+        perMethod.set(method, blendRegionScores(perRegion, DEFAULT_REGION_WEIGHTS, { subs: true }));
       }
-      totals = blendRegionScores(perRegion, DEFAULT_REGION_WEIGHTS);
     }
-    for (const sp of totals) {
+    const { ranked } = blendMethodScores(perMethod, methodWeights, 0);
+    for (const sp of ranked) {
       const arr = byProvider.get(sp.provider_id) ?? [];
       arr.push({ t, score: sp.total });
       byProvider.set(sp.provider_id, arr);

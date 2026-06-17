@@ -13,20 +13,27 @@ import {
   type Method,
   WORKER_PROVIDER_LABELS,
 } from "@rpcbench/shared";
-import { DEFAULT_WEIGHTS } from "@rpcbench/shared/scoring";
+import { DEFAULT_REGION_WEIGHTS, DEFAULT_WEIGHTS } from "@rpcbench/shared/scoring";
 import { ALL_METHODS } from "@/lib/methods";
+import { equalMethodWeights } from "@/lib/workloadPresets";
 import { WINDOWS } from "@/lib/windows";
 import { ogImagePath, parseShareParams, type ShareFilters } from "@/lib/share";
 import { Suspense } from "react";
 import { ChartPanel, ChartLoading } from "@/components/ChartSection";
 import { MethodRegionTabs } from "@/components/MethodRegionTabs";
 import { ScoreStrip } from "@/components/ScoreStrip";
-import { buildMiniScoreRows } from "@/components/leaderboardShared";
+import {
+  buildMiniScoreRows,
+  buildPresetLeaderRows,
+  type MethodGeoRows,
+  type MiniScoreRow,
+} from "@/components/leaderboardShared";
 import {
   fetchActiveGeos,
   fetchActiveInfraGeo,
   fetchActiveProviders,
   fetchAggregatesForGeo,
+  fetchAggregatesForGeoByMethod,
   fetchMethodLatency,
   fetchMethodGeoLatency,
   type InfraGeoPair,
@@ -91,8 +98,10 @@ export async function generateMetadata({
   const filters = parseShareParams(params as Record<string, string | undefined>);
   const windowLabel =
     WINDOWS.find((w) => w.value === filters.windowHours)?.label ?? `${filters.windowHours}h`;
-  const title = `Solana RPC Benchmark — ${filters.method} performance`;
-  const description = `Latency and rankings for ${filters.method} across regions and clouds (last ${windowLabel}).`;
+  const methodLabel =
+    filters.methods.length === 1 ? filters.methods[0] : `${filters.methods.length} methods`;
+  const title = `Solana RPC Benchmark — ${methodLabel} performance`;
+  const description = `Latency and rankings for ${methodLabel} across regions and clouds (last ${windowLabel}).`;
   const image = ogImagePath(filters);
   return {
     title,
@@ -122,11 +131,18 @@ export default async function PerformancePage({
   );
 
   const DEFAULT_METHOD: Method = "getTransaction";
-  const methodRaw = params.method ?? DEFAULT_METHOD;
-  const selectedMethod: Method = (ALL_METHODS as readonly string[]).includes(methodRaw)
-    ? (methodRaw as Method)
-    : DEFAULT_METHOD;
-  const chartMethods: readonly Method[] = [selectedMethod];
+  // `?method=` is a comma-separated list; the chart blends the score across all
+  // of them (even weight). The breakdown/region tables are per-method, so they
+  // key off the first selected method.
+  const methodSet = new Set<string>(ALL_METHODS);
+  const selectedMethods: Method[] = (params.method ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s): s is Method => methodSet.has(s));
+  if (selectedMethods.length === 0) selectedMethods.push(DEFAULT_METHOD);
+  const selectedMethod: Method = selectedMethods[0]!;
+  const selectedMethodSet = new Set<string>(selectedMethods);
+  const chartMethods: readonly Method[] = selectedMethods;
 
   type GeoRows = { geo: GeoRegion; rows: Awaited<ReturnType<typeof fetchAggregatesForGeo>> };
   let regionTableCold: GeoRows[] = [];
@@ -136,6 +152,8 @@ export default async function PerformancePage({
   let activeProviders: string[] = [];
   let methodLat: MethodLatencyRow[] = [];
   let methodGeoLat: MethodGeoLatencyRow[] = [];
+  // Blended ScoreStrip rows when >1 method is selected (null → single-method path).
+  let multiMethodMini: MiniScoreRow[] | null = null;
   let error: string | null = null;
 
   try {
@@ -171,6 +189,42 @@ export default async function PerformancePage({
     activeProviders = providers;
     methodLat = ml;
     methodGeoLat = mgl;
+
+    // ScoreStrip board: when multiple methods are selected, blend them the same
+    // way the homepage board does (eligibility + coverage gated via
+    // buildPresetLeaderRows) so the board reflects the whole selection, not just
+    // the first method. Single-method keeps the cheaper buildMiniScoreRows path.
+    if (selectedMethods.length > 1) {
+      const targets = selectedGeo ? [selectedGeo] : activeGeos;
+      const cube: MethodGeoRows[] = [];
+      await Promise.all(
+        targets.map(async (geo) => {
+          const byMethod = await fetchAggregatesForGeoByMethod({
+            geoRegion: geo,
+            methods: selectedMethods,
+            windowHours,
+            connectionMode,
+            ...(selectedProvider ? { workerProvider: selectedProvider } : {}),
+          });
+          for (const { method, rows } of byMethod) {
+            const eligible = rows.filter(
+              (r) => r.eligible === true && r.p50_ms != null && r.p95_ms != null,
+            );
+            cube.push({ method, geo, rows, eligible });
+          }
+        }),
+      );
+      const blended = buildPresetLeaderRows(cube, {
+        componentWeights: DEFAULT_WEIGHTS,
+        methodWeights: equalMethodWeights(selectedMethods),
+        regionWeights: selectedGeo ? { [selectedGeo]: 1 } : DEFAULT_REGION_WEIGHTS,
+      });
+      multiMethodMini = blended.map((r) => ({
+        provider_id: r.provider_id,
+        provider_name: r.provider_name,
+        total: r.total,
+      }));
+    }
   } catch (err) {
     console.error("[/performance]", err);
     error = DB_ERROR_MESSAGE;
@@ -311,9 +365,23 @@ export default async function PerformancePage({
       </FilterGroup>
       <FilterGroup label="Method">
         <MethodFilter
+          multi
+          selectedSet={selectedMethodSet}
           options={[...ALL_METHODS]
             .sort((a, b) => a.localeCompare(b))
-            .map((m) => ({ method: m, href: urlWith(params, { method: m }) }))}
+            .map((m) => {
+              // Checkbox: toggle m in/out of the selection; never empty (removing
+              // the last selected method is a no-op). Name: select only m.
+              const next = selectedMethodSet.has(m)
+                ? selectedMethods.filter((x) => x !== m)
+                : [...selectedMethods, m];
+              const list = next.length > 0 ? next : selectedMethods;
+              return {
+                method: m,
+                href: urlWith(params, { method: m }),
+                toggleHref: urlWith(params, { method: list.join(",") }),
+              };
+            })}
           selected={selectedMethod}
         />
       </FilterGroup>
@@ -324,26 +392,30 @@ export default async function PerformancePage({
   // pipeline over the already-fetched per-geo aggregates for the active
   // connection mode, so it tracks the current region/infra/window/method.
   const scoreTable = connectionMode === "warm" ? regionTableWarm : regionTableCold;
-  const miniScores = buildMiniScoreRows(scoreTable, selectedGeo);
+  // Multi-method → the method-blended board (built in the try); else single method.
+  const miniScores = multiMethodMini ?? buildMiniScoreRows(scoreTable, selectedGeo);
   const scoresRanked = miniScores.some((r) => r.total > 0);
 
   const chartKey = [
     selectedGeo ?? "all",
     windowHours,
     connectionMode,
-    selectedMethod,
+    [...selectedMethods].sort().join(","),
     selectedProvider ?? "all",
   ].join("|");
 
-  // Share-card filters track the active chart filters. Performance doesn't tune
-  // scoring weights, so it shares the documented defaults.
+  // Share-card filters mirror the on-screen ScoreStrip: the selected methods
+  // blended (even weight) over the active region(s)/mode/window/infra, at the
+  // default component weights (Performance doesn't tune those).
   const shareFilters: ShareFilters = {
-    method: selectedMethod,
-    region: selectedGeo ?? "overall",
+    presetId: "balanced",
+    methods: selectedMethods,
+    methodWeights: equalMethodWeights(selectedMethods),
+    regions: selectedGeo ? [selectedGeo] : activeGeos,
+    weights: DEFAULT_WEIGHTS,
     mode: connectionMode,
     windowHours,
     infra: selectedProvider ?? undefined,
-    weights: DEFAULT_WEIGHTS,
   };
 
   return (
@@ -363,7 +435,7 @@ export default async function PerformancePage({
           </p>
         </div>
         <div className="w-full lg:w-[360px] shrink-0 lg:pt-3">
-          <ScoreStrip rows={miniScores} ranked={scoresRanked} />
+          <ScoreStrip rows={miniScores} ranked={scoresRanked} methodCount={selectedMethods.length} />
           <div className="flex justify-end mt-3">
             <ShareButton filters={shareFilters} pagePath="/performance" />
           </div>

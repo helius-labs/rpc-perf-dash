@@ -35,7 +35,9 @@ export function ShareButton({
 
   const params = buildShareParams(filters).toString();
   const ogPath = `/og/leaderboard${params ? `?${params}` : ""}`;
-  const fileName = `rpc-benchmark-${filters.method}-${filters.windowHours}h.png`;
+  // A single method names itself; a blend uses the preset label.
+  const shareLabel = filters.methods.length === 1 ? filters.methods[0]! : filters.presetId;
+  const fileName = `rpc-benchmark-${shareLabel}-${filters.windowHours}h.png`;
 
   // Enter animation: mount, then flip `show` on the next frame so the transition
   // has a start state. Exit: clear `show`, unmount after the transition.
@@ -73,7 +75,7 @@ export function ShareButton({
   }
 
   function onTweet() {
-    const text = `Live Solana RPC benchmark — ${filters.method} ranked. Continuous, regional, non-gameable:`;
+    const text = `Live Solana RPC benchmark — ${shareLabel} ranked. Continuous, regional, non-gameable:`;
     const intent = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(shareUrl())}`;
     window.open(intent, "_blank", "noopener,noreferrer");
     close();

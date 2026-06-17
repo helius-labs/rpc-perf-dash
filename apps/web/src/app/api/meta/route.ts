@@ -17,6 +17,7 @@ import {
 import {
   DEFAULT_REGION_WEIGHTS,
   DEFAULT_WEIGHTS,
+  MIN_METHOD_COVERAGE,
 } from "@rpcbench/shared/scoring";
 import {
   fetchActiveGeos,
@@ -24,6 +25,7 @@ import {
   fetchActiveProviders,
 } from "@/lib/leaderboard";
 import { ALL_METHODS } from "@/lib/methods";
+import { SCORE_PRESETS, methodWeightsFor } from "@/lib/workloadPresets";
 import { WINDOWS } from "@/lib/windows";
 
 export async function GET() {
@@ -37,6 +39,17 @@ export async function GET() {
     methodology_version: METHODOLOGY_VERSION,
     weights: DEFAULT_WEIGHTS,
     region_weights: DEFAULT_REGION_WEIGHTS,
+    min_method_coverage: MIN_METHOD_COVERAGE,
+    // Workload presets the Overall board / API rank by (method-blend). `?preset=`
+    // on /api/leaderboard selects one (default the first).
+    presets: SCORE_PRESETS.map((p) => ({
+      id: p.id,
+      label: p.label,
+      methods: p.methods,
+      method_weights: methodWeightsFor(p),
+      region_weights: p.regionWeights,
+      component_weights: p.weights,
+    })),
     methods: ALL_METHODS,
     geo_regions: GEO_REGIONS,
     connection_modes: ["cold", "warm"] as const,

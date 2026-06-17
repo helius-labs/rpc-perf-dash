@@ -15,13 +15,13 @@ import {
 import { DEFAULT_WEIGHTS } from "@rpcbench/shared/scoring";
 import { db, DB_ERROR_MESSAGE } from "@/lib/db";
 import { fetchLatencySeries } from "@/lib/chartData";
-import { fetchRankedOverall } from "@/lib/leaderboard";
+import { fetchRankedPreset } from "@/lib/leaderboard";
 import {
   FailureBreakdownList,
   ScoreFormula,
   SubScoreBreakdown,
-  type OverallLeaderRow,
   type PerGeoScore,
+  type PresetLeaderRow,
 } from "@/components/leaderboardShared";
 import { LatencyChart } from "@/components/LatencyChart";
 import { Tooltip } from "@/components/Tooltip";
@@ -147,7 +147,7 @@ export default async function ProviderPage({ params }: { params: Promise<{ id: s
   let breakdown: MethodRow[] = [];
   let failures: FailureBreakdownRow[] = [];
   let chartSeries: Awaited<ReturnType<typeof fetchLatencySeries>> = [];
-  let ranked: OverallLeaderRow[] = [];
+  let ranked: PresetLeaderRow[] = [];
   let error: string | null = null;
   try {
     [breakdown, failures, chartSeries, ranked] = await Promise.all([
@@ -165,7 +165,7 @@ export default async function ProviderPage({ params }: { params: Promise<{ id: s
         windowHours: 24,
         provider_id: id,
       }),
-      fetchRankedOverall(),
+      fetchRankedPreset(),
     ]);
   } catch (err) {
     console.error("[/provider]", err);
@@ -176,7 +176,9 @@ export default async function ProviderPage({ params }: { params: Promise<{ id: s
   // the home leaderboard renders, so the numbers agree across pages.
   const rankIdx = ranked.findIndex((r) => r.provider_id === id);
   const row = rankIdx >= 0 ? ranked[rankIdx]! : null;
-  const isRanked = ranked.some((r) => r.total > 0);
+  const isRanked = ranked.some((r) => r.coverage_ok && r.total > 0);
+  // This provider cleared the method-coverage gate and scored.
+  const thisRanked = !!row && row.coverage_ok && row.total > 0;
   const rank = rankIdx >= 0 ? rankIdx + 1 : ranked.length + 1;
   const isLeader = rank === 1;
   const leader = ranked[0] ?? null;
@@ -233,20 +235,15 @@ export default async function ProviderPage({ params }: { params: Promise<{ id: s
       <div className="idx-row-prov">
         <span className="idx-rank">{String(rank).padStart(2, "0")}</span>
         <span className="idx-name">{provider.name}</span>
-        <span className="idx-score">{row && isRanked ? row.total.toFixed(1) : "—"}</span>
+        <span className="idx-score">{thisRanked ? row!.total.toFixed(1) : "—"}</span>
       </div>
       <div className="prov-stat-strip">
+        {/* The Balanced score blends ~45 methods, so a single latency percentile
+            isn't meaningful here — show the normalized latency sub-score instead.
+            Raw per-method p50 lives in the breakdown table below. */}
         <div className="idx-stat">
-          <span className="idx-stat-l">p50 latency</span>
-          <span className="idx-stat-v">{fmtMs(row?.p50_blend)}</span>
-        </div>
-        <div className="idx-stat">
-          <span className="idx-stat-l">p95 latency</span>
-          <span className="idx-stat-v">{fmtMs(row?.p95_blend)}</span>
-        </div>
-        <div className="idx-stat">
-          <span className="idx-stat-l">p99 latency</span>
-          <span className="idx-stat-v">{fmtMs(row?.p99_blend)}</span>
+          <span className="idx-stat-l">latency score</span>
+          <span className="idx-stat-v">{thisRanked ? Math.round(row!.latency_sub) : "—"}</span>
         </div>
         <div className="idx-stat">
           <span className="idx-stat-l">win rate</span>
@@ -452,6 +449,3 @@ function totalOf(failures: FailureBreakdownRow[]): number {
   return failures.reduce((s, f) => s + f.n, 0);
 }
 
-function fmtMs(v: number | null | undefined): React.ReactNode {
-  return v == null ? "—" : <>{Math.round(v)}<i>ms</i></>;
-}

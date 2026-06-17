@@ -41,6 +41,9 @@ export interface CardRow {
 export interface CardProps {
   rows: CardRow[];
   method: string;
+  /** The blended methods for a preset card — names if few, else "N methods".
+   *  Omitted for single-method/region cards (the header already names it). */
+  methodsLabel?: string;
   /** Region the measurement covers, e.g. "Overall (all regions)" or "NA East". */
   regionLabel: string;
   /** e.g. "cold start · last 24h" */
@@ -146,7 +149,9 @@ function Row({ row, rank }: { row: CardRow; rank: number }) {
             {row.provider_name}
           </span>
           <span style={{ display: "flex", fontFamily: MONO, fontSize: first ? 16 : 14, color: MUTED, marginTop: 6 }}>
-            {`${fmtP50(row.p50_ms)} p50 · ${fmtPct(row.win_rate)} win`}
+            {row.p50_ms == null
+              ? `${fmtPct(row.win_rate)} win`
+              : `${fmtP50(row.p50_ms)} p50 · ${fmtPct(row.win_rate)} win`}
           </span>
         </div>
       </div>
@@ -167,7 +172,7 @@ function Row({ row, rank }: { row: CardRow; rank: number }) {
 }
 
 export function LeaderboardCard(props: CardProps) {
-  const { rows, method, regionLabel, contextLabel, timestamp, siteUrl } = props;
+  const { rows, method, methodsLabel, regionLabel, contextLabel, timestamp, siteUrl } = props;
   const ranked = rows.slice(0, 4);
 
   return (
@@ -203,6 +208,11 @@ export function LeaderboardCard(props: CardProps) {
         <div style={{ display: "flex", alignItems: "baseline" }}>
           <span style={{ fontFamily: MONO, fontSize: 46, fontWeight: 500, color: TEXT }}>{method}</span>
         </div>
+        {methodsLabel ? (
+          <div style={{ display: "flex", marginTop: 8, fontFamily: MONO, fontSize: 16, color: FAINT }}>
+            {methodsLabel}
+          </div>
+        ) : null}
         <div style={{ display: "flex", alignItems: "center", marginTop: 12, fontFamily: SANS, fontSize: 21, color: MUTED }}>
           <span style={{ color: TEXT, fontWeight: 500 }}>{regionLabel}</span>
           <span style={{ color: FAINT, padding: "0 10px" }}>·</span>

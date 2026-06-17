@@ -8,8 +8,9 @@ right below; open any section for the details.
 
 - **What it measures.** For each provider, in each region, on each RPC method:
   how fast it responds (p50/p95), how often it's the fastest *correct* answer
-  (win rate), how reliable it is, and whether its data is right, combined into
-  one score.
+  (win rate), how reliable it is, and whether its data is right. The Overview
+  headline score then **blends those across a set of methods and regions** — a
+  *workload preset* (Balanced / Trading / Apps) — into one number.
 - **Why you can trust it.** Every test query is drawn from live on-chain data and
   locked in (hashed) *before* any provider answers, then revealed afterward, so
   nobody can precompute answers or cherry-pick results. Tests expire after 30
@@ -17,9 +18,11 @@ right below; open any section for the details.
 - **Where it runs.** We send the same requests from several cloud regions at once.
   The leaderboard blends regions, leaning on NA-East and EU-Central (our two
   best-covered). You can filter by region on the Performance page.
-- **How it's scored.** `0.25·Latency + 0.25·Win-rate + 0.25·Reliability +
-  0.20·Correctness + 0.05·Freshness`. Re-weight it for your workload with the
-  presets on the Overview.
+- **How it's scored.** Per (method, region): `0.25·Latency + 0.25·Win-rate +
+  0.25·Reliability + 0.20·Correctness + 0.05·Freshness`. The Overview blends
+  that across the preset's regions and methods into one score; pick a preset
+  (Balanced / Trading / Apps) and tune the component **and** per-method weights
+  on the Overview.
 - **Check it yourself.** Open `/raw?challenge=<id>` for any test to see the
   pinned inputs, the revealed seed, every provider's response, and the verdict.
 
@@ -144,6 +147,10 @@ Reliability, not Correctness, so a flaky provider isn't punished twice for the
 same call. The default weights split evenly across speed and quality; you can
 re-weight them with the presets (or the sliders) on the Overview.
 
+That five-part formula produces a score **per (method, region)**. The Overview
+headline then blends those up two more levels: across regions, then across the
+methods in the active preset.
+
 ### Region weights
 
 The "Overall" view blends regions with these default weights:
@@ -158,14 +165,53 @@ The "Overall" view blends regions with these default weights:
 | AP Southeast | 0.05 |
 
 For each provider the weights are re-normalized over only the regions where it
-qualifies, so a provider that isn't in a region isn't penalized for it.
+qualifies, so a provider that isn't in a region isn't penalized for it. A preset
+may also use a **subset** of regions (e.g. Trading scores only NA-East,
+EU-Central, and AP-Northeast); the same re-normalization applies over that
+subset.
+
+### Workload presets
+
+The Overview ranks by a *workload preset* — a set of methods + per-method weights
++ a region subset + the five component weights above. A provider's per-(method,
+region) scores are region-blended per method, then **method-blended** (a
+weighted average over the preset's methods, re-normalized over the methods the
+provider qualifies in — same idea as the region blend).
+
+| Preset | Focus | Methods | Regions |
+|---|---|---|---|
+| **Balanced** | Even, everything | all scored methods, equal weight | all 6 |
+| **Trading** | Latency / win-rate | getLatestBlockhash, getSlot, getAccountInfo, getProgramAccounts | NA-East, EU-Central, AP-Northeast |
+| **Apps** | Reliability / correctness | getTransaction, getSignaturesForAddress, getProgramAccounts, getTokenAccountsByOwner, getAccountInfo, getMultipleAccounts | all 6 |
+
+The latency *percentiles* (p50/p95) are deliberately **not** blended across
+methods on the headline board — an average p50 across, say, getSlot and
+getProgramAccounts isn't a real latency for anything. Raw per-method latency
+lives in each provider's per-method drill-down and on the Performance page. The
+sum/ratio metrics (win rate, calls, success, failure breakdown) *do* blend
+meaningfully and are shown.
+
+`sendTransaction` is intentionally absent from every preset: it's a broadcast
+with no replayable correct answer to validate against, so it isn't scored.
+
+### Minimum method coverage
+
+Because a preset blends several methods, a provider that qualifies on only one or
+two of them could otherwise top the board on a sliver of the workload. So a
+provider is ranked only if it qualifies in methods worth **≥60% of the preset's
+total method weight**; below that it's shown as "insufficient method coverage"
+rather than ranked. The 60% bar is comfortably clear of every current provider
+(each qualifies on ~93%+ of the method universe) — it's a guard for sparse
+windows and future entrants.
 
 ### Who qualifies
 
 To appear ranked, a provider needs enough data to be meaningful: currently a 4h
 window, at least 50 samples per (provider × method × region), ≥80% reliability,
 ≥80% correctness, and a ≥95% honeypot pass rate (Wilson lower bound). Below
-that, it shows with a "below thresholds" note.
+that, it shows with a "below thresholds" note. Under a preset, that gate is
+applied per (method, region) before the blend, and the coverage gate above is
+applied to the blended result.
 
 ## Projection & equivalence
 

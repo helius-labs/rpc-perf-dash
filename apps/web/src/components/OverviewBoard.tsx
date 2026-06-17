@@ -3,67 +3,61 @@
 /* eslint-disable @next/next/no-img-element */
 
 /**
- * OverviewBoard — the Overview page body, ported from the rpc.bench design:
- * an intro row (blurb + stats on the left, a brand/decorative hero visual of
- * the current winner on the right), a row of workload-preset chips, and the
- * ranked leaderboard. Owns the scoring weights so the hero, the chips, and the
- * leaderboard all stay in sync (changing a preset re-ranks instantly and swaps
- * the hero to the new winner).
+ * OverviewBoard — the Overview page body: an intro row (blurb + stats, with a
+ * brand hero visual of the current winner), a row of workload-preset chips over
+ * the component-weight sliders, the blended-methods panel + scope line, and the
+ * ranked leaderboard.
  *
- * The hero visual has four experimental variants, selected via the `?hero=`
- * URL param (watermark | spotlight | constellation | aurora) so they can be
- * reviewed side by side before settling on one.
+ * The headline score is a WORKLOAD-PRESET blend: a provider's score is blended
+ * across the preset's methods AND regions. Switching preset is a navigation
+ * (?preset=) so the server refetches the right method/region cube; within a
+ * preset the user tunes the component weights (sliders) and per-method weights
+ * (MethodWeightPanel) client-side, re-ranking instantly. The board rows are
+ * built ONCE here (buildPresetLeaderRows) and shared with the hero so #1 here
+ * === #1 in the list below.
  */
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
+import type { Route } from "next";
 import { useSearchParams } from "next/navigation";
 import {
   DEFAULT_REGION_WEIGHTS,
-  DEFAULT_WEIGHTS,
-  blendRegionScores,
+  type MethodWeights,
+  type RegionWeights,
   type ScoringWeights,
 } from "@rpcbench/shared/scoring";
-import { GEO_REGIONS, type Method } from "@rpcbench/shared/types";
+import { GEO_REGIONS, type GeoRegion, type Method } from "@rpcbench/shared/types";
 import { brandColorFor, logoFor, animatedLogoFor } from "@/lib/providerColors";
-import { WORKLOAD_PRESETS, presetIdForWeights } from "@/lib/workloadPresets";
+import {
+  SCORE_PRESETS,
+  methodWeightsFor,
+  presetById,
+  type PresetId,
+} from "@/lib/workloadPresets";
 import { WINDOW_VALUES } from "@/lib/windows";
 import { type ShareFilters } from "@/lib/share";
 import { ShareButton } from "./ShareButton";
-import { buildOverallLeaderRows, scorePerGeo } from "./leaderboardShared";
-import { IndexLeaderboard, type RawGeoOutcome, type MethodRegionLatency } from "./IndexLeaderboard";
-import { MethodFilter, type MethodOption } from "./MethodFilter";
+import { buildPresetLeaderRows, type MethodGeoRows } from "./leaderboardShared";
+import { IndexLeaderboard, type MethodRegionLatency } from "./IndexLeaderboard";
+import { MethodWeightPanel } from "./MethodWeightPanel";
+import { ComponentWeightPanel } from "./ComponentWeightPanel";
+import { RegionSelector } from "./RegionSelector";
 import { LiveSampleCounter } from "./LiveSampleCounter";
-import { FloatingTooltip } from "./FloatingTooltip";
 import type { SampleCount } from "@/lib/sampleCount";
 
-/** The five score axes, in display order — drives the weight sliders. */
-const AXIS_ORDER: ReadonlyArray<keyof ScoringWeights> = [
-  "latency",
-  "winRate",
-  "reliability",
-  "correctness",
-  "freshness",
-];
-/** Distinct cloud infrastructures the benchmark vantages run on (AWS, GCP,
- *  Cloudflare, Teraswitch/Latitude bare-metal). Surfaced as an intro stat. */
+/** Distinct cloud infrastructures the benchmark vantages run on. */
 const CLOUD_INFRA_COUNT = 4;
 
-const AXIS_LABEL: Record<keyof ScoringWeights, string> = {
-  latency: "Latency",
-  winRate: "Win rate",
-  reliability: "Reliability",
-  correctness: "Correctness",
-  freshness: "Freshness",
-};
-/** One-line hover descriptions for each weight axis. */
-const AXIS_DESC: Record<keyof ScoringWeights, string> = {
-  latency: "How fast responses come back. Lower round-trip time scores higher.",
-  winRate: "How often this provider returns first when racing the others on the same request.",
-  reliability: "Share of requests that succeed without an error or timeout.",
-  correctness: "Share of responses that match the verified consensus answer.",
-  freshness: "How current the returned data is. Less lag behind the chain tip scores higher.",
-};
+/** High-signal core methods shown in the expanded-row latency grid when a preset
+ *  blends too many to list (e.g. Balanced = all 45). The SCORE still blends the
+ *  full set; this only caps the per-method latency table. */
+const CORE_GRID_METHODS: readonly Method[] = [
+  "getTransaction",
+  "getAccountInfo",
+  "getTokenAccountsByOwner",
+];
+const GRID_METHOD_CAP = 8;
 
 interface RankedProvider {
   id: string;
@@ -73,12 +67,8 @@ interface RankedProvider {
   animated: string | null;
 }
 
-/** Large animated winner logo that bleeds out from the top-right corner and
- *  fades to black behind the content via a radial mask — transparent canvas,
- *  dark color-scheme, non-interactive so it never blocks clicks. */
+/** Large animated winner logo bleeding from the top-right, fading to black. */
 function HeroLogo({ provider }: { provider: RankedProvider }) {
-  // Smaller fully-visible core + earlier fade so more of the mark dissolves into
-  // black behind the content.
   const mask = "radial-gradient(circle at 64% 40%, #000 12%, rgba(0,0,0,0.32) 36%, transparent 60%)";
   return (
     <div
@@ -104,62 +94,108 @@ function HeroLogo({ provider }: { provider: RankedProvider }) {
 }
 
 export function OverviewBoard({
-  rawPerGeo,
+  cube,
+  cubeGeos,
+  presetId,
   methodRegionLatency,
   sampleCount,
   methodCount,
-  selectedMethod,
-  methodOptions,
-  gridMethods,
 }: {
-  rawPerGeo: RawGeoOutcome[];
+  /** Per-(method, geo) preset cube — the client re-blends it on weight changes. */
+  cube: MethodGeoRows[];
+  /** All geos present in the cube (active geos) — the region selector's options. */
+  cubeGeos: GeoRegion[];
+  presetId: PresetId;
   methodRegionLatency: MethodRegionLatency;
   sampleCount: SampleCount;
   methodCount: number;
-  selectedMethod: string;
-  methodOptions: MethodOption[];
-  gridMethods: Method[];
 }) {
-  const [weights, setWeights] = useState<ScoringWeights>(DEFAULT_WEIGHTS);
-  const activePresetId = presetIdForWeights(weights);
+  const preset = presetById(presetId);
+  // State seeds from the preset; the parent remounts (key={presetId}) on preset
+  // switch, so navigating presets resets these to the new preset's defaults.
+  const [componentWeights, setComponentWeights] = useState<ScoringWeights>(preset.weights);
+  const [methodWeights, setMethodWeights] = useState<MethodWeights>(() => methodWeightsFor(preset));
+  // Which regions count toward the score (+ their relative weights). Seeded from
+  // the preset's region subset; the user can toggle any active region in/out.
+  const [regionWeights, setRegionWeights] = useState<Partial<RegionWeights>>(
+    () => ({ ...preset.regionWeights }),
+  );
 
-  // Full ranking under the active weighting — same overall blend the leaderboard
-  // ranks by, so #1 here === #1 in the list below. Drives the hero logo.
-  const ranked = useMemo<RankedProvider[]>(() => {
-    if (rawPerGeo.length === 0) return [];
-    const perGeo = rawPerGeo.map((o) => ({ ...o, scored: scorePerGeo(o, weights) }));
-    const map = new Map(perGeo.map((o) => [o.geo, o.scored]));
-    const blended = blendRegionScores(map, DEFAULT_REGION_WEIGHTS);
-    return buildOverallLeaderRows(blended, perGeo).map((r) => ({
-      id: r.provider_id,
-      name: r.provider_name,
-      color: brandColorFor(r.provider_id) ?? "var(--accent)",
-      logo: logoFor(r.provider_id),
-      animated: animatedLogoFor(r.provider_id),
-    }));
-  }, [rawPerGeo, weights]);
+  // Region chips, in canonical order, restricted to geos with data.
+  const regionOptions = GEO_REGIONS.filter((g) => cubeGeos.includes(g));
+  const selectedRegionSet = new Set<string>(GEO_REGIONS.filter((g) => regionWeights[g] != null));
 
-  const winner = ranked[0] ?? null;
+  // Expanded-row latency grid: the preset's methods when there are few, else the
+  // core trio (so Balanced's 45-method blend doesn't render a 45-row table).
+  const gridMethods =
+    preset.methods.length > GRID_METHOD_CAP ? CORE_GRID_METHODS : preset.methods;
+  const toggleRegion = (geo: GeoRegion) =>
+    setRegionWeights((rw) => {
+      const next = { ...rw };
+      const selectedCount = GEO_REGIONS.filter((g) => next[g] != null).length;
+      if (next[geo] != null) {
+        if (selectedCount <= 1) return next; // keep at least one region
+        delete next[geo];
+      } else {
+        next[geo] = DEFAULT_REGION_WEIGHTS[geo] ?? 0.1;
+      }
+      return next;
+    });
 
-  // Share-card filters mirror the Overview's fixed scope (Overall blend, cold
-  // start) plus the live ranked method + tuned weights, so the generated card
-  // matches the on-screen board. Window is read from the URL (?window=), the
-  // only scope param the Overview varies; defaults to 24h.
+  // Reset the WHOLE preset: component weights, per-method weights, and the
+  // region selection all return to the active preset's defaults.
+  const resetAll = () => {
+    setComponentWeights(preset.weights);
+    setMethodWeights(methodWeightsFor(preset));
+    setRegionWeights({ ...preset.regionWeights });
+  };
+
+  // The single preset blend — shared by the hero and the board.
+  const presetRows = useMemo(
+    () =>
+      buildPresetLeaderRows(cube, {
+        componentWeights,
+        methodWeights,
+        regionWeights,
+      }),
+    [cube, componentWeights, methodWeights, regionWeights],
+  );
+
+  const winner = useMemo<RankedProvider | null>(() => {
+    const top = presetRows.find((r) => r.coverage_ok && r.total > 0) ?? presetRows[0];
+    if (!top) return null;
+    return {
+      id: top.provider_id,
+      name: top.provider_name,
+      color: brandColorFor(top.provider_id) ?? "var(--accent)",
+      logo: logoFor(top.provider_id),
+      animated: animatedLogoFor(top.provider_id),
+    };
+  }, [presetRows]);
+
   const searchParams = useSearchParams();
   const windowParam = Number(searchParams.get("window"));
   const windowHours = WINDOW_VALUES.has(windowParam) ? windowParam : 24;
+  const presetHref = (id: PresetId): Route => {
+    const qs = new URLSearchParams();
+    if (id !== "balanced") qs.set("preset", id);
+    if (windowHours !== 24) qs.set("window", String(windowHours));
+    const s = qs.toString();
+    return (s ? `/?${s}` : "/") as Route;
+  };
+
   const shareFilters: ShareFilters = {
-    method: selectedMethod as Method,
-    region: "overall",
+    presetId,
+    methods: preset.methods,
+    methodWeights,
+    regions: GEO_REGIONS.filter((g) => regionWeights[g] != null),
+    weights: componentWeights,
     mode: "cold",
     windowHours,
-    weights,
   };
 
   return (
     <section className="relative pt-1 pb-2">
-      {/* Big animated winner logo bleeding from the top-right, fading to black
-          behind the content. */}
       {winner && <HeroLogo provider={winner} />}
 
       <div className="relative z-10 flex flex-col gap-4">
@@ -197,110 +233,72 @@ export function OverviewBoard({
               className="group self-center inline-flex items-center gap-1.5 rounded-full border border-accent/40 px-3.5 py-[7px] text-[12px] font-medium text-accent transition-colors hover:bg-accent/10 hover:border-accent hover:no-underline"
             >
               How it works
-              <svg
-                viewBox="0 0 24 24"
-                width="13"
-                height="13"
-                aria-hidden="true"
-                className="transition-transform group-hover:translate-x-0.5"
-              >
+              <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" className="transition-transform group-hover:translate-x-0.5">
                 <path d="M5 12h14M13 5l7 7-7 7" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
             </Link>
           </div>
         </div>
 
-        {/* Control bar — preset chips (one line) over a compact, always-visible
-            row of per-axis weight sliders. */}
+        {/* Control bar — preset chips (navigation) over the component-weight sliders. */}
         <div className="flex flex-col gap-2 py-3 border-y border-line">
           <div className="flex items-center gap-2 sm:gap-3">
             <span className="font-geistmono text-[10.5px] tracking-[0.14em] uppercase text-muted shrink-0 hidden sm:inline">
-              Optimize for
+              Workload
             </span>
             <div className="flex flex-1 min-w-0 gap-1.5">
-              {WORKLOAD_PRESETS.map((preset) => {
-                const active = activePresetId === preset.id;
+              {SCORE_PRESETS.map((pr) => {
+                const active = presetId === pr.id;
                 return (
-                  <button
-                    key={preset.id}
-                    type="button"
-                    title={preset.caption}
+                  <Link
+                    key={pr.id}
+                    href={presetHref(pr.id)}
+                    scroll={false}
+                    title={pr.caption}
                     aria-pressed={active}
-                    onClick={() => setWeights(preset.weights)}
                     className={
-                      "flex-1 min-w-0 truncate text-center text-[11px] sm:text-[12px] font-medium px-2 sm:px-3.5 py-[7px] rounded-full border cursor-pointer transition-colors " +
+                      "flex-1 min-w-0 truncate text-center text-[11px] sm:text-[12px] font-medium px-2 sm:px-3.5 py-[7px] rounded-full border transition-colors hover:no-underline " +
                       (active
                         ? "bg-accent border-accent text-white"
                         : "border-line2 text-fg2 hover:text-fg hover:border-fg2")
                     }
                   >
-                    {preset.short}
-                  </button>
+                    {pr.short}
+                  </Link>
                 );
               })}
             </div>
           </div>
 
-          {/* Weights — always visible. A full-width strip of one mini slider
-              per axis (label + value over the track) so it fills the row
-              instead of leaving dead space, and stays short instead of pushing
-              the leaderboard down. Accent fill (see .weight-slider in
-              globals.css). */}
-          <div className="flex items-end gap-x-4 sm:gap-x-5 gap-y-3 flex-wrap">
-            {AXIS_ORDER.map((k) => {
-              const v = weights[k] ?? 0;
-              const pct = Math.round(v * 100);
-              return (
-                <div key={k} className="flex flex-col gap-1.5 flex-1 min-w-[104px]">
-                  <div className="flex items-center justify-between gap-1 min-w-0">
-                    <FloatingTooltip
-                      title={AXIS_LABEL[k]}
-                      trigger={
-                        <span className="truncate font-geistmono text-[10px] uppercase tracking-[0.12em] text-muted cursor-help underline decoration-dotted decoration-muted underline-offset-[3px]">
-                          {AXIS_LABEL[k]}
-                        </span>
-                      }
-                    >
-                      <p className="text-neutral-300">{AXIS_DESC[k]}</p>
-                    </FloatingTooltip>
-                    <span className="font-geistmono tabular-nums text-[10px] text-muted shrink-0">
-                      {v.toFixed(2)}
-                    </span>
-                  </div>
-                  <input
-                    type="range"
-                    min={0}
-                    max={1}
-                    step={0.05}
-                    value={v}
-                    onChange={(e) => setWeights((w) => ({ ...w, [k]: Number(e.target.value) }))}
-                    className="weight-slider w-full cursor-pointer"
-                    style={{
-                      background: `linear-gradient(to right, var(--accent) ${pct}%, rgb(255 255 255 / 0.1) ${pct}%)`,
-                    }}
-                    aria-label={`${AXIS_LABEL[k]} weight`}
-                  />
-                </div>
-              );
-            })}
-            <button
-              type="button"
-              onClick={() => setWeights(DEFAULT_WEIGHTS)}
-              className="shrink-0 font-geistmono text-[10px] text-muted bg-bg border border-line2 rounded-full px-3.5 py-[6px] cursor-pointer transition-colors hover:text-fg hover:border-fg2"
-            >
-              Reset
-            </button>
-          </div>
+          {/* Metric weights — inline sliders on desktop, dropdown on mobile.
+              Reset restores the whole preset (component + method weights +
+              region selection). */}
+          <ComponentWeightPanel
+            weights={componentWeights}
+            onChange={(k, value) => setComponentWeights((w) => ({ ...w, [k]: value }))}
+            onReset={resetAll}
+          />
         </div>
 
-      {/* Scope of the ranking — stated in plain sight, not a tooltip. The
-          method is switchable via the inline dropdown (?method=); the rest of
-          the scope is fixed. Full matrix on /performance. The share control sits
-          at the right end of this same row. */}
+      {/* Scope of the ranking — blended method set + regions (both tunable) +
+          cold start + window, on one row. Regions are inline pills on desktop
+          and a dropdown on mobile (see RegionSelector). Full matrix on
+          /performance. Share sits at the right. */}
       <div className="mt-1.5 -mb-2 flex items-center gap-2 flex-wrap">
-        <div className="flex items-center flex-wrap font-geistmono text-[9.5px] sm:text-[10px] tracking-[0.12em] uppercase text-muted leading-snug">
-          <MethodFilter variant="inline" options={methodOptions} selected={selectedMethod} />
-          <span>{" · cold start · last 24h · all regions"}</span>
+        <div className="flex items-center flex-wrap gap-x-1.5 font-geistmono text-[9.5px] sm:text-[10px] tracking-[0.12em] uppercase text-muted leading-snug">
+          <MethodWeightPanel
+            methods={preset.methods}
+            weights={methodWeights}
+            onChange={(m, value) => setMethodWeights((w) => ({ ...w, [m]: value }))}
+            onReset={() => setMethodWeights(methodWeightsFor(preset))}
+          />
+          <span aria-hidden>·</span>
+          <RegionSelector
+            options={regionOptions}
+            selected={selectedRegionSet}
+            onToggle={toggleRegion}
+          />
+          <span>{" · cold start · last 24h"}</span>
         </div>
         <div className="ml-auto">
           <ShareButton filters={shareFilters} pagePath="/" />
@@ -308,11 +306,12 @@ export function OverviewBoard({
       </div>
 
       <IndexLeaderboard
-        rawPerGeo={rawPerGeo}
-        selectedGeo={null}
-        weights={weights}
+        rows={presetRows}
+        componentWeights={componentWeights}
+        regionWeights={regionWeights}
         methodRegionLatency={methodRegionLatency}
         gridMethods={gridMethods}
+        scoreMethodCount={preset.methods.length}
       />
       </div>
     </section>

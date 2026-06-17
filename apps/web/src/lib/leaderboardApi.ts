@@ -1,12 +1,15 @@
 /**
  * Read-API data layer for /api/leaderboard. A thin wrapper over the same cached
- * fetchers + scoring the dashboard SSR uses (fetchAggregatesForGeo + scorePerGeo
- * + buildSingleLeaderRows for a single region; fetchRankedOverall for the
- * cross-region blend), so the API ranks providers identically to the UI.
+ * fetchers + scoring the dashboard SSR uses, so the API ranks providers
+ * identically to the UI:
+ *   - region="overall" (default) ranks by the workload-preset method-blend
+ *     (fetchRankedPreset, default Balanced) — Option A, so "overall" is the same
+ *     number the homepage shows;
+ *   - region="overall" WITH an explicit method= falls back to the legacy
+ *     single-method cross-region blend (fetchRankedOverall);
+ *   - a concrete region uses the single-region board.
  *
- * The only thing added here is the `rank` field — it exists on neither
- * SingleLeaderRow nor OverallLeaderRow, so it's injected at this layer rather
- * than in the shared mappers.
+ * The only thing added here is the `rank` field, injected at this layer.
  */
 
 import { unstable_cache } from "next/cache";
@@ -24,19 +27,26 @@ import {
   CACHE_TTL_S,
   fetchAggregatesForGeo,
   fetchRankedOverall,
+  fetchRankedPreset,
 } from "@/lib/leaderboard";
 import {
   buildSingleLeaderRows,
   scorePerGeo,
   type OverallLeaderRow,
+  type PresetLeaderRow,
   type SingleLeaderRow,
 } from "@/components/leaderboardShared";
+import { type PresetId } from "@/lib/workloadPresets";
 
 export interface LeaderboardParams {
   region: GeoRegion | "overall";
   /** Only meaningful when `region` is concrete; pooled (`__all__`) otherwise. */
   infra?: string | undefined;
   method: Method;
+  /** Was `method=` explicitly supplied? Forces the legacy single-method overall. */
+  methodExplicit: boolean;
+  /** Workload preset for the default overall blend. */
+  preset: PresetId;
   connectionMode: ConnectionMode;
   windowHours: number;
   eligibleOnly: boolean;
@@ -44,11 +54,13 @@ export interface LeaderboardParams {
 
 export type RankedRegionRow = SingleLeaderRow & { rank: number | null };
 export type RankedOverallRow = OverallLeaderRow & { rank: number | null };
+export type RankedPresetRow = PresetLeaderRow & { rank: number | null };
 
 export interface LeaderboardResponse {
   meta: {
-    mode: "overall" | "region";
+    mode: "preset" | "overall" | "region";
     region: GeoRegion | "overall";
+    preset: PresetId | null;
     infra: string | null;
     method: Method;
     connection_mode: ConnectionMode;
@@ -58,7 +70,7 @@ export interface LeaderboardResponse {
     eligible_count: number;
     generated_at: string;
   };
-  rows: RankedRegionRow[] | RankedOverallRow[];
+  rows: RankedRegionRow[] | RankedOverallRow[] | RankedPresetRow[];
 }
 
 /** A provider has an overall (blended) ranking iff it's eligible in ≥1 region. */
@@ -69,13 +81,32 @@ function overallEligible(row: OverallLeaderRow): boolean {
 async function fetchLeaderboardImpl(
   params: LeaderboardParams,
 ): Promise<LeaderboardResponse> {
-  const { region, infra, method, connectionMode, windowHours, eligibleOnly } =
+  const { region, infra, method, methodExplicit, preset, connectionMode, windowHours, eligibleOnly } =
     params;
 
-  let rows: RankedRegionRow[] | RankedOverallRow[];
+  let rows: RankedRegionRow[] | RankedOverallRow[] | RankedPresetRow[];
   let eligibleCount: number;
+  // Default overall = preset method-blend; explicit method= keeps the legacy
+  // single-method overall.
+  const usePreset = region === "overall" && !methodExplicit;
+  const mode: LeaderboardResponse["meta"]["mode"] =
+    region === "overall" ? (usePreset ? "preset" : "overall") : "region";
 
-  if (region === "overall") {
+  if (usePreset) {
+    const presetRows = await fetchRankedPreset({
+      presetId: preset,
+      windowHours,
+      connectionMode,
+    });
+    let r = 0;
+    let ranked: RankedPresetRow[] = presetRows.map((row) => ({
+      ...row,
+      rank: row.coverage_ok ? ++r : null,
+    }));
+    eligibleCount = r;
+    if (eligibleOnly) ranked = ranked.filter((row) => row.rank != null);
+    rows = ranked;
+  } else if (region === "overall") {
     const overall = await fetchRankedOverall({
       windowHours,
       connectionMode,
@@ -123,8 +154,9 @@ async function fetchLeaderboardImpl(
 
   return {
     meta: {
-      mode: region === "overall" ? "overall" : "region",
+      mode,
       region,
+      preset: usePreset ? preset : null,
       infra: infra ?? null,
       method,
       connection_mode: connectionMode,

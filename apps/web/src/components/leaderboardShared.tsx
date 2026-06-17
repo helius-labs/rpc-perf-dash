@@ -11,9 +11,13 @@ import { type GeoRegion } from "@rpcbench/shared/types";
 import {
   score,
   blendRegionScores,
+  blendMethodScores,
   DEFAULT_WEIGHTS,
   DEFAULT_REGION_WEIGHTS,
+  MIN_METHOD_COVERAGE,
+  type MethodWeights,
   type ProviderMetrics,
+  type RegionWeights,
   type ScoredProvider,
   type ScoringWeights,
 } from "@rpcbench/shared/scoring";
@@ -92,6 +96,58 @@ export interface OverallLeaderRow {
   failure_breakdown: FailureBreakdownEntry[];
   win_rate: number;
   per_geo: Partial<Record<GeoRegion, PerGeoScore | null>>;
+}
+
+/**
+ * A leaderboard row under a workload preset: the score is blended across the
+ * preset's METHODS (and regions), so there is no single meaningful latency
+ * percentile (a p50 averaged across getSlot and getProgramAccounts is
+ * nonsense). The row therefore drops p50/p95/p99 and instead carries:
+ *   - the blended composite `total` + the five normalized 0–100 sub-scores,
+ *   - sum/ratio aggregates that DO blend meaningfully across the workload
+ *     (win rate, calls, failures, success rate, failure breakdown),
+ *   - `coverage` (fraction of method weight the provider is eligible for) and
+ *     whether it cleared the gate,
+ *   - `per_geo` composite preset scores, and a `per_method` drill-down where
+ *     each method's REAL p50/p95 lives.
+ */
+export interface PresetLeaderRow {
+  provider_id: string;
+  provider_name: string;
+  caveat_flags: readonly string[];
+  caveat_explanation: string;
+  total: number;
+  latency_sub: number;
+  win_sub: number;
+  reliability_sub: number;
+  correctness_sub: number;
+  freshness_sub: number;
+  coverage_pct: number;
+  coverage_ok: boolean;
+  exclusion_reason: string | null;
+  // Sum/ratio aggregates across the preset's (method, geo) cells — meaningful
+  // (NOT percentiles).
+  total_wins: number;
+  total_calls: number;
+  total_failed: number;
+  total_challenges_with_winner: number;
+  success_rate_calls: number;
+  win_rate: number;
+  failure_breakdown: FailureBreakdownEntry[];
+  /** Per-geo COMPOSITE preset score (method-blend within the geo). */
+  per_geo: Partial<Record<GeoRegion, PerGeoScore | null>>;
+  /** Per-method blended-region score + that method's real p50/p95. */
+  per_method: Record<string, { total: number; p50: number | null; p95: number | null } | null>;
+}
+
+/** Per-(method, geo) rows for the preset blend: `rows` (all providers, for
+ *  aggregates) + `eligible` (scored subset). The flat shape both the client
+ *  memo and the server `fetchRankedPreset` produce. */
+export interface MethodGeoRows {
+  method: string;
+  geo: GeoRegion;
+  rows: RowAgg[];
+  eligible: RowAgg[];
 }
 
 // ---------------------------------------------------------------------------
@@ -505,6 +561,172 @@ export function buildOverallLeaderRows(
       per_geo,
     };
   }).sort((a, b) => b.total - a.total);
+}
+
+/**
+ * Build leaderboard rows under a workload preset — the score blended across the
+ * preset's methods AND regions. Single source of truth for the Overview board,
+ * the hero logo, the provider deep-dive, and the public API (the client memo
+ * and the server `fetchRankedPreset` both call this over the same cube).
+ *
+ * Pipeline: score per (method, geo) → blendRegionScores({subs:true}) per method
+ * → blendMethodScores (coverage gate) for the overall ranking; a second
+ * blendMethodScores per geo (no gate) for the per-geo composite cells. Sum/ratio
+ * aggregates (wins, calls, failures) sum across every (method, geo) cell; the
+ * meaningless cross-method latency percentiles are NOT produced.
+ */
+export function buildPresetLeaderRows(
+  cube: MethodGeoRows[],
+  opts: {
+    componentWeights: ScoringWeights;
+    methodWeights: MethodWeights;
+    regionWeights: Partial<RegionWeights>;
+    minCoverage?: number;
+  },
+): PresetLeaderRow[] {
+  const { componentWeights, methodWeights, regionWeights } = opts;
+  const minCoverage = opts.minCoverage ?? MIN_METHOD_COVERAGE;
+
+  // method -> (geo -> scored eligible providers), used for both blends.
+  const scoredByMethodGeo = new Map<string, Map<GeoRegion, ScoredProvider[]>>();
+  for (const cell of cube) {
+    let geoMap = scoredByMethodGeo.get(cell.method);
+    if (!geoMap) {
+      geoMap = new Map();
+      scoredByMethodGeo.set(cell.method, geoMap);
+    }
+    geoMap.set(cell.geo, scorePerGeo({ eligible: cell.eligible }, componentWeights));
+  }
+
+  // 1. Region-blend each method (carry sub-scores), then method-blend → overall.
+  const perMethodRegionBlended = new Map<string, ScoredProvider[]>();
+  for (const [method, geoMap] of scoredByMethodGeo) {
+    perMethodRegionBlended.set(
+      method,
+      blendRegionScores(geoMap, regionWeights, { subs: true }),
+    );
+  }
+  const { ranked, coverage } = blendMethodScores(
+    perMethodRegionBlended,
+    methodWeights,
+    minCoverage,
+  );
+  const blendedById = new Map(ranked.map((s) => [s.provider_id, s]));
+
+  // 2. Per-geo composite: method-blend within each geo (no coverage gate — a
+  //    cell just shows whatever methods that geo has).
+  const geoSet = new Set<GeoRegion>();
+  for (const cell of cube) geoSet.add(cell.geo);
+  const perGeoComposite = new Map<GeoRegion, Map<string, ScoredProvider>>();
+  for (const geo of geoSet) {
+    const perMethodInGeo = new Map<string, ScoredProvider[]>();
+    for (const [method, geoMap] of scoredByMethodGeo) {
+      const scored = geoMap.get(geo);
+      if (scored && scored.length > 0) perMethodInGeo.set(method, scored);
+    }
+    const { ranked: geoRanked } = blendMethodScores(perMethodInGeo, methodWeights, 0);
+    perGeoComposite.set(geo, new Map(geoRanked.map((s) => [s.provider_id, s])));
+  }
+
+  // 3. Sum/ratio aggregates + per-method drill-down, summed across (method, geo).
+  //    n_challenges_with_winner is a per-(method,geo) denominator shared across
+  //    providers (mirrors buildOverallLeaderRows), so sum rows[0] per cell.
+  let totalChallengesWithWinner = 0;
+  for (const cell of cube) {
+    totalChallengesWithWinner += cell.rows[0]?.n_challenges_with_winner ?? 0;
+  }
+
+  return BENCHMARKED_PROVIDERS.map((provider) => {
+    const s = blendedById.get(provider.id);
+    const flags = provider.anti_gaming_flags ?? [];
+    const cov = coverage.get(provider.id) ?? 0;
+    const coverageOk = s != null;
+
+    let totalWins = 0;
+    let totalCalls = 0;
+    let totalFailed = 0;
+    const failByCat = new Map<string, number>();
+    // Per-method: region-blended score + sample-weighted real p50/p95.
+    const per_method: PresetLeaderRow["per_method"] = {};
+    const pmAccum = new Map<string, { wSum: number; wP50: number; wP95: number }>();
+
+    for (const cell of cube) {
+      const r = cell.rows.find((x) => x.provider_id === provider.id);
+      if (!r) continue;
+      totalWins += r.n_wins ?? 0;
+      totalCalls += r.sample_count_total ?? 0;
+      totalFailed += r.sample_count_failed ?? 0;
+      for (const f of r.failure_breakdown ?? []) {
+        failByCat.set(f.category, (failByCat.get(f.category) ?? 0) + f.n);
+      }
+      const w = r.sample_count_valid ?? 0;
+      if (w > 0 && r.p50_ms != null && r.p95_ms != null) {
+        const acc = pmAccum.get(cell.method) ?? { wSum: 0, wP50: 0, wP95: 0 };
+        acc.wSum += w;
+        acc.wP50 += r.p50_ms * w;
+        acc.wP95 += r.p95_ms * w;
+        pmAccum.set(cell.method, acc);
+      }
+    }
+
+    for (const [method, mb] of perMethodRegionBlended) {
+      const mScore = mb.find((x) => x.provider_id === provider.id);
+      const acc = pmAccum.get(method);
+      per_method[method] = mScore
+        ? {
+            total: mScore.total,
+            p50: acc && acc.wSum > 0 ? acc.wP50 / acc.wSum : null,
+            p95: acc && acc.wSum > 0 ? acc.wP95 / acc.wSum : null,
+          }
+        : null;
+    }
+
+    const per_geo: PresetLeaderRow["per_geo"] = {};
+    for (const geo of geoSet) {
+      const gc = perGeoComposite.get(geo)?.get(provider.id);
+      per_geo[geo] = gc
+        ? {
+            total: gc.total,
+            latency_sub: gc.latency,
+            win_sub: gc.winRate,
+            reliability_sub: gc.reliability,
+            correctness_sub: gc.correctness,
+            freshness_sub: gc.freshness,
+          }
+        : null;
+    }
+
+    return {
+      provider_id: provider.id,
+      provider_name: provider.name,
+      caveat_flags: flags,
+      caveat_explanation: flags.length > 0 ? explainAntiGamingFlags(flags) : "",
+      total: s?.total ?? 0,
+      latency_sub: s?.latency ?? 0,
+      win_sub: s?.winRate ?? 0,
+      reliability_sub: s?.reliability ?? 0,
+      correctness_sub: s?.correctness ?? 0,
+      freshness_sub: s?.freshness ?? 0,
+      coverage_pct: cov,
+      coverage_ok: coverageOk,
+      exclusion_reason: coverageOk ? null : "insufficient method coverage",
+      total_wins: totalWins,
+      total_calls: totalCalls,
+      total_failed: totalFailed,
+      total_challenges_with_winner: totalChallengesWithWinner,
+      win_rate: totalChallengesWithWinner > 0 ? totalWins / totalChallengesWithWinner : 0,
+      success_rate_calls: totalCalls > 0 ? 1 - totalFailed / totalCalls : 0,
+      failure_breakdown: [...failByCat.entries()]
+        .map(([category, n]) => ({ category, n }))
+        .sort((a, b) => b.n - a.n),
+      per_geo,
+      per_method,
+    };
+  }).sort((a, b) => {
+    // Ranked (gate-cleared) first by score desc; insufficient-coverage last.
+    if (a.coverage_ok !== b.coverage_ok) return a.coverage_ok ? -1 : 1;
+    return b.total - a.total;
+  });
 }
 
 // ---------------------------------------------------------------------------

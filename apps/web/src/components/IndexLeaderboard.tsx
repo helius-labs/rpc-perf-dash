@@ -1,47 +1,40 @@
 "use client";
 
 /**
- * IndexLeaderboard — the "Index, dark" typographic ranked list from the Claude
- * Design handoff. No cards: bold ranked type with #1 dominating by scale, an
- * arrow per row linking to the provider deep-dive, and a click-to-expand inline
- * stat strip (p50 / p95 / p99 / win rate / samples / success) under each row.
- * All rows start expanded so the full field fits in roughly one viewport.
+ * IndexLeaderboard — the "Index, dark" typographic ranked list. Bold ranked
+ * type with #1 dominating by scale, an arrow per row linking to the provider
+ * deep-dive, and a click-to-expand stat strip + per-method×region latency grid.
  *
- * Scoring runs client-side: the server hands us raw per-geo aggregates, we
- * score them with the default weights.
- * Weight sliders / region weights were dropped from the home page; the formula
- * still uses DEFAULT_WEIGHTS / DEFAULT_REGION_WEIGHTS so rankings match the
- * documented methodology.
+ * The rows are PRE-BUILT by OverviewBoard (buildPresetLeaderRows over the
+ * preset cube) and passed in, so the hero logo and this list rank by the exact
+ * same blend — and the heavy method-blend runs once per weight change, not
+ * twice. The score is a workload-preset blend across methods AND regions, so the
+ * row shows the blended composite + normalized sub-scores + meaningful
+ * aggregates (win/correct/samples), NOT a cross-method latency percentile. Real
+ * per-method latency lives in the expanded grid.
  */
 
 import { memo, useCallback, useMemo, useState } from "react";
 import Link from "next/link";
 import type { Route } from "next";
 import {
-  DEFAULT_REGION_WEIGHTS,
-  blendRegionScores,
-  type ScoredProvider,
+  type RegionWeights,
   type ScoringWeights,
 } from "@rpcbench/shared/scoring";
 import { GEO_REGIONS, GEO_REGION_LABELS, type GeoRegion, type Method } from "@rpcbench/shared/types";
 import { slugForProviderId } from "@rpcbench/shared/providers";
 import { brandColorFor } from "@/lib/providerColors";
-import { ALL_METHODS } from "@/lib/methods";
 import { FloatingTooltip } from "./FloatingTooltip";
 import {
   FailureBreakdownList,
-  RegionBlendBreakdown,
   ScoreFormula,
   SubScoreBreakdown,
-  buildOverallLeaderRows,
-  buildSingleLeaderRows,
   scoreColor,
-  scorePerGeo,
   type FailureBreakdownEntry,
-  type RowAgg,
+  type PresetLeaderRow,
 } from "./leaderboardShared";
 
-/** L/W/R/C/F sub-scores for the score-breakdown tooltip (region view). */
+/** L/W/R/C/F sub-scores for the score-breakdown tooltip. */
 interface ScoreSubs {
   latency_sub: number;
   win_sub: number;
@@ -51,12 +44,6 @@ interface ScoreSubs {
   total: number;
 }
 
-export interface RawGeoOutcome {
-  geo: GeoRegion;
-  rows: RowAgg[];
-  eligible: RowAgg[];
-}
-
 /** p50/p95 latency for one (provider × method × geo) cell in the expanded row. */
 export interface LatencyCell {
   p50: number | null;
@@ -64,25 +51,15 @@ export interface LatencyCell {
 }
 
 /**
- * provider id → method → geo → latency. Assembled server-side (page.tsx) for
- * the expanded-row method×region grid. Only the grid methods (see
- * `gridMethods` prop) × the geos in GEO_PAIRS (all six benchmarked regions)
- * cells are populated.
+ * provider id → method → geo → latency. Assembled server-side (page.tsx) from
+ * the preset cube for the expanded-row method×region grid.
  */
 export type MethodRegionLatency = Record<string, Record<string, Record<string, LatencyCell>>>;
 
-/** Default methods surfaced in the expanded-row latency grid (the high-signal
- *  core), used when the caller doesn't pass an explicit `gridMethods` set. */
-const DEFAULT_GRID_METHODS: ReadonlyArray<Method> = [
-  "getTransaction",
-  "getAccountInfo",
-  "getTokenAccountsByOwner",
-];
-
 /**
  * Geos surfaced in the expanded-row latency grid, shown two at a time. The
- * chevron next to the second header cycles through these pairs (and the cycle
- * is synced across all expanded rows — see `pairIdx` in IndexLeaderboard).
+ * chevron next to the second header cycles through these pairs (synced across
+ * all expanded rows — see `pairIdx`).
  */
 const GEO_PAIRS: ReadonlyArray<readonly [GeoRegion, GeoRegion]> = [
   ["na-east", "eu-central"],
@@ -94,20 +71,20 @@ interface IndexRow {
   id: string;
   name: string;
   score: number;
-  p50: number | null;
-  p95: number | null;
-  p99: number | null;
   winRate: number;
   samples: number;
   success: number;
   // Failed-call count + per-category breakdown behind the missing success %.
   failed: number;
   failure_breakdown: FailureBreakdownEntry[];
-  // Score-breakdown tooltip data. Single-geo view: the L/W/R/C/F sub-scores
-  // (`subs`). Overall view: the per-region blend (`regionBlend`). Exactly one
-  // is populated per the active view.
-  subs: ScoreSubs | null;
-  regionBlend: Array<{ label: string; weight: number; score: number }> | null;
+  // Blended L/W/R/C/F sub-scores (the meaningful decomposition of the composite).
+  subs: ScoreSubs;
+  // Per-region composite preset score, for the "strongest regions" metric.
+  regionBlend: Array<{ label: string; weight: number; score: number }>;
+  // Coverage gate: providers below MIN_METHOD_COVERAGE are shown but not ranked.
+  coverageOk: boolean;
+  coveragePct: number;
+  exclusionReason: string | null;
 }
 
 function fmtMs(v: number | null): React.ReactNode {
@@ -115,22 +92,18 @@ function fmtMs(v: number | null): React.ReactNode {
 }
 
 /**
- * One leaderboard row. Memoized so expanding/collapsing a sibling row (which
- * flips the parent's `open` Set) doesn't re-render — and re-build the
- * method×region table of — every other row. Only the toggled row's `isOpen`
- * changes, so React.memo skips the rest. Props are kept referentially stable by
- * the parent: `row` comes from the `ordered` useMemo, `toggle` is useCallback'd,
- * `weights`/`latency` come from server props threaded through OverviewBoard.
+ * One leaderboard row. Memoized so expanding/collapsing a sibling row doesn't
+ * re-render every other row.
  */
 const IndexLeaderboardRow = memo(function IndexLeaderboardRow({
   row,
   index,
   isOpen,
   ranked,
-  selectedGeo,
-  weights,
+  componentWeights,
   latency,
   gridMethods,
+  scoreMethodCount,
   geos,
   onCycle,
   toggle,
@@ -139,13 +112,13 @@ const IndexLeaderboardRow = memo(function IndexLeaderboardRow({
   index: number;
   isOpen: boolean;
   ranked: boolean;
-  selectedGeo: GeoRegion | null;
-  weights: ScoringWeights;
+  componentWeights: ScoringWeights;
   /** Per-provider method→geo→p50/p95 slice for the expanded grid. */
   latency: Record<string, Record<string, LatencyCell>> | undefined;
-  /** Methods (rows) shown in the expanded grid; the first is the method the
-   *  leaderboard is currently ranking by. */
+  /** Methods (rows) shown in the expanded grid — a capped, high-signal subset. */
   gridMethods: ReadonlyArray<Method>;
+  /** How many methods the SCORE blends (may exceed gridMethods.length). */
+  scoreMethodCount: number;
   /** The region pair currently shown in the grid (from GEO_PAIRS[pairIdx]). */
   geos: readonly [GeoRegion, GeoRegion];
   /** Advance to the next region pair (synced across all rows). */
@@ -153,23 +126,18 @@ const IndexLeaderboardRow = memo(function IndexLeaderboardRow({
   toggle: (id: string) => void;
 }) {
   const p = row;
-  const isLeader = index === 0;
-  // Color coding by score tier (green / amber / red). The score number is
-  // tinted, and a score-proportional gradient line sits below the row (black →
-  // tier color, ending at the score position) so the gaps between providers
-  // read at a glance.
-  const tierColor = ranked ? scoreColor(p.score) : null;
-  // #1's name + rank take the provider's brand color (overrides the default
-  // accent). Falls back to the accent if no brand color.
+  const isLeader = index === 0 && p.coverageOk;
+  const showScore = ranked && p.coverageOk && p.score > 0;
+  const tierColor = showScore ? scoreColor(p.score) : null;
   const leaderColor = isLeader ? brandColorFor(p.id) : null;
   const lineStyle =
-    ranked && p.score > 0
+    showScore
       ? {
           backgroundImage: `linear-gradient(90deg, transparent 0%, ${tierColor} ${p.score}%, transparent ${p.score}%)`,
         }
       : undefined;
   return (
-    <li key={p.id} className="idx-li">
+    <li key={p.id} className={"idx-li" + (p.coverageOk ? "" : " opacity-55")}>
       <div
         className={
           "idx-row" + (isLeader ? " idx-row-leader" : "") + (isOpen ? " idx-row-open" : "")
@@ -191,53 +159,41 @@ const IndexLeaderboardRow = memo(function IndexLeaderboardRow({
         <span className="idx-name" style={leaderColor ? { color: leaderColor } : undefined}>
           {p.name}
         </span>
-        {/* Collapsed relative metrics — readable at a glance without
-            expanding. Reset to small mono type so they don't inherit the
-            row's display font. */}
+        {/* Collapsed relative metrics — readable at a glance without expanding. */}
         <span className="idx-rowstats">
-          <span className="idx-rowstat">
-            <b>{(p.winRate * 100).toFixed(0)}</b>
-            <i>% win</i>
-          </span>
-          <span className="idx-rowstat">
-            <b>{(p.success * 100).toFixed(1)}</b>
-            <i>% correct</i>
-          </span>
+          {p.coverageOk ? (
+            <>
+              <span className="idx-rowstat">
+                <b>{(p.winRate * 100).toFixed(0)}</b>
+                <i>% win</i>
+              </span>
+              <span className="idx-rowstat">
+                <b>{(p.success * 100).toFixed(1)}</b>
+                <i>% correct</i>
+              </span>
+            </>
+          ) : (
+            <span className="idx-rowstat">
+              <i>insufficient method coverage ({(p.coveragePct * 100).toFixed(0)}%)</i>
+            </span>
+          )}
         </span>
         {(() => {
           const scoreEl = (
             <span className="idx-score" style={tierColor ? { color: tierColor } : undefined}>
-              {ranked ? p.score.toFixed(1) : "—"}
+              {showScore ? p.score.toFixed(1) : "—"}
             </span>
           );
-          const hasBreakdown =
-            ranked &&
-            p.score > 0 &&
-            (selectedGeo ? p.subs != null : (p.regionBlend?.length ?? 0) > 0);
-          if (!hasBreakdown) return scoreEl;
+          if (!showScore) return scoreEl;
           return (
             <span onClick={(e) => e.stopPropagation()}>
               <FloatingTooltip title="Score breakdown" trigger={scoreEl}>
-                {/* Reset the leaderboard's display-font typography (44px,
-                    -0.03em tracking, line-height 1) that would otherwise
-                    cascade in and garble the breakdown text. */}
                 <div className="text-left font-normal normal-case tracking-normal leading-normal">
-                  {selectedGeo && p.subs ? (
-                    <>
-                      <div className="font-mono text-[11px] text-neutral-400 mb-0.5">
-                        Region score
-                      </div>
-                      <ScoreFormula weights={weights} />
-                      <SubScoreBreakdown row={p.subs} weights={weights} />
-                    </>
-                  ) : p.regionBlend ? (
-                    <>
-                      <div className="font-mono text-[11px] text-neutral-400 mb-0.5">
-                        Overall = Σ region × region-weight
-                      </div>
-                      <RegionBlendBreakdown regions={p.regionBlend} total={p.score} />
-                    </>
-                  ) : null}
+                  <div className="font-mono text-[11px] text-neutral-400 mb-0.5">
+                    Blended across {scoreMethodCount} method{scoreMethodCount === 1 ? "" : "s"}
+                  </div>
+                  <ScoreFormula weights={componentWeights} />
+                  <SubScoreBreakdown row={p.subs} weights={componentWeights} />
                 </div>
               </FloatingTooltip>
             </span>
@@ -262,8 +218,7 @@ const IndexLeaderboardRow = memo(function IndexLeaderboardRow({
           </svg>
         </Link>
       </div>
-      {/* Expanded detail slides down (grid-rows 0fr → 1fr) + fades in
-          when the row is clicked, instead of popping in. */}
+      {/* Expanded detail. */}
       <div
         className={
           "grid transition-[grid-template-rows] duration-300 ease-out motion-reduce:transition-none " +
@@ -277,9 +232,6 @@ const IndexLeaderboardRow = memo(function IndexLeaderboardRow({
           }
         >
         <div className={"idx-detail" + (isLeader ? " idx-detail-leader" : "")}>
-          {/* Cold-start latency by method × region — two geos at a time, the
-              chevron cycles through all six (GEO_PAIRS). Pooled across each
-              geo's vantages (incl. Newark/EWR and Frankfurt/FRA). */}
           <div className="idx-mr">
             <div className="idx-mr-cap">Cold-start latency · p50 / p95 ms</div>
             <div className="idx-mr-scroll">
@@ -290,8 +242,6 @@ const IndexLeaderboardRow = memo(function IndexLeaderboardRow({
                     {geos.map((g) => (
                       <th key={g}>{GEO_REGION_LABELS[g]}</th>
                     ))}
-                    {/* Cycle control lives in its own trailing column so it sits
-                        beside — not inside — the right region column. */}
                     <th className="idx-mr-cyclecol">
                       <button
                         type="button"
@@ -339,7 +289,6 @@ const IndexLeaderboardRow = memo(function IndexLeaderboardRow({
                           </td>
                         );
                       })}
-                      {/* Spacer under the cycle column to keep alignment. */}
                       <td className="idx-mr-cyclecol" aria-hidden="true" />
                     </tr>
                   ))}
@@ -347,9 +296,11 @@ const IndexLeaderboardRow = memo(function IndexLeaderboardRow({
               </table>
             </div>
             <div className="idx-mr-note">
-              Showing {gridMethods.length} of the {ALL_METHODS.length} benchmarked
-              methods. The score and stats above only represent{" "}
-              <code>{gridMethods[0]}</code>.
+              {gridMethods.length < scoreMethodCount ? (
+                <>Showing {gridMethods.length} of the {scoreMethodCount} methods blended into this score.</>
+              ) : (
+                <>All {scoreMethodCount} method{scoreMethodCount === 1 ? "" : "s"} in this score are shown.</>
+              )}
             </div>
           </div>
           {/* Secondary line: the overall relative metrics for this view. */}
@@ -380,10 +331,8 @@ const IndexLeaderboardRow = memo(function IndexLeaderboardRow({
                 <span className="idx-ds-v">{(p.success * 100).toFixed(1)}<i>%</i></span>
               )}
             </span>
-            {p.regionBlend && p.regionBlend.length > 0 && (() => {
-              // The two regions surfaced in the metric (highest score). Used both
-              // for the label and to highlight their rows in the weights tooltip.
-              const top = [...p.regionBlend!]
+            {p.regionBlend.length > 0 && (() => {
+              const top = [...p.regionBlend]
                 .sort((a, b) => b.score - a.score)
                 .slice(0, 2)
                 .map((r) => r.label);
@@ -401,7 +350,7 @@ const IndexLeaderboardRow = memo(function IndexLeaderboardRow({
                         <div className="font-mono text-[11px] text-neutral-400 mb-1">
                           Region weights in the overall blend
                         </div>
-                        {[...p.regionBlend!]
+                        {[...p.regionBlend]
                           .sort((a, b) => b.weight - a.weight)
                           .map((r) => {
                             const isTop = topSet.has(r.label);
@@ -431,46 +380,49 @@ const IndexLeaderboardRow = memo(function IndexLeaderboardRow({
 });
 
 export function IndexLeaderboard({
-  rawPerGeo,
-  selectedGeo,
-  weights,
+  rows,
+  componentWeights,
+  regionWeights,
   methodRegionLatency = {},
-  gridMethods = DEFAULT_GRID_METHODS,
+  gridMethods,
+  scoreMethodCount,
 }: {
-  rawPerGeo: RawGeoOutcome[];
-  selectedGeo: GeoRegion | null;
-  /** Scoring weights — controlled by the parent (OverviewBoard presets). */
-  weights: ScoringWeights;
+  /** Pre-built preset rows (from OverviewBoard's single blend). */
+  rows: PresetLeaderRow[];
+  /** Component weights, for the score-breakdown tooltip. */
+  componentWeights: ScoringWeights;
+  /** Preset region weights, for the "strongest regions" weight tooltip. */
+  regionWeights: Partial<RegionWeights>;
   /** Expanded-row latency grid data (provider → method → geo → p50/p95). */
   methodRegionLatency?: MethodRegionLatency;
-  /** Methods (rows) shown in each expanded-row grid; first = the method the
-   *  board ranks by. Defaults to the high-signal core set. */
-  gridMethods?: ReadonlyArray<Method>;
+  /** Methods shown in each expanded-row grid — a capped, high-signal subset. */
+  gridMethods: ReadonlyArray<Method>;
+  /** How many methods the score blends (for the grid note). */
+  scoreMethodCount: number;
 }) {
-  // Weights are controlled by OverviewBoard (workload presets). Re-scoring runs
-  // client-side off the raw per-geo aggregates, so changing a preset re-ranks
-  // instantly without a refetch.
-  const rows: IndexRow[] = useMemo(() => {
-    const perGeo = rawPerGeo.map((o) => ({
-      geo: o.geo,
-      rows: o.rows,
-      eligible: o.eligible,
-      scored: scorePerGeo(o, weights),
-    }));
-
-    if (selectedGeo && perGeo[0]) {
-      const { rows: single } = buildSingleLeaderRows(perGeo[0]);
-      return single.map((r) => ({
+  const indexRows: IndexRow[] = useMemo(() => {
+    return rows.map((r) => {
+      // Region weights normalized over the geos this provider actually has.
+      const present = GEO_REGIONS.filter((g) => r.per_geo[g] != null);
+      const wSum = present.reduce((s, g) => s + (regionWeights[g] ?? 0), 0);
+      const regionBlend =
+        wSum > 0
+          ? present
+              .map((g) => ({
+                label: GEO_REGION_LABELS[g],
+                weight: (regionWeights[g] ?? 0) / wSum,
+                score: r.per_geo[g]!.total,
+              }))
+              .filter((x) => x.weight > 0)
+          : [];
+      return {
         id: r.provider_id,
         name: r.provider_name,
         score: r.total,
-        p50: r.p50_ms,
-        p95: r.p95_ms,
-        p99: r.p99_ms,
         winRate: r.win_rate,
-        samples: r.sample_count_valid,
+        samples: r.total_calls,
         success: r.success_rate_calls,
-        failed: r.sample_count_failed,
+        failed: r.total_failed,
         failure_breakdown: r.failure_breakdown,
         subs: {
           latency_sub: r.latency_sub,
@@ -480,66 +432,24 @@ export function IndexLeaderboard({
           freshness_sub: r.freshness_sub,
           total: r.total,
         },
-        regionBlend: null,
-      }));
-    }
-
-    const map = new Map<GeoRegion, ScoredProvider[]>();
-    for (const o of perGeo) map.set(o.geo, o.scored);
-    const blended = blendRegionScores(map, DEFAULT_REGION_WEIGHTS);
-    const overall = buildOverallLeaderRows(blended, perGeo);
-    return overall.map((r) => {
-      // Overall = Σ region_score × normalized region-weight (renormalized over
-      // the regions where this provider is eligible — matches blendRegionScores).
-      const present = GEO_REGIONS.filter((g) => r.per_geo[g] != null);
-      const wSum = present.reduce((s, g) => s + (DEFAULT_REGION_WEIGHTS[g] ?? 0), 0);
-      const regionBlend =
-        wSum > 0
-          ? present
-              .map((g) => ({
-                label: GEO_REGION_LABELS[g],
-                weight: (DEFAULT_REGION_WEIGHTS[g] ?? 0) / wSum,
-                score: r.per_geo[g]!.total,
-              }))
-              .filter((x) => x.weight > 0)
-          : [];
-      return {
-        id: r.provider_id,
-        name: r.provider_name,
-        score: r.total,
-        p50: r.p50_blend,
-        p95: r.p95_blend,
-        p99: r.p99_blend,
-        winRate: r.win_rate,
-        samples: r.total_calls,
-        success: r.success_rate_calls,
-        failed: r.total_failed,
-        failure_breakdown: r.failure_breakdown,
-        subs: null,
         regionBlend,
+        coverageOk: r.coverage_ok,
+        coveragePct: r.coverage_pct,
+        exclusionReason: r.exclusion_reason,
       };
     });
-  }, [rawPerGeo, selectedGeo, weights]);
+  }, [rows, regionWeights]);
 
-  // During warmup no provider has cleared the eligibility floor, so every score
-  // is 0. Rank by samples instead and show "—" scores so we don't crown an
-  // arbitrary provider.
-  const ranked = rows.some((r) => r.score > 0);
-  const ordered = useMemo(
-    () =>
-      ranked
-        ? [...rows].sort((a, b) => b.score - a.score)
-        : [...rows].sort((a, b) => b.samples - a.samples),
-    [rows, ranked],
-  );
+  // During warmup no provider has cleared the eligibility floor.
+  const ranked = indexRows.some((r) => r.coverageOk && r.score > 0);
 
-  // Rows start collapsed — the Overview leads with relative metrics (win rate /
-  // success / score) inline on each row; expanding reveals the per-method ×
-  // per-region latency grid.
-  const [open, setOpen] = useState<Set<string>>(() => new Set());
-  // Stable identity so memoized rows don't re-render just because the parent
-  // re-rendered (e.g. a sibling toggled open). Uses the functional setOpen form,
-  // so an empty dep array carries no stale-closure risk.
+  // First place starts expanded by default; the rest collapsed. (Only the
+  // initial mount — once the user toggles, their choices persist; switching
+  // presets remounts via key= and re-expands the new #1.)
+  const [open, setOpen] = useState<Set<string>>(() => {
+    const first = rows[0]?.provider_id;
+    return new Set(first ? [first] : []);
+  });
   const toggle = useCallback(
     (id: string) =>
       setOpen((prev) => {
@@ -551,17 +461,13 @@ export function IndexLeaderboard({
     [],
   );
 
-  // Which GEO_PAIRS entry the expanded grids show. Held here (not per-row) so
-  // the chevron cycles every open row's regions in sync. cyclePair is
-  // referentially stable (functional update, empty deps) so memoized rows only
-  // re-render when pairIdx actually flips.
   const [pairIdx, setPairIdx] = useState(0);
   const cyclePair = useCallback(
     () => setPairIdx((i) => (i + 1) % GEO_PAIRS.length),
     [],
   );
 
-  if (ordered.length === 0) {
+  if (indexRows.length === 0) {
     return (
       <section className="lb-index">
         <div className="idx-head">
@@ -575,17 +481,17 @@ export function IndexLeaderboard({
   return (
     <section className="lb-index">
       <ol className="idx-list">
-        {ordered.map((p, i) => (
+        {indexRows.map((p, i) => (
           <IndexLeaderboardRow
             key={p.id}
             row={p}
             index={i}
             isOpen={open.has(p.id)}
             ranked={ranked}
-            selectedGeo={selectedGeo}
-            weights={weights}
+            componentWeights={componentWeights}
             latency={methodRegionLatency[p.id]}
             gridMethods={gridMethods}
+            scoreMethodCount={scoreMethodCount}
             geos={GEO_PAIRS[pairIdx]!}
             onCycle={cyclePair}
             toggle={toggle}

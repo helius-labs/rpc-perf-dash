@@ -236,12 +236,15 @@ export function cloudRegionsForGeo(
 
 /**
  * Map a requested window (hours) to the coarsest ROLLUP source table that
- * still satisfies it, for the latency CHART. The chart always reads rollups:
- * ≤24h → 5-min grain, ≤7d → hourly, >7d → daily. Returns a validated constant
- * table name (never user input) safe to splice via sql.raw.
+ * still satisfies it, for the latency CHART: ≤6h → 5-min grain, ≤7d → hourly,
+ * >7d → daily. The 24h view reads hourly (not 5-min) — a 5-min scan of the
+ * 9.3GB rollups_5m for the all-vantage Overview was ~11s; hourly is ~1s, and the
+ * chart's client-side re-binner already coarsens, so the only change is 24h
+ * showing hourly points. Returns a validated constant table name (never user
+ * input) safe to splice via sql.raw.
  */
 export function rollupTableForWindow(windowHours: number): "rollups_5m" | "rollups_1h" | "rollups_1d" {
-  if (windowHours <= 24) return "rollups_5m";
+  if (windowHours <= 6) return "rollups_5m";
   if (windowHours <= 168) return "rollups_1h";
   return "rollups_1d";
 }

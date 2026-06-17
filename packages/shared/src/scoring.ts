@@ -170,7 +170,8 @@ export function score(
  */
 export function blendRegionScores(
   perRegion: Map<GeoRegion, readonly ScoredProvider[]>,
-  weights: RegionWeights = DEFAULT_REGION_WEIGHTS,
+  weights: Partial<RegionWeights> = DEFAULT_REGION_WEIGHTS,
+  opts?: { subs?: boolean },
 ): ScoredProvider[] {
   // For each provider, collect (region, score) and the weight it would draw.
   const byProvider = new Map<string, Array<{ region: GeoRegion; score: ScoredProvider }>>();
@@ -184,26 +185,129 @@ export function blendRegionScores(
     }
   }
 
+  // By default the L/W/R/C/F sub-scores are left 0 (they're per-region
+  // quantities and historically didn't blend). `opts.subs` opts into blending
+  // them with the SAME renormalized region weights as `total` — used by the
+  // method-blend pipeline, which needs per-method sub-scores to combine.
+  const blendSubs = opts?.subs === true;
   const out: ScoredProvider[] = [];
   for (const [provider_id, entries] of byProvider) {
     const wSum = entries.reduce((acc, e) => acc + (weights[e.region] ?? 0), 0);
     if (wSum <= 0) continue;
     let total = 0;
+    let latency = 0;
+    let winRate = 0;
+    let reliability = 0;
+    let correctness = 0;
+    let freshness = 0;
     for (const e of entries) {
       const w = (weights[e.region] ?? 0) / wSum;
       total += w * e.score.total;
+      if (blendSubs) {
+        latency += w * e.score.latency;
+        winRate += w * e.score.winRate;
+        reliability += w * e.score.reliability;
+        correctness += w * e.score.correctness;
+        freshness += w * e.score.freshness;
+      }
     }
     out.push({
       provider_id,
       total: clamp(total, 0, 100),
-      latency: 0,
-      winRate: 0,
-      reliability: 0,
-      correctness: 0,
-      freshness: 0,
+      latency,
+      winRate,
+      reliability,
+      correctness,
+      freshness,
     });
   }
   // Sort by total desc for caller convenience.
   out.sort((a, b) => b.total - a.total);
   return out;
+}
+
+/** Per-RPC-method weight used when blending per-method provider scores into a
+ *  single workload-preset score. Keys are method names; values need not sum to
+ *  1 (the blend renormalizes). The key SET also defines the preset's method
+ *  universe used by the coverage gate. */
+export type MethodWeights = Record<string, number>;
+
+/**
+ * A provider must be eligible (have a region-blended score) in methods whose
+ * summed weight is at least this fraction of the preset's total method weight,
+ * or it's excluded from the ranking and flagged "insufficient coverage". Guards
+ * against a provider topping a preset on partial method coverage. Empirically
+ * every current provider clears ~0.93+ of the method universe, so 0.60 excludes
+ * nobody today while protecting future / sparse-window cases.
+ */
+export const MIN_METHOD_COVERAGE = 0.6;
+
+/**
+ * Blend per-method (already region-blended) provider scores into one overall
+ * score per provider — the workload-preset headline number.
+ *
+ * Mirrors `blendRegionScores`' eligible-subset renormalization (a provider not
+ * measured on a method isn't penalized by that method's weight), and adds the
+ * minimum-coverage gate: a provider covering less than `minCoverage` of the
+ * preset's total method weight is dropped from `ranked` (but still reported in
+ * `coverage` so callers can render an "insufficient coverage" row).
+ *
+ * `total` and the L/W/R/C/F sub-scores are all blended (sub-scores are
+ * normalized 0–100, so they combine meaningfully across methods — unlike raw
+ * latency ms). Pass per-method scores produced by
+ * `blendRegionScores(..., { subs: true })` so the sub-scores are populated.
+ */
+export function blendMethodScores(
+  perMethod: Map<string, readonly ScoredProvider[]>,
+  weights: MethodWeights,
+  minCoverage: number = MIN_METHOD_COVERAGE,
+): { ranked: ScoredProvider[]; coverage: Map<string, number> } {
+  // Total weight of the preset's method universe (denominator for coverage).
+  const totalWeight = Object.values(weights).reduce((a, w) => a + Math.max(0, w), 0);
+
+  // For each provider, collect the (method, score) entries it actually has.
+  const byProvider = new Map<string, Array<{ method: string; score: ScoredProvider }>>();
+  for (const [method, list] of perMethod) {
+    for (const sp of list) {
+      const arr = byProvider.get(sp.provider_id) ?? [];
+      arr.push({ method, score: sp });
+      byProvider.set(sp.provider_id, arr);
+    }
+  }
+
+  const ranked: ScoredProvider[] = [];
+  const coverage = new Map<string, number>();
+  for (const [provider_id, entries] of byProvider) {
+    const coveredWeight = entries.reduce((acc, e) => acc + Math.max(0, weights[e.method] ?? 0), 0);
+    const covered = totalWeight > 0 ? coveredWeight / totalWeight : 0;
+    coverage.set(provider_id, covered);
+    if (coveredWeight <= 0 || covered < minCoverage) continue;
+
+    let total = 0;
+    let latency = 0;
+    let winRate = 0;
+    let reliability = 0;
+    let correctness = 0;
+    let freshness = 0;
+    for (const e of entries) {
+      const w = Math.max(0, weights[e.method] ?? 0) / coveredWeight;
+      total += w * e.score.total;
+      latency += w * e.score.latency;
+      winRate += w * e.score.winRate;
+      reliability += w * e.score.reliability;
+      correctness += w * e.score.correctness;
+      freshness += w * e.score.freshness;
+    }
+    ranked.push({
+      provider_id,
+      total: clamp(total, 0, 100),
+      latency,
+      winRate,
+      reliability,
+      correctness,
+      freshness,
+    });
+  }
+  ranked.sort((a, b) => b.total - a.total);
+  return { ranked, coverage };
 }

@@ -28,7 +28,8 @@ import {
   parseMode,
   parseWindow,
 } from "@/lib/apiParams";
-import { fetchLeaderboard, type RankedOverallRow } from "@/lib/leaderboardApi";
+import { fetchLeaderboard } from "@/lib/leaderboardApi";
+import { DEFAULT_PRESET_ID, isPresetId } from "@/lib/workloadPresets";
 
 function notFoundJson(message: string): Response {
   return new Response(JSON.stringify({ error: message }), {
@@ -56,15 +57,20 @@ export async function GET(
     throw e;
   }
 
+  // Default overall = preset method-blend (Balanced); an explicit method= keeps
+  // the legacy single-method overall (Option A).
+  const presetRaw = q.get("preset");
   const board = await fetchLeaderboard({
     region: "overall",
     method,
+    methodExplicit: q.get("method") != null,
+    preset: isPresetId(presetRaw) ? presetRaw : DEFAULT_PRESET_ID,
     connectionMode,
     windowHours,
     eligibleOnly: false,
   });
   const row =
-    (board.rows as RankedOverallRow[]).find(
+    (board.rows as Array<{ provider_id: string }>).find(
       (r) => r.provider_id === provider.id,
     ) ?? null;
 

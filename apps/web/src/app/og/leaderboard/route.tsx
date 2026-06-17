@@ -11,10 +11,12 @@
  */
 
 import { ImageResponse } from "next/og";
-import { GEO_REGION_LABELS } from "@rpcbench/shared/types";
-import { fetchRankedOverall, fetchRankedSingle } from "@/lib/leaderboard";
+import { GEO_REGION_LABELS, GEO_REGIONS, type GeoRegion } from "@rpcbench/shared/types";
+import { DEFAULT_REGION_WEIGHTS, type RegionWeights } from "@rpcbench/shared/scoring";
+import { fetchRankedPreset } from "@/lib/leaderboard";
 import { brandColorFor, colorFor, logoFor } from "@/lib/providerColors";
 import { parseShareParams } from "@/lib/share";
+import { presetById } from "@/lib/workloadPresets";
 import { siteDisplayHost } from "@/lib/siteUrl";
 import { WINDOWS } from "@/lib/windows";
 import { LeaderboardCard, type CardRow } from "../og-card";
@@ -67,46 +69,34 @@ export async function GET(req: Request) {
   const origin = new URL(req.url).origin;
   const filters = parseShareParams(new URL(req.url).searchParams);
 
-  // Fetch the ranked field with the sharer's weights, then keep only eligible
-  // providers (a real winner, not a 0-score placeholder).
-  let rows: Omit<CardRow, "brand" | "color" | "logo">[] = [];
-  if (filters.region === "overall") {
-    const ranked = await fetchRankedOverall({
-      windowHours: filters.windowHours,
-      connectionMode: filters.mode,
-      method: filters.method,
-      weights: filters.weights,
-    });
-    rows = ranked
-      .filter((r) => r.total > 0)
-      .map((r) => ({
-        provider_id: r.provider_id,
-        provider_name: r.provider_name,
-        total: r.total,
-        p50_ms: r.p50_blend,
-        win_rate: r.win_rate,
-        eligible: true,
-      }));
-  } else {
-    const ranked = await fetchRankedSingle({
-      geoRegion: filters.region,
-      windowHours: filters.windowHours,
-      connectionMode: filters.mode,
-      workerProvider: filters.infra,
-      method: filters.method,
-      weights: filters.weights,
-    });
-    rows = ranked
-      .filter((r) => r.eligible)
-      .map((r) => ({
-        provider_id: r.provider_id,
-        provider_name: r.provider_name,
-        total: r.total,
-        p50_ms: r.p50_ms,
-        win_rate: r.win_rate,
-        eligible: true,
-      }));
-  }
+  // One unified blend path: the exact board the sharer saw (homepage preset or
+  // /performance method selection), via fetchRankedPreset with the decoded
+  // overrides. The board is a method-blend, so no single latency percentile is
+  // meaningful — p50 is omitted (matches the on-screen ScoreStrip).
+  const preset = presetById(filters.presetId);
+  const regionWeights: Partial<RegionWeights> = Object.fromEntries(
+    filters.regions.map((g) => [g, DEFAULT_REGION_WEIGHTS[g] ?? 0.1]),
+  );
+  const ranked = await fetchRankedPreset({
+    presetId: filters.presetId,
+    methods: filters.methods,
+    methodWeights: filters.methodWeights,
+    regionWeights,
+    componentWeights: filters.weights,
+    windowHours: filters.windowHours,
+    connectionMode: filters.mode,
+    ...(filters.infra ? { workerProvider: filters.infra } : {}),
+  });
+  const rows: Omit<CardRow, "brand" | "color" | "logo">[] = ranked
+    .filter((r) => r.coverage_ok && r.total > 0)
+    .map((r) => ({
+      provider_id: r.provider_id,
+      provider_name: r.provider_name,
+      total: r.total,
+      p50_ms: null,
+      win_rate: r.win_rate,
+      eligible: true,
+    }));
 
   // Attach brand color / chart color / logo data URI per row.
   const cardRows: CardRow[] = await Promise.all(
@@ -118,8 +108,30 @@ export async function GET(req: Request) {
     })),
   );
 
+  // Labels. Header = preset label for a clean preset board; the method name for
+  // a single custom method; else "Custom". A methods line lists the set (names
+  // if few, else count) unless the header already names a single method.
+  const presetMethodSet = new Set<string>(preset.methods);
+  const isPresetMethods =
+    filters.methods.length === presetMethodSet.size &&
+    filters.methods.every((m) => presetMethodSet.has(m));
+  const methodHeader = isPresetMethods
+    ? preset.label
+    : filters.methods.length === 1
+      ? filters.methods[0]!
+      : "Custom";
+  const methodsLabel =
+    filters.methods.length === 1
+      ? undefined
+      : filters.methods.length <= 6
+        ? filters.methods.join(", ")
+        : `${filters.methods.length} methods`;
   const regionLabel =
-    filters.region === "overall" ? "Overall (all regions)" : GEO_REGION_LABELS[filters.region];
+    filters.regions.length >= GEO_REGIONS.length
+      ? "all regions"
+      : filters.regions.length === 1
+        ? GEO_REGION_LABELS[filters.regions[0] as GeoRegion]
+        : `${filters.regions.length} regions`;
   const windowLabel = WINDOWS.find((w) => w.value === filters.windowHours)?.label ?? `${filters.windowHours}h`;
   const contextLabel = `${filters.mode === "cold" ? "cold start" : "warm"} · last ${windowLabel}`;
 
@@ -146,7 +158,8 @@ export async function GET(req: Request) {
     (
       <LeaderboardCard
         rows={cardRows}
-        method={filters.method}
+        method={methodHeader}
+        {...(methodsLabel ? { methodsLabel } : {})}
         regionLabel={regionLabel}
         contextLabel={contextLabel}
         timestamp={timestamp}

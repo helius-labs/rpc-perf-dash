@@ -7,8 +7,11 @@
  *
  * Query params (all optional):
  *   region   a GEO_REGIONS value, or "overall"  (default: overall)
+ *   preset   balanced | trading | apps           (default: balanced; the
+ *            "overall" board is a workload method-blend unless `method=` is set)
  *   infra    a worker_provider key (concrete region only; default: pooled)
- *   method   an ALL_METHODS value               (default: getTransaction)
+ *   method   an ALL_METHODS value — an explicit value forces the legacy
+ *            single-method overall (default overall is the preset blend)
  *   mode     "cold" | "warm"                     (default: cold)
  *   window   1 | 6 | 24 | 168 | 720 (hours)      (default: 24)
  *   eligibleOnly  "1"/"true" → drop ineligible providers
@@ -27,16 +30,20 @@ import {
   parseWindow,
 } from "@/lib/apiParams";
 import { fetchLeaderboard } from "@/lib/leaderboardApi";
+import { DEFAULT_PRESET_ID, isPresetId } from "@/lib/workloadPresets";
 
 export async function GET(req: Request) {
   const q = new URL(req.url).searchParams;
   let params;
   try {
     const region = parseRegion(q.get("region"));
+    const presetRaw = q.get("preset");
     params = {
       region,
       infra: parseInfra(q.get("infra"), region),
       method: parseMethod(q.get("method")),
+      methodExplicit: q.get("method") != null,
+      preset: isPresetId(presetRaw) ? presetRaw : DEFAULT_PRESET_ID,
       connectionMode: parseMode(q.get("mode")),
       windowHours: parseWindow(q.get("window")),
       eligibleOnly: parseBool(q.get("eligibleOnly")),

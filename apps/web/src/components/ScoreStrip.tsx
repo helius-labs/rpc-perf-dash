@@ -33,9 +33,12 @@ const WEIGHT_SUMMARY = WEIGHT_LABELS.map(
 export function ScoreStrip({
   rows,
   ranked,
+  methodCount = 1,
 }: {
   rows: MiniScoreRow[];
   ranked: boolean;
+  /** Number of methods blended into this board (>1 → note it in the caption). */
+  methodCount?: number;
 }) {
   if (!ranked) {
     return (
@@ -87,6 +90,7 @@ export function ScoreStrip({
       })}
       </ol>
       <p className="mt-2 font-geistmono text-[9px] uppercase tracking-[0.08em] text-muted leading-snug">
+        {methodCount > 1 ? `Blended across ${methodCount} methods · ` : ""}
         {WEIGHT_SUMMARY}
       </p>
     </div>

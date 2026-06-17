@@ -13,8 +13,8 @@ export function binOptionsForWindow(windowHours: number, metric: ChartMetric): [
   if (metric === "score") {
     return windowHours <= 168 ? [60, 180, 360, 720] : [1440];
   }
-  if (windowHours <= 24) return [5, 10, 15, 30, 60]; // 5-min source
-  if (windowHours <= 168) return [60, 180, 360, 720]; // hourly source: 1h/3h/6h/12h
+  if (windowHours <= 6) return [5, 10, 15, 30, 60]; // 5-min source
+  if (windowHours <= 168) return [60, 180, 360, 720]; // hourly source: 1h/3h/6h/12h (incl. 24h)
   return [1440]; // daily source: only 1d is meaningful → control hidden
 }
 
