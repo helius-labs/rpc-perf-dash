@@ -78,8 +78,8 @@ export function ProviderHealth({ benchmarked, auditor, infra, windowLabel }: Pro
         href={`/provider/${providerSlug(cfg)}`}
         title={`${cfg.name}: ${h.n_correct}/${h.n_samples} correct over last ${windowLabel} (status: ${c.label})`}
       >
-        <span style={{ fontSize: 11, fontWeight: 500 }}>{cfg.name}</span>
-        <span style={{ fontSize: 9, color: "#888" }}>
+        <span className="text-[11px] font-medium">{cfg.name}</span>
+        <span className="text-[9px] text-muted">
           {h.n_samples === 0 ? "—" : `${correctPct.toFixed(0)}% · ${h.n_samples}n`}
         </span>
       </Card>
@@ -121,8 +121,8 @@ export function ProviderHealth({ benchmarked, auditor, infra, windowLabel }: Pro
         }
         title={`Consensus accuracy (finality-verified): ${accLabel}`}
       >
-        <span style={{ fontSize: 11, fontWeight: 500 }}>Accuracy</span>
-        <span style={{ fontSize: 9, color: "#888" }}>{accLabel}</span>
+        <span className="text-[11px] font-medium">Accuracy</span>
+        <span className="text-[9px] text-muted">{accLabel}</span>
       </Card>,
     ];
   })();
@@ -172,25 +172,11 @@ export function ProviderHealth({ benchmarked, auditor, infra, windowLabel }: Pro
   );
 
   return (
-    <div
-      style={{
-        background: "#0c0c0c",
-        border: "1px solid #1f1f1f",
-        borderRadius: 6,
-        marginBottom: 12,
-      }}
-    >
+    <div className="bg-surface border border-line rounded-md mb-3">
       {/* Desktop: 2-column table (label · cards) */}
-      <table
-        className="hidden md:table"
-        style={{
-          width: "100%",
-          borderCollapse: "collapse",
-          tableLayout: "fixed",
-        }}
-      >
+      <table className="hidden md:table w-full table-fixed border-collapse">
         <colgroup>
-          <col style={{ width: 120 }} />
+          <col className="w-[120px]" />
           <col />
         </colgroup>
         <tbody>
@@ -256,40 +242,18 @@ function MobileSection({
   last?: boolean;
 }) {
   return (
-    <div
-      style={{
-        padding: "4px 8px",
-        borderBottom: last ? "none" : "1px solid #1a1a1a",
-      }}
-    >
+    <div className={"px-2 py-1" + (last ? "" : " border-b border-line")}>
       <Tooltip title={label} trigger={
-        <div
-          style={{
-            display: "inline-flex",
-            alignItems: "baseline",
-            gap: 4,
-            marginBottom: 3,
-            cursor: "help",
-          }}
-        >
-          <span
-            style={{
-              fontSize: 9,
-              color: "#ccc",
-              textTransform: "uppercase",
-              letterSpacing: 0.5,
-              fontWeight: 600,
-              borderBottom: "1px dotted #555",
-            }}
-          >
+        <div className="inline-flex items-baseline gap-1 mb-[3px] cursor-help">
+          <span className="text-[9px] text-fg2 uppercase tracking-[0.5px] font-semibold border-b border-dotted border-current">
             {label}
           </span>
-          <span style={{ fontSize: 8, color: "#555" }}>{sublabel}</span>
+          <span className="text-[8px] text-muted">{sublabel}</span>
         </div>
       }>
         {tooltip}
       </Tooltip>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>{items}</div>
+      <div className="flex flex-wrap gap-[3px]">{items}</div>
     </div>
   );
 }
@@ -330,8 +294,8 @@ function buildInfraItems(infra: InfraVantageHealth[]): React.ReactNode[] {
         title={`${providerName} infra vantages`}
         trigger={
           <Card dotColor={c.dot} bg={c.bg}>
-            <span style={{ fontSize: 11, fontWeight: 500 }}>{providerName}</span>
-            <span style={{ fontSize: 9, color: "#888" }}>
+            <span className="text-[11px] font-medium">{providerName}</span>
+            <span className="text-[9px] text-muted">
               {okCount}/{vantages.length} healthy
             </span>
           </Card>
@@ -390,38 +354,20 @@ function SectionRow({
   items: React.ReactNode[];
   last?: boolean;
 }) {
-  const cellStyle: React.CSSProperties = {
-    padding: "6px 8px",
-    borderBottom: last ? "none" : "1px solid #1a1a1a",
-    verticalAlign: "middle",
-  };
+  const cellCls = "px-2 py-1.5 align-middle" + (last ? "" : " border-b border-line");
   return (
     <tr>
       <th
         scope="row"
-        style={{
-          ...cellStyle,
-          background: "#0a0a0a",
-          borderRight: "1px solid #1a1a1a",
-          textAlign: "left",
-          fontWeight: 600,
-        }}
+        className={cellCls + " bg-bg border-r border-line text-left font-semibold"}
       >
         <Tooltip
           trigger={
-            <span style={{ display: "inline-block", cursor: "help" }}>
-              <span
-                style={{
-                  fontSize: 10,
-                  color: "#ccc",
-                  textTransform: "uppercase",
-                  letterSpacing: 0.5,
-                  borderBottom: "1px dotted #555",
-                }}
-              >
+            <span className="inline-block cursor-help">
+              <span className="text-[10px] text-fg2 uppercase tracking-[0.5px] border-b border-dotted border-current">
                 {label}
               </span>
-              <span style={{ display: "block", fontSize: 9, color: "#555", fontWeight: 400 }}>
+              <span className="block text-[9px] text-muted font-normal">
                 {sublabel}
               </span>
             </span>
@@ -430,8 +376,8 @@ function SectionRow({
           {tooltip}
         </Tooltip>
       </th>
-      <td style={cellStyle}>
-        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>{items}</div>
+      <td className={cellCls}>
+        <div className="flex gap-1 flex-wrap">{items}</div>
       </td>
     </tr>
   );
@@ -450,39 +396,30 @@ function Card({
   title?: string;
   children: React.ReactNode;
 }) {
-  // Sizing (gap / padding / min-width) lives in Tailwind classes so it can
-  // shrink on mobile via md: overrides without conflicting with the inline
-  // styles (inline always wins specificity).
+  // Only the status-driven colors stay inline (runtime values that can't be
+  // static utilities): the card background, the dot color, and the dot glow.
+  // Everything else — sizing, border, layout — is Tailwind.
   const inner = (
     <div
-      className="flex items-center gap-1 md:gap-1.5 px-1 py-0.5 md:px-1.5 md:py-[3px] rounded min-w-[72px] md:min-w-[96px]"
-      style={{
-        background: bg,
-        border: "1px solid #1f1f1f",
-      }}
+      className="flex items-center gap-1 md:gap-1.5 px-1 py-0.5 md:px-1.5 md:py-[3px] rounded min-w-[72px] md:min-w-[96px] border border-line"
+      style={{ background: bg }}
     >
       <span
-        style={{
-          width: 6,
-          height: 6,
-          borderRadius: "50%",
-          background: dotColor,
-          flexShrink: 0,
-          boxShadow: `0 0 4px ${dotColor}55`,
-        }}
+        className="w-1.5 h-1.5 rounded-full shrink-0"
+        style={{ background: dotColor, boxShadow: `0 0 4px ${dotColor}55` }}
       />
-      <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.15 }}>{children}</div>
+      <div className="flex flex-col leading-[1.15]">{children}</div>
     </div>
   );
   if (href) {
     return (
-      <Link href={href as Route} title={title} style={{ textDecoration: "none", color: "inherit" }}>
+      <Link href={href as Route} title={title} className="no-underline text-inherit">
         {inner}
       </Link>
     );
   }
   return (
-    <span title={title} style={{ display: "inline-block" }}>
+    <span title={title} className="inline-block">
       {inner}
     </span>
   );

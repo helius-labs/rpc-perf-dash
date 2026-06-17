@@ -38,7 +38,7 @@ export function ConsensusIntegrity({
                     <FloatingTooltip
                       title="Day"
                       trigger={
-                        <span style={{ borderBottom: "1px dotted #555", cursor: "help" }}>Day</span>
+                        <span className="border-b border-dotted border-current cursor-help">Day</span>
                       }
                     >
                       <div className="font-medium mb-1.5">Day</div>
@@ -52,7 +52,7 @@ export function ConsensusIntegrity({
                     <FloatingTooltip
                       title="Sampled"
                       trigger={
-                        <span style={{ borderBottom: "1px dotted #555", cursor: "help" }}>Sampled</span>
+                        <span className="border-b border-dotted border-current cursor-help">Sampled</span>
                       }
                     >
                       <div className="font-medium mb-1.5">Sampled</div>
@@ -69,7 +69,7 @@ export function ConsensusIntegrity({
                     <FloatingTooltip
                       title="No-consensus"
                       trigger={
-                        <span style={{ borderBottom: "1px dotted #555", cursor: "help" }}>No-consensus</span>
+                        <span className="border-b border-dotted border-current cursor-help">No-consensus</span>
                       }
                     >
                       <div className="font-medium mb-1.5">No-consensus</div>
@@ -84,7 +84,7 @@ export function ConsensusIntegrity({
                     <FloatingTooltip
                       title="Disputed"
                       trigger={
-                        <span style={{ borderBottom: "1px dotted #555", cursor: "help" }}>Disputed</span>
+                        <span className="border-b border-dotted border-current cursor-help">Disputed</span>
                       }
                     >
                       <div className="font-medium mb-1.5">Disputed</div>
@@ -99,7 +99,7 @@ export function ConsensusIntegrity({
                     <FloatingTooltip
                       title="Auditor down"
                       trigger={
-                        <span style={{ borderBottom: "1px dotted #555", cursor: "help" }}>Auditor down</span>
+                        <span className="border-b border-dotted border-current cursor-help">Auditor down</span>
                       }
                     >
                       <div className="font-medium mb-1.5">Auditor down</div>
@@ -121,7 +121,7 @@ export function ConsensusIntegrity({
                     <td className="prov-num">
                       {r.no_consensus.toLocaleString()}
                       {r.total > 0 && (
-                        <span style={{ color: "#666", marginLeft: 4 }}>
+                        <span className="text-muted ml-1">
                           ({((r.no_consensus / r.total) * 100).toFixed(1)}%)
                         </span>
                       )}
@@ -129,7 +129,7 @@ export function ConsensusIntegrity({
                     <td className="prov-num">
                       {r.disputed.toLocaleString()}
                       {r.total > 0 && (
-                        <span style={{ color: "#666", marginLeft: 4 }}>
+                        <span className="text-muted ml-1">
                           ({((r.disputed / r.total) * 100).toFixed(1)}%)
                         </span>
                       )}

@@ -78,6 +78,7 @@ function HeroLogo({ provider }: { provider: RankedProvider }) {
     >
       {provider.animated ? (
         <iframe
+          key={provider.id}
           src={provider.animated}
           title=""
           aria-hidden="true"
@@ -87,7 +88,7 @@ function HeroLogo({ provider }: { provider: RankedProvider }) {
           style={{ colorScheme: "dark" }}
         />
       ) : provider.logo ? (
-        <img src={provider.logo} alt="" className="w-full h-full object-contain" />
+        <img key={provider.id} src={provider.logo} alt="" className="w-full h-full object-contain" />
       ) : null}
     </div>
   );
@@ -111,8 +112,7 @@ export function OverviewBoard({
   methodCount: number;
 }) {
   const preset = presetById(presetId);
-  // State seeds from the preset; the parent remounts (key={presetId}) on preset
-  // switch, so navigating presets resets these to the new preset's defaults.
+  // State seeds from the preset's defaults.
   const [componentWeights, setComponentWeights] = useState<ScoringWeights>(preset.weights);
   const [methodWeights, setMethodWeights] = useState<MethodWeights>(() => methodWeightsFor(preset));
   // Which regions count toward the score (+ their relative weights). Seeded from
@@ -120,6 +120,20 @@ export function OverviewBoard({
   const [regionWeights, setRegionWeights] = useState<Partial<RegionWeights>>(
     () => ({ ...preset.regionWeights }),
   );
+
+  // Reset client tuning to the new preset's defaults when the workload changes.
+  // This replaces an old key={presetId} remount in page.tsx — remounting also
+  // tore down the winner's hero logo <iframe>, reloading/replaying its animation
+  // on every preset switch. Resetting in-place lets the subtree reconcile, so an
+  // unchanged #1 provider keeps the same iframe (no reload). React's documented
+  // "store info from previous render" pattern; runs during render, no flash.
+  const [prevPresetId, setPrevPresetId] = useState(presetId);
+  if (presetId !== prevPresetId) {
+    setPrevPresetId(presetId);
+    setComponentWeights(preset.weights);
+    setMethodWeights(methodWeightsFor(preset));
+    setRegionWeights({ ...preset.regionWeights });
+  }
 
   // Region chips, in canonical order, restricted to geos with data.
   const regionOptions = GEO_REGIONS.filter((g) => cubeGeos.includes(g));
@@ -259,7 +273,7 @@ export function OverviewBoard({
                     className={
                       "flex-1 min-w-0 truncate text-center text-[11px] sm:text-[12px] font-medium px-2 sm:px-3.5 py-[7px] rounded-full border transition-colors hover:no-underline " +
                       (active
-                        ? "bg-accent border-accent text-white"
+                        ? "bg-accent border-accent text-accentfg"
                         : "border-line2 text-fg2 hover:text-fg hover:border-fg2")
                     }
                   >

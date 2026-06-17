@@ -20,9 +20,8 @@
    ========================================================= */
 
 /* =========================================================
-   Theme tokens — "Index, dark" design system (Claude Design
-   handoff zrFa6mSpqJpIKrntxfhEyg). Pitch-black editorial dark
-   with a Helius-orange accent and Geist / Geist Mono type.
+   Theme tokens — monochrome OLED-black editorial dark with a
+   near-white accent and Geist / Geist Mono type.
    ========================================================= */
 :root {
   color-scheme: dark;
@@ -31,18 +30,22 @@
      viewport page leaves a lighter UA dark band below body. */
   background: var(--bg);
 
-  --bg:        #0A0B0E;
-  --surface:   #11131A;
-  --surface-2: #161922;
-  --text:      #F2F1ED;
-  --text-2:    #B6B5AE;
-  --muted:     #6E6D67;
-  --border:    #1F2129;
-  --border-2:  #292B36;
-  --grid:      #15171F;
+  --bg:        #000000;
+  --surface:   #0C0C0E;
+  --surface-2: #141416;
+  --text:      #F4F4F2;
+  --text-2:    #B0B0AE;
+  --muted:     #6A6A68;
+  --border:    #1B1B1E;
+  --border-2:  #262629;
+  --grid:      #121214;
 
-  --accent:      #F46036;
+  --accent:      #E5E5E5;
   --accent-soft: color-mix(in oklch, var(--accent) 12%, transparent);
+  /* Foreground for content sitting ON the accent (button labels, selection,
+     filled pills). Must contrast with --accent, NOT with --bg — a light
+     accent like this near-white needs dark text on top. */
+  --accent-fg:   #0A0A0A;
 
   /* Geist faces wired via next/font (see layout.tsx); ui fallbacks keep
      SSR + non-latin glyphs sane before the webfont resolves. */
@@ -65,6 +68,7 @@
   --color-line: var(--border);
   --color-line2: var(--border-2);
   --color-accent: var(--accent);
+  --color-accentfg: var(--accent-fg);
   --color-grid: var(--grid);
   --font-geistmono: var(--font-mono-geist), "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
 }
@@ -78,7 +82,7 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
-::selection { background: var(--accent); color: var(--bg); }
+::selection { background: var(--accent); color: var(--accent-fg); }
 
 /* Default link styling lives in @layer base so Tailwind utility classes
    (e.g. text-neutral-500 / hover:text-white) can override per-link. */
@@ -247,36 +251,13 @@ summary:has(.rcc-caret)::-webkit-details-marker { display: none; }
 .idx-arrow:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /**
- * Section-header "view all →" link. Same hover behaviour as .idx-arrow
- * (muted → accent color, slight translateX, smooth transition) but inline
- * with text rather than a square button — sits next to the section
- * description as an inline call-to-action.
- */
-.section-link-arrow {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--muted);
-  text-decoration: none;
-  transition: color 0.18s ease, transform 0.18s ease;
-}
-.section-link-arrow:hover { color: var(--accent); text-decoration: none; }
-.section-link-arrow:hover svg { transform: translateX(2px); }
-.section-link-arrow:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
-.section-link-arrow svg {
-  width: 12px;
-  height: 12px;
-  transition: transform 0.18s ease;
-}
-
-/**
  * Flash animation for newly-arrived rows in the streaming recent-challenges
  * table. ~1.8s ease-out from an accent-tinted highlight back to default —
  * makes it visually obvious which rows just landed. Used by both
  * ClickableRow (<tr>) and ClickableCard (<div>).
  */
 @keyframes recent-row-flash {
-  0%   { background-color: rgba(255, 154, 60, 0.16); }
+  0%   { background-color: color-mix(in oklch, var(--accent) 16%, transparent); }
   100% { background-color: transparent; }
 }
 .recent-row-flash {

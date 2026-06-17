@@ -28,7 +28,7 @@ const STATE_COLOR: Record<StageState, string> = {
   ok: "#6bf08c",
   warn: "#ffb84d",
   down: "#ff6b6b",
-  unknown: "#6E6D67",
+  unknown: "#6A6A68",
 };
 
 /** Inline SVG sparkline. Bars so empty (zero) buckets read as gaps at a glance. */

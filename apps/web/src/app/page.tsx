@@ -119,10 +119,10 @@ export default async function OverviewPage({
         </div>
       )}
 
-      {/* Intro + preset chips + weights + leaderboard. Keyed by preset so the
-          client weight state resets when the workload changes. */}
+      {/* Intro + preset chips + weights + leaderboard. The client weight state
+          resets on workload change inside OverviewBoard (not via a remount key,
+          which would reload the winner's hero logo iframe on every switch). */}
       <OverviewBoard
-        key={preset.id}
         cube={cube}
         cubeGeos={cubeGeos}
         presetId={preset.id}

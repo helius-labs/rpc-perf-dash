@@ -116,7 +116,7 @@ export function ChallengeTarget({
   const [copied, setCopied] = useState(false);
 
   if (t.kind === "none") {
-    return <span style={{ color: "#666" }}>—</span>;
+    return <span className="text-muted">—</span>;
   }
 
   const onCopy = async (e: React.MouseEvent) => {
@@ -149,7 +149,7 @@ export function ChallengeTarget({
 
   return (
     <span
-      style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+      className="inline-flex items-center gap-1.5"
       onClick={stopRowClick}
     >
       {url ? (

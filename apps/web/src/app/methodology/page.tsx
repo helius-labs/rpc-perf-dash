@@ -288,7 +288,7 @@ const mdStyles = `
     content: "\\25B8";
     margin-left: auto;
     font-size: 13px;
-    color: #6e6d67;
+    color: var(--muted);
     transition: transform 0.15s ease;
   }
   .md-summary[aria-expanded="true"]::after { transform: rotate(90deg); }

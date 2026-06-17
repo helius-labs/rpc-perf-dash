@@ -4,19 +4,20 @@
  * APIs — so it renders inside the OG runtime. Satori only supports flexbox, so
  * every multi-child element sets display:flex explicitly and there are no grids.
  *
- * Visual tokens mirror the live dark theme (globals.css): bg #0A0B0E, surfaces
- * #11131A/#161922, borders #1F2129, text #F2F1ED / muted #B6B5AE / #6E6D67,
- * accent #F46036. Winner name/score is tinted with the provider's brand color.
+ * Visual tokens mirror the live dark theme (globals.css): bg #000000, surfaces
+ * #0C0C0E/#141416, borders #1B1B1E/#262629, text #F4F4F2 / muted #B0B0AE / #6A6A68,
+ * near-white accent #E5E5E5. Winner name/score is tinted with the provider's
+ * brand color.
  */
 
-const BG = "#0A0B0E";
-const SURFACE = "#13151D";
-const BORDER = "#23262F";
-const TRACK = "#1C1F28";
-const TEXT = "#F2F1ED";
-const MUTED = "#B6B5AE";
-const FAINT = "#6E6D67";
-const ACCENT = "#F46036";
+const BG = "#000000";
+const SURFACE = "#101012";
+const BORDER = "#262629";
+const TRACK = "#1A1A1C";
+const TEXT = "#F4F4F2";
+const MUTED = "#B0B0AE";
+const FAINT = "#6A6A68";
+const ACCENT = "#E5E5E5";
 
 const SANS = "Geist";
 const MONO = "Geist Mono";
@@ -75,7 +76,7 @@ function Mark({ row, size }: { row: CardRow; size: number }) {
         height: size,
         borderRadius: size * 0.22,
         background: row.color,
-        color: "#0A0B0E",
+        color: "#000000",
         fontFamily: SANS,
         fontWeight: 600,
         fontSize: size * 0.5,

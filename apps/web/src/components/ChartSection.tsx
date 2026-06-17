@@ -38,7 +38,7 @@ export function ChartLoading({ filters, windowHours }: { filters: ReactNode; win
     </span>
   );
   return (
-    <div style={{ marginBottom: 16 }}>
+    <div className="mb-4">
       <div className={BAR_CLS}>
         {filters}
         <FilterGroup label="RPC">
