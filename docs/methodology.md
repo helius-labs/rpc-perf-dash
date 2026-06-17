@@ -59,50 +59,38 @@ Each test (we call it a "challenge") moves through these steps:
 
 ## Consensus decision rules
 
-How do we decide which answer is "correct" without trusting any single provider?
-We compare everyone's response and go with the **majority**. A provider counts as
-correct if it's in the majority group; off on its own means incorrect.
+We never trust one provider to tell us the "right" answer. Every provider gets
+the same request, and we go with the answer **most of them agree on**. Match the
+majority and you're marked correct; be the odd one out and you're marked wrong.
 
-The exact rules, per test (cold and warm are judged separately). Let `n` be the
-number of providers that returned a usable answer, and `g` the size of the
-largest group that agrees:
+We only score a test when the outcome is clear. Cold and warm requests are judged
+separately:
 
-| Condition | Outcome |
+| What happened | Result |
 |---|---|
-| Fewer than 3 usable answers (`n < 3`) | **Ambiguous**: too few responses; the test is thrown out |
-| No group of 3 or more agrees (`g < 3`; floor is 2 on a structurally-3-voter panel, see below) | **Ambiguous**: thrown out |
-| The largest group isn't a clear majority (e.g. a 2–2 tie) | **Ambiguous**: thrown out |
-| A group of 3+ forms a clear majority | That group is **correct**; everyone outside it is a **dissenter** |
+| Fewer than 3 providers returned a usable answer | Skipped — not enough to compare |
+| No clear majority (e.g. a 2–2 tie) | Skipped — too close to call |
+| A clear majority agrees | That group is **correct**; anyone who disagrees is **wrong** |
 
-The voting panel is **Helius, Triton, Alchemy, and QuickNode**: four voters on
-most methods. A provider whose tier structurally can't serve a method
-(declared via `unsupported_methods` in `packages/shared/src/providers.ts`) is
-a **non-voter** there: its samples are marked `tier_method_unsupported` and
-dropped from both the correctness and reliability denominators — disclosed
-limitation, not a failure. Two methods run as 3-voter panels:
+**Who votes.** The panel is **Helius, Triton, Alchemy, and QuickNode** — four
+providers on most methods. If a provider's plan simply doesn't offer a method, it
+isn't counted for or against on that method. That's a known limitation, not a
+failure.
 
-- `simulateBundle` — a Jito extension QuickNode's tier doesn't serve
-  (-32601).
-- `getTransactionsForAddress` — QuickNode serves a **non-comparable variant**
-  (bare-array result instead of the `{data, paginationToken}` envelope,
-  always-full transaction details, slot filter ignored), so its answers can
-  never match the panel's.
+Two methods have only three voters, because QuickNode either doesn't offer them
+or returns the result in a different shape we can't compare against the others:
 
-On a structurally-3-voter panel, the "group of 3 or more" floor is lowered to
-a **2-1 strict majority** (it would otherwise demand unanimity, and a lone
-deviator could never be scored). Two byte-equal agreements out of three
-independent providers is decisive — and the auditor cross-check still
-backstops the case where the agreeing pair is wrong. So a provider that
-deviates alone on a 3-voter method (e.g. an empty or incomplete answer) is a
-**dissenter and scores incorrect**, exactly as on the 4-voter panel. The
-`n ≥ 3` usable-voters floor is unchanged: if one of the three doesn't answer
-usably, the test is still thrown out.
+- `simulateBundle`
+- `getTransactionsForAddress`
 
-Each test also carries a reference answer fetched from the utility (auditor)
-endpoint at generation time. If the panel majority disagrees with that
-reference, every sample for the test is excluded from scoring
-(`consensus_disputed`) — a tripwire for the case where the majority itself is
-wrong.
+On these three-voter methods, two providers agreeing is enough to settle the
+answer (the third is then the odd one out and scored wrong). We still need all
+three to answer for the test to count.
+
+**A second opinion.** Every test also has a reference answer from an independent
+source, fetched the moment the test is created. If the majority disagrees with
+that reference, we throw the whole test out — a safeguard for the rare case where
+the majority itself is wrong.
 
 ## Deferred finality re-verification
 
@@ -229,35 +217,28 @@ and render as the interactive method explorer on the live methodology page.*
 
 ### Custom methods: getTransactionsForAddress
 
-`getTransactionsForAddress` is the first non-standard method in the benchmark
-(an indexer-backed address-history API served by Helius, Triton, and Alchemy;
-QuickNode's variant is non-comparable — see the consensus section). Two design
-choices differ from its standard-method sibling `getSignaturesForAddress`:
+`getTransactionsForAddress` is the benchmark's first non-standard method — an
+indexer-backed address-history API served by Helius, Triton, and Alchemy
+(QuickNode's variant is non-comparable; see the consensus section). Two things
+differ from its standard sibling `getSignaturesForAddress`:
 
-- **Slot-pinned challenges.** Every test carries
-  `filters: { slot: { lte: pin } }` with `pin = tip − 5000` (~35 minutes,
-  deeply finalized) and `sortOrder: "desc"`. "The newest ≤limit transactions
-  at or before the pin" is an immutable answer: the finalized-semantics tip
-  drift that forces `getSignaturesForAddress` into a Jaccard tolerance lives
-  entirely at the tip, which the pin excludes. Both buckets therefore use
-  **strict byte-equal** matching — necessary, since a 3-voter panel requires
-  unanimity. Trade-off: live-tip behavior of this method is not measured.
-- **Two buckets, one per detail level.** `signatures` (limit 1000) hashes
-  `{ signature, slot, err }` per entry; `full` (limit 25, json encoding)
-  hashes `{ signature, slot, err, fee, preBalances, postBalances }` per
-  transaction — the same canonical slice as `getTransaction`. Both drop the
-  provider-internal `paginationToken`, `blockTime`, `memo`,
-  `confirmationStatus`, `transactionIndex`, and (full mode) the message body,
-  logs, and `version`. Params stick to the cross-provider common subset: no
-  Helius-only `tokenTransfer` filter, no `processed` commitment, full-mode
-  limit under Alchemy's cap.
+- **Slot-pinned, byte-equal.** Every test pins the query to `slot ≤ tip − 5000`
+  (~35 minutes back, deeply finalized), newest-first. That makes the answer
+  immutable — the tip drift that forces `getSignaturesForAddress` into fuzzy
+  matching is excluded — so both buckets match **byte-for-byte**, as the
+  3-voter panel requires. Trade-off: live-tip behavior isn't measured.
+- **Two detail levels.** `signatures` (limit 1000) hashes
+  `{ signature, slot, err }` per entry; `full` (limit 25) hashes the same
+  canonical slice as `getTransaction`
+  (`{ signature, slot, err, fee, preBalances, postBalances }`). Both drop
+  provider-internal fields (`paginationToken`, `blockTime`, `memo`, …), and
+  params stay in the cross-provider common subset (no Helius-only filters, no
+  `processed` commitment, limit under Alchemy's cap).
 
-Challenge addresses are transaction signers harvested from a block probed
-*below* the pin (guaranteeing at least one transaction inside the filter
-window), filtered to non-high-activity addresses. That filter is load-bearing
-here: high-activity addresses (programs, vote authorities) diverge across
-providers' indexers (vote-transaction indexing differs), and excluding them is
-what makes byte-equal consensus possible.
+Test addresses are signers pulled from a block just below the pin (guaranteeing
+a transaction in range), restricted to **non-high-activity** addresses —
+programs and vote authorities index differently across providers, so excluding
+them is what makes byte-equal agreement possible.
 
 ## Test ages & archival depth
 
@@ -301,68 +282,51 @@ latency we report.
 
 ## Verification
 
-Every test has a public page at `/raw?challenge=<id>`: the inputs, the commitment
-hash, the revealed seed, each provider's response, the consensus result, and the
-independent reference's verdict. You can recompute the hash yourself and confirm
-the inputs were fixed before anyone answered: commitment = SHA-256(seed ‖
-canonical-JSON(params)), where canonical-JSON recursively sorts object keys —
-the same canonicalization used for projection hashing. When the scoring or
-comparison rules change, we bump the methodology version so past results stay
-coherent.
+Every test has a public page at `/raw?challenge=<id>`: the inputs, commitment
+hash, revealed seed, each provider's response, the consensus result, and the
+reference's verdict. To confirm the inputs were fixed before anyone answered,
+recompute `commitment = SHA-256(seed ‖ canonical-JSON(params))` yourself
+(canonical-JSON sorts object keys recursively — the same canonicalization used
+for projection hashing). When the scoring rules change, we bump the methodology
+version so past results stay coherent.
 
-The independent reference's full response payload is shown for the first 6 hours
-after a test is generated, then trimmed to bound storage; its canonical
-reference hash — what the verdict is computed against — is retained permanently,
-so the audit verdict on any test stays verifiable indefinitely.
+The reference's full response is shown for the first 6 hours, then trimmed to
+save storage; its reference hash — what the verdict is checked against — is kept
+permanently, so any test's verdict stays verifiable indefinitely.
 
 ## Anti-gaming defenses
 
-A provider that can recognize benchmark traffic can serve it from a fast path
+A provider that can recognize benchmark traffic could serve it from a fast path
 and look better than it is. The defenses, all verifiable in this repo:
 
-- **Commit-reveal with a 30-second TTL.** Test parameters are derived from
-  live on-chain state and their hash is locked in before any request is sent;
-  the seed is revealed after the test expires. Providers can't precompute
-  answers, and the operator can't cherry-pick favorable tests after the fact.
-  The short TTL means pre-warming a cache for a specific test is useless.
-- **Honeypots.** About 5% of tests are pre-validated probes with known
-  answers, drawn least-recently-used from a per-method pool. They are
-  indistinguishable from fresh tests (workers read a view that hides the
-  honeypot flag, and the request shape is identical). Appearing on the
-  leaderboard requires a ≥95% honeypot pass rate (Wilson lower bound) — a
-  provider that special-cases benchmark traffic and gets honeypots wrong
-  drops off the board.
+- **Commit-reveal (30-second TTL).** Test parameters come from live on-chain
+  state and their hash is locked in before any request is sent; the seed is
+  revealed after the test expires. So providers can't precompute answers, the
+  operator can't cherry-pick favorable tests, and the short TTL makes
+  pre-warming a cache useless.
+- **Honeypots.** About 5% of tests are pre-validated probes with known answers,
+  indistinguishable from real ones (workers can't see the honeypot flag; the
+  request looks identical). Making the leaderboard requires a ≥95% honeypot pass
+  rate (Wilson lower bound), so a provider that special-cases benchmark traffic
+  and fails them drops off.
 - **Vantage and egress diversity.** The same tests are fired from multiple
-  clouds and egress paths, and every sample is tagged with its egress path —
-  a provider allow-listing or special-casing known benchmark IPs shows up as
-  a per-egress discrepancy.
-- **Auditor tripwire and finality re-verification.** Consensus is
-  cross-checked against an independent reference at test time (§ Consensus
-  decision rules) and re-verified against finalized chain state afterward
-  (§ Deferred finality re-verification).
+  clouds and egress paths, and each sample is tagged with its path. Allow-listing
+  or special-casing benchmark IPs then shows up as a per-egress discrepancy.
+- **Auditor and finality checks.** Consensus is cross-checked against an
+  independent reference at test time ([consensus rules](#consensus-decision-rules))
+  and re-verified against finalized chain state afterward
+  ([deferred finality re-verification](#deferred-finality-re-verification)).
 - **Disclosed limitations.** Where a provider's tier can't support a defense
-  (for example, a key embedded in the URL that can't be rotated), that is
-  surfaced as a caveat badge on the leaderboard rather than silently ignored.
-  The defense model does not rely on key rotation.
+  (e.g. a key embedded in the URL that can't be rotated), it's shown as a caveat
+  badge rather than silently ignored. The model doesn't rely on key rotation.
 
-## Operator vs reproducer cost
+## Cost of reproducing
 
-Every provider on the panel is measured symmetrically — same challenges, same
-timeouts, same scoring. The only asymmetry is who pays for the traffic: the
-operator's own provider traffic is internal ($0 at any tier), while a
-third-party reproducer needs paid tiers on every benchmarked provider to
-sustain the shared cadence (for example, the public Helius free tier's ~1M
-credits/mo cap is far below benchmark volume). This affects the cost of
-*reproducing* the benchmark, not the measurements themselves — anyone can run
-the same code against their own keys and recompute every score.
-
-## Deployment status
-
-During an early deployment the qualification thresholds above are looser than
-the long-term targets while sample volume builds up. Workers run across
-multiple clouds and providers (one process per region × egress vantage), the
-generator runs active + hot-standby, and the benchmarked panel is Helius,
-Triton, Alchemy, and QuickNode. Honeypot tests (pre-seeded known answers) are
-active and gate leaderboard eligibility. Each provider runs a single endpoint;
-endpoint cycling would only return if a provider publishes confirmed-equivalent
-alternate endpoints.
+Every provider is measured the same way: same challenges, same timeouts, same
+scoring. The one difference is cost. The operator runs its own provider for
+free, but anyone reproducing the benchmark needs a **paid tier on every
+provider**. Free tiers can't keep up with the benchmark's volume (the Helius
+free tier's ~1M credits/month, for instance, is far below it), so running on
+free tiers won't give the same or accurate results. This only changes what it
+costs to reproduce the benchmark, not the measurements. Anyone can run the same
+code against their own keys and recompute every score.

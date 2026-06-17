@@ -284,14 +284,6 @@ const mdStyles = `
     transition: color 0.15s ease;
   }
   .md-summary::-webkit-details-marker { display: none; }
-  .md-summary::after {
-    content: "\\25B8";
-    margin-left: auto;
-    font-size: 13px;
-    color: var(--muted);
-    transition: transform 0.15s ease;
-  }
-  .md-summary[aria-expanded="true"]::after { transform: rotate(90deg); }
   .md-summary:hover { color: #fff; }
   .md-summary[aria-expanded="true"] { color: #fff; }
   .md-collapsible-body { padding-top: 2px; }

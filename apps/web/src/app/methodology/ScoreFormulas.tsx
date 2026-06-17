@@ -1,8 +1,9 @@
 /**
- * Score-formula card grid for the methodology page — replaces the raw code
- * fence of the L/W/R/C/F formulas with a per-axis card layout grouped by
- * category (Speed / Quality / Freshness), led by a weight-split bar that makes
- * the default 50/45/5 mass distribution visible at a glance.
+ * Score-formula spec table for the methodology page — replaces the raw code
+ * fence of the L/W/R/C/F formulas with a compact per-axis table (metric /
+ * formula / meaning per row), led by a weight-split bar that makes the default
+ * 50/45/5 mass distribution across Speed / Quality / Freshness visible at a
+ * glance.
  *
  * Static (no interactivity): the methodology page documents the model; actual
  * weight tuning happens on the leaderboard via the preset chips / sliders on the
@@ -27,7 +28,7 @@ const AXES: readonly Axis[] = [
     name: "Latency",
     weight: 0.25,
     category: "speed",
-    formula: "0.5·clamp(best_p50 / p50) + 0.5·clamp(best_p95 / p95)",
+    formula: "100 × avg(fastest p50 / your p50, fastest p95 / your p95)",
     measure:
       "Blends “usually fast” (p50 median) with “tight tail” (p95), each scored against the panel’s best.",
   },
@@ -36,7 +37,7 @@ const AXES: readonly Axis[] = [
     name: "Win rate",
     weight: 0.25,
     category: "speed",
-    formula: "clamp(win_rate / best_win_rate) · 100",
+    formula: "100 × your win rate / best win rate",
     measure:
       "Share of challenges where this provider was the single fastest correct sample, normalized to the panel’s best winner.",
   },
@@ -45,7 +46,7 @@ const AXES: readonly Axis[] = [
     name: "Reliability",
     weight: 0.25,
     category: "quality",
-    formula: "success_rate · 100   ·   ok ∧ ¬ambiguous / ¬ambiguous",
+    formula: "100 × responses that succeeded / non-ambiguous samples",
     measure:
       "Share of non-ambiguous samples that responded. An HTTP 200 with incorrect data still counts as reliable, but not correct.",
   },
@@ -54,7 +55,7 @@ const AXES: readonly Axis[] = [
     name: "Correctness",
     weight: 0.2,
     category: "quality",
-    formula: "correct / validated · 100   ·   validated = correct + incorrect + stale",
+    formula: "100 × correct / (correct + incorrect + stale)",
     measure:
       "Share of validated samples that were correct. Timeouts hit R, not C, so a sample is never penalized twice.",
   },
@@ -63,7 +64,7 @@ const AXES: readonly Axis[] = [
     name: "Freshness",
     weight: 0.05,
     category: "freshness",
-    formula: "clamp(best_p95_lag / p95_lag) · 100",
+    formula: "100 × lowest tip-lag / your tip-lag",
     measure: "Tip-lag at p95 versus the panel’s freshest. A tiebreaker, not a primary axis.",
   },
 ];
@@ -120,26 +121,37 @@ export default function ScoreFormulas() {
         ))}
       </div>
 
-      {/* Per-axis cards. */}
-      <div className="mt-4 grid grid-cols-1 gap-3 min-[560px]:grid-cols-2 min-[920px]:grid-cols-3">
+      {/* Per-axis spec table — metric, formula, and meaning on one dense row
+          each (stacks on narrow screens). Far tighter than padded cards. */}
+      <div className="mt-4 border-t border-line">
+        <div className="hidden min-[640px]:grid grid-cols-[150px_minmax(0,1fr)_minmax(0,1.15fr)] gap-x-5 py-2 border-b border-line font-geistmono text-[10px] uppercase tracking-[0.12em] text-muted">
+          <span>Metric</span>
+          <span>Formula</span>
+          <span>What it measures</span>
+        </div>
         {AXES.map((a) => (
-          <div key={a.letter} className="rounded-lg border border-line bg-surface p-4">
-            <div className="flex items-center gap-2.5">
+          <div
+            key={a.letter}
+            className="grid grid-cols-1 min-[640px]:grid-cols-[150px_minmax(0,1fr)_minmax(0,1.15fr)] gap-x-5 gap-y-1.5 py-3 border-b border-line/60 min-[640px]:items-start"
+          >
+            <div className="flex items-center gap-2">
               <span
                 className={
-                  "inline-flex h-6 w-6 items-center justify-center rounded-md font-geistmono text-[13px] font-semibold " +
+                  "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded font-geistmono text-[12px] font-semibold " +
                   CAT_STYLE[a.category].badge
                 }
               >
                 {a.letter}
               </span>
-              <span className="text-[14px] font-medium text-fg">{a.name}</span>
-              <span className="ml-auto font-geistmono text-[11px] text-muted">w {a.weight.toFixed(2)}</span>
+              <span className="text-[13px] font-medium text-fg">{a.name}</span>
+              <span className="ml-auto min-[640px]:ml-0 font-geistmono text-[10.5px] text-muted">
+                w {a.weight.toFixed(2)}
+              </span>
             </div>
-            <code className="mt-3 block whitespace-pre-wrap break-words rounded bg-bg px-2.5 py-2 font-geistmono text-[11.5px] leading-[1.5] text-[#e0a878]">
+            <code className="min-w-0 whitespace-pre-wrap break-words font-geistmono text-[11.5px] leading-[1.45] text-[#e0a878]">
               {a.formula}
             </code>
-            <p className="mt-2.5 mb-0 text-[12.5px] leading-[1.5] text-fg2">{a.measure}</p>
+            <p className="min-w-0 mb-0 text-[12px] leading-[1.5] text-fg2">{a.measure}</p>
           </div>
         ))}
       </div>
