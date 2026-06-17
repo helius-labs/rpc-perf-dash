@@ -26,6 +26,7 @@ import { db, DB_ERROR_MESSAGE } from "@/lib/db";
 import { type Method } from "@rpcbench/shared";
 import { ALL_METHODS } from "@/lib/methods";
 import { WINDOWS } from "@/lib/windows";
+import { buildPageUrl } from "@/lib/apiParams";
 import { FilterPill } from "@/components/FilterPill";
 import { FilterGroup } from "@/components/FilterGroup";
 import { MethodFilter } from "@/components/MethodFilter";
@@ -86,14 +87,7 @@ function urlWith(
   params: SearchParams,
   override: Partial<Record<keyof SearchParams, string | null>>,
 ): string {
-  const merged: Record<string, string> = {};
-  for (const [k, v] of Object.entries(params)) if (v != null) merged[k] = String(v);
-  for (const [k, v] of Object.entries(override)) {
-    if (v === null) delete merged[k];
-    else if (v != null) merged[k] = String(v);
-  }
-  const qs = new URLSearchParams(merged).toString();
-  return qs ? `/challenges?${qs}` : "/challenges";
+  return buildPageUrl("/challenges", params, override);
 }
 
 export default async function ChallengesPage({

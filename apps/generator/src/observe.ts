@@ -65,17 +65,4 @@ export class SlotObserver {
   tipSlot(): bigint {
     return this.slots.length ? this.slots[this.slots.length - 1]! : 0n;
   }
-
-  /**
-   * True when the observer has at least one slot to derive challenges from.
-   * Used by the liveness watchdog and the boot-time readiness probe.
-   */
-  hasSlots(): boolean {
-    return this.slots.length > 0;
-  }
-
-  /** Wall-clock ms since the last successful getSlot poll; Infinity if none yet. */
-  consecutiveFailureCount(): number {
-    return this.consecutiveFailures;
-  }
 }

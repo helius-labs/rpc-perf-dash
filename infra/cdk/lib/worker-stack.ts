@@ -7,16 +7,14 @@ import {
 } from "aws-cdk-lib/aws-ec2";
 import {
   Cluster,
-  ContainerImage,
   FargateService,
   FargateTaskDefinition,
   LogDrivers,
-  Secret as EcsSecret,
 } from "aws-cdk-lib/aws-ecs";
 import { LogGroup, RetentionDays } from "aws-cdk-lib/aws-logs";
-import { Platform } from "aws-cdk-lib/aws-ecr-assets";
 import type { Secret } from "aws-cdk-lib/aws-secretsmanager";
 import type { Construct } from "constructs";
+import { secretEnv, linuxAmd64Image, NEON_SECRET_KEYS, PANEL_SECRET_KEYS } from "./util.js";
 
 interface WorkerStackProps extends StackProps {
   vpc: Vpc;
@@ -44,14 +42,7 @@ export class WorkerStack extends Stack {
     });
 
     taskDef.addContainer("worker", {
-      // platform: LINUX_AMD64 forces the build to produce an x86_64 image
-      // regardless of host arch. Fargate defaults to x86_64; without this,
-      // builds on Apple Silicon produce arm64 images that crash with
-      // "exec format error" inside the task.
-      image: ContainerImage.fromAsset("../../", {
-        file: "apps/worker/Dockerfile",
-        platform: Platform.LINUX_AMD64,
-      }),
+      image: linuxAmd64Image("apps/worker/Dockerfile"),
       logging: LogDrivers.awsLogs({
         streamPrefix: `worker-${props.egressPath}`,
         logGroup: new LogGroup(this, "WorkerLogs", { retention: RetentionDays.ONE_MONTH }),
@@ -60,15 +51,9 @@ export class WorkerStack extends Stack {
         WORKER_REGION: props.region,
         WORKER_EGRESS_PATH: props.egressPath,
       },
-      secrets: secretEnv(props.secret, [
-        "NEON_DATABASE_URL_POOLED",
-        "NEON_DATABASE_URL_DIRECT",
-        "HELIUS_API_KEY",
-        "HELIUS_GATEKEEPER_URL",
-        "TRITON_URL",
-        "ALCHEMY_URL",
-        "QUICKNODE_URL",
-      ]),
+      // Workers call the panel directly; no utility/auditor keys (the
+      // auditor-independence assertion runs generator-side only).
+      secrets: secretEnv(props.secret, [...NEON_SECRET_KEYS, ...PANEL_SECRET_KEYS]),
     });
 
     const sg = new SecurityGroup(this, "WorkerSg", { vpc: props.vpc, allowAllOutbound: true });
@@ -87,10 +72,4 @@ export class WorkerStack extends Stack {
       enableExecuteCommand: true,
     });
   }
-}
-
-function secretEnv(s: Secret, keys: string[]): Record<string, EcsSecret> {
-  const out: Record<string, EcsSecret> = {};
-  for (const k of keys) out[k] = EcsSecret.fromSecretsManager(s, k);
-  return out;
 }

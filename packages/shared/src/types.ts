@@ -76,6 +76,72 @@ export type Method =
  */
 export const LATENCY_ONLY_METHODS: ReadonlySet<Method> = new Set<Method>();
 
+/**
+ * Methods the generator emits as challenges. Single source of truth for both
+ * the generator's dispatch loop and the benchmark CLI so the two can't drift.
+ */
+export const EMITTED_METHODS: readonly Method[] = [
+  "getBlock",
+  "getTransaction",
+  "getSignaturesForAddress",
+  "getSlot",
+  "getAccountInfo",
+  "getProgramAccounts",
+  "getTokenAccountsByOwner",
+  "getBalance",
+  "getTokenSupply",
+  "getTokenLargestAccounts",
+  "getLatestBlockhash",
+  "getTokenAccountBalance",
+  "getGenesisHash",
+  "getEpochSchedule",
+  "getInflationGovernor",
+  "getInflationRate",
+  "getBlockTime",
+  "getBlockCommitment",
+  "getBlocks",
+  "getInflationReward",
+  "getLeaderSchedule",
+  "getBlockProduction",
+  "getMaxRetransmitSlot",
+  "getMaxShredInsertSlot",
+  "getEpochInfo",
+  "getBlockHeight",
+  "getTransactionCount",
+  "getVoteAccounts",
+  "getRecentPerformanceSamples",
+  "getIdentity",
+  "getVersion",
+  "getHealth",
+  "isBlockhashValid",
+  "getSlotLeader",
+  "getSlotLeaders",
+  "simulateTransaction",
+  "simulateBundle",
+  "getMultipleAccounts",
+  "getSignatureStatuses",
+  "getMinimumBalanceForRentExemption",
+  "getStakeMinimumDelegation",
+  "getBlocksWithLimit",
+  "getRecentPrioritizationFees",
+  "getFeeForMessage",
+  "getTransactionsForAddress",
+] as const;
+
+/**
+ * Registered handlers that are intentionally NOT emitted — they can't reach the
+ * 3-voter consensus minimum on the current panel (see docs/methodology.md).
+ * Handlers stay registered so in-flight straggler challenges still resolve, and
+ * re-enabling is a matter of moving one entry into EMITTED_METHODS. getSupply is
+ * fully dormant; getClusterNodes / getLargestAccounts stay CLI-testable for
+ * re-validation (see the benchmark CLI).
+ */
+export const DORMANT_METHODS: readonly Method[] = [
+  "getSupply",
+  "getClusterNodes",
+  "getLargestAccounts",
+] as const;
+
 export type Region = string;
 
 export type EgressPath = string;
@@ -188,14 +254,6 @@ export const GEO_REGION_MAP: Record<string, Record<string, GeoRegion>> = {
   },
 };
 
-// Each CF Containers instance runs at one specific PoP (not "global"), which
-// the running worker discovers at startup via cdn-cgi/trace and reports as a
-// lowercased
-// IATA code (yyz, iad, lhr, ...). Mapped to a real geo region via the
-// GEO_REGION_MAP entry above. The "global" backwards-compat key in the CF
-// submap maps to na-east for any pre-PoP-detection rows.
-export type GeoRegionOrGlobal = GeoRegion;
-
 const NA_EAST_FALLBACK: GeoRegion = "na-east";
 
 export function geoRegionOf(
@@ -247,11 +305,9 @@ export function rollupTableForWindow(windowHours: number): "rollups_5m" | "rollu
 }
 
 /**
- * Map a window to the LEADERBOARD precompute table. The precompute is refreshed
- * every 5 min (the generator's rollup tick upserts the trailing 2h/2d), so it
- * serves ALL windows now — not just long ones. ≤7d → hourly grain, >7d → daily
- * grain. Returns a validated constant table name (never user input) safe to
- * splice via sql.raw.
+ * Map a window to the LEADERBOARD precompute table (≤7d → hourly, >7d → daily).
+ * The precompute is refreshed every 5 min, so it serves all windows, not just
+ * long ones. Like rollupTableForWindow, returns a validated constant name.
  */
 export function leaderboardTableForWindow(windowHours: number): "leaderboard_agg_1h" | "leaderboard_agg_1d" {
   return windowHours <= 168 ? "leaderboard_agg_1h" : "leaderboard_agg_1d";

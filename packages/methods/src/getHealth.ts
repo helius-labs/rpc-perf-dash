@@ -23,7 +23,7 @@ import {
 export const BUCKETS = ["default"] as const;
 export type GetHealthBucket = (typeof BUCKETS)[number];
 
-export interface GetHealthParams {}
+export type GetHealthParams = Record<string, never>;
 
 type GetHealthResponse = string;
 

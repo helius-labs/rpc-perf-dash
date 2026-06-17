@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import type { DbClient } from "@rpcbench/db";
+import { type DbClient, firstRow } from "@rpcbench/db";
 
 export interface ClaimedAssignment {
   challenge_id: string;
@@ -27,7 +27,9 @@ export async function claimNext(
   egressPath: string,
   workerId: string,
 ): Promise<ClaimedAssignment | null> {
-  const rows = await db.execute(sql`
+  const r = await firstRow<{ challenge_id: string }>(
+    db,
+    sql`
     WITH claimed AS (
       SELECT challenge_id
       FROM challenge_assignments
@@ -47,20 +49,11 @@ export async function claimNext(
       AND a.region = ${region}
       AND a.egress_path = ${egressPath}
     RETURNING a.challenge_id
-  `);
-  const r = (rows as unknown as Array<{ challenge_id: string }>)[0];
+  `,
+  );
   if (!r) return null;
 
-  const detail = await db.execute(sql`
-    SELECT
-      c.id AS challenge_id,
-      v.method, v.params, v.bucket, v.expires_at,
-      c.reference_hash, c.reference_response, c.reference_tip_slot, c.is_honeypot
-    FROM challenges c
-    JOIN challenges_worker_view v ON v.id = c.id
-    WHERE c.id = ${r.challenge_id}
-  `);
-  const raw = (detail as unknown as Array<{
+  const raw = await firstRow<{
     challenge_id: string;
     method: string;
     params: unknown;
@@ -70,7 +63,18 @@ export async function claimNext(
     reference_response: unknown;
     reference_tip_slot: string | number | bigint | null;
     is_honeypot: boolean;
-  }>)[0];
+  }>(
+    db,
+    sql`
+    SELECT
+      c.id AS challenge_id,
+      v.method, v.params, v.bucket, v.expires_at,
+      c.reference_hash, c.reference_response, c.reference_tip_slot, c.is_honeypot
+    FROM challenges c
+    JOIN challenges_worker_view v ON v.id = c.id
+    WHERE c.id = ${r.challenge_id}
+  `,
+  );
   if (!raw) return null;
 
   return {

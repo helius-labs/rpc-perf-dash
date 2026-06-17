@@ -27,7 +27,7 @@ import { isBase58_32 } from "./wellformed.js";
 export const BUCKETS = ["default"] as const;
 export type GetIdentityBucket = (typeof BUCKETS)[number];
 
-export interface GetIdentityParams {}
+export type GetIdentityParams = Record<string, never>;
 
 // Standard Solana returns `{ identity }`; the Helius gatekeeper returns the
 // identity as a BARE string. Accept either shape.

@@ -11,8 +11,6 @@ import type { Construct } from "constructs";
 /**
  * VPC with two NAT gateways in two AZs (different EIPs) so workers can use
  * distinct egress paths per the multi-cloud-egress requirement.
- *
- * Hetzner shadow worker is provisioned outside CDK (separate cloud account).
  */
 export class NetworkStack extends Stack {
   public readonly vpc: Vpc;

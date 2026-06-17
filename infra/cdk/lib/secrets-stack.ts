@@ -5,9 +5,9 @@ import type { Construct } from "constructs";
 /**
  * Single Secrets Manager secret holding all env values workers + generator need.
  *
- * Provider API keys rotate weekly via a separate Lambda rotation cron (provider
- * support permitting). Neon connection strings rotate on-demand only — we do
- * not auto-rotate DB creds because long-lived ECS connections shouldn't cycle.
+ * Real values are written manually into Secrets Manager after the first deploy
+ * (see the placeholder seeding below). There is no automatic rotation — all
+ * keys and connection strings are rotated on-demand.
  */
 export class SecretsStack extends Stack {
   public readonly secret: Secret;

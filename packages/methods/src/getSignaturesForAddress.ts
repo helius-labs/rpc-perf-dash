@@ -37,6 +37,7 @@ import {
   type ChallengeContext,
   type Correctness,
   type MethodHandlers,
+  buffersEqual,
 } from "@rpcbench/shared";
 import { jaccardAtLeast } from "./setsim.js";
 import {
@@ -203,8 +204,20 @@ export async function deriveSigsChallenge(
   ctx: ChallengeContext,
   bucket: string,
 ): Promise<{ params: GetSigsParams; bucket: string } | null> {
-  if (bucket.startsWith("archival")) return deriveArchivalSigsChallenge(ctx);
+  return bucket.startsWith("archival")
+    ? deriveArchivalSigsChallenge(ctx)
+    : deriveTipAnchoredSigsChallenge(ctx, bucket);
+}
 
+/**
+ * Tip-anchored derivation: sample a recent block, pick a signer whose activity
+ * matches the bucket, and (for paginated cursors) anchor the window on its
+ * latest signature.
+ */
+async function deriveTipAnchoredSigsChallenge(
+  ctx: ChallengeContext,
+  bucket: string,
+): Promise<{ params: GetSigsParams; bucket: string } | null> {
   const [activity, _addrType, cursor, limitStr] = bucket.split("__") as [
     "high" | "medium" | "low",
     "program" | "token_account" | "user_wallet",
@@ -319,25 +332,6 @@ export const SIGS_SAFETY_SLOTS = 32;
 /** Minimum sigs in each trimmed set for the tip-anchored compare to fire. */
 export const SIGS_MIN_TRIMMED = 3;
 
-/**
- * True when the projection's sigs list is empty — i.e. the provider returned
- * `ok` with `result: []`. Used by the quorum decision to distinguish
- * "abstention" (empty list, no data to vote with) from "active vote"
- * (non-empty list contributing to the consensus check).
- *
- * Motivation (observed in early probing): SF Public retained only ~2 days
- * of sigs. For older-than-2-day addresses it returned an empty list while
- * Flux returned a full history.
- * Pre-fix, that flipped the decision to "ambiguous" (treating empty as a
- * dissenting vote). Post-fix, the empty side abstains and the non-empty
- * side becomes the reference.
- */
-export function sigsProjectionIsEmpty(p: CanonicalProjection): boolean {
-  const shape = p.shape as { sigs?: unknown[] } | null | undefined;
-  if (!shape || !Array.isArray(shape.sigs)) return false;
-  return shape.sigs.length === 0;
-}
-
 export function sigsProjectionsMatch(
   a: CanonicalProjection,
   b: CanonicalProjection,
@@ -426,8 +420,3 @@ export const handlers: MethodHandlers<GetSigsParams, SigEntry[]> = {
   },
 };
 
-function buffersEqual(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.byteLength !== b.byteLength) return false;
-  for (let i = 0; i < a.byteLength; i++) if (a[i] !== b[i]) return false;
-  return true;
-}

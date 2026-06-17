@@ -148,7 +148,7 @@ export const consensus_log = pgTable(
     connection_mode: text("connection_mode").notNull(),
     /** Per-voter projection_hashes + which voters were in the majority. */
     voters: jsonb("voters").notNull(),
-    /** "consensus" | "ambiguous" */
+    /** "consensus" | "ambiguous" | "liveness_fallback" */
     decision: text("decision").notNull(),
     decision_reason: text("decision_reason"),
     /** Provider ids that voted but disagreed with the majority. */

@@ -1,33 +1,19 @@
 /**
  * getSupply method handlers — TIME-ADVANCING scalar (freshness + sanity gate).
  *
- * ⚠️ DISABLED — registered but NOT emitted by the generator (see
- * apps/generator/src/index.ts `allMethodBucketCombos` and docs/methodology.md).
- * Live measurement showed getSupply can't reach the 3-voter consensus minimum
- * on the current panel: only triton (~6s) and alchemy (~9s) compute it live and
- * agree, quicknode serves a stale cache, and helius hangs >30s — so no
- * request timeout rescues it. The handler is kept here (dormant) so any
- * in-flight straggler challenge resolves safely instead of crashing a worker on
- * an unknown-method lookup, and so re-enabling is a one-line change.
+ * ⚠️ DISABLED — registered but NOT emitted by the generator. Live measurement
+ * showed getSupply can't reach the 3-voter consensus minimum on the current
+ * panel (providers variously compute it live, serve stale caches, or hang past
+ * the timeout). The handler is kept here dormant so any in-flight straggler
+ * challenge resolves instead of crashing a worker, and re-enabling is one line.
  *
- * Returns `{ context:{slot}, value:{ total, circulating, nonCirculating,
- * nonCirculatingAccounts } }`. `total` inflates ~constantly (~0.4 SOL/slot) and
- * circulating/nonCirculating drift, so there is NO way to byte-compare the
- * figures across providers/time — exact supply correctness is impossible.
- *
- * So getSupply is scored like getSlot: consensus matches on the returned
- * `context.slot` (tight tolerance; wide auditor tolerance — both wired in
- * record.ts via the shared freshness predicates), and correctness is a
- * freshness/liveness verdict. On TOP of freshness, `classify` applies a cheap
- * internal-consistency gate (`circulating + nonCirculating ≈ total`, all finite
- * & non-negative) to catch a genuinely broken provider. NOTE: this is NOT a
- * cross-provider check that the supply figure is *correct* — see the
- * methodology caveat. `excludeNonCirculatingAccountsList: true` keeps the
- * response small (the large accounts list is irrelevant to the projection).
- *
- * Supply figures are u64 lamports (~5.8e17), above Number.MAX_SAFE_INTEGER, so
- * JSON parses them with float precision loss; the consistency gate uses a
- * relative tolerance well above float noise but far below any real error.
+ * Supply figures advance every slot and can't be byte-compared across
+ * providers, so — like getSlot — it's scored on the returned `context.slot`
+ * via the shared freshness predicates (wired in record.ts), with `classify`
+ * adding a cheap internal-consistency gate (circulating + nonCirculating ≈
+ * total) to catch a broken provider. That gate is NOT a cross-provider check
+ * that the figure is correct. Note: u64 lamports exceed Number.MAX_SAFE_INTEGER
+ * so JSON loses precision; the gate's tolerance sits above that float noise.
  */
 
 import {

@@ -15,6 +15,7 @@ import {
 import { type MethodWeights } from "@rpcbench/shared/scoring";
 import { ALL_METHODS } from "@/lib/methods";
 import { WINDOWS } from "@/lib/windows";
+import { buildPageUrl } from "@/lib/apiParams";
 import { ogImagePath, parseShareParams } from "@/lib/share";
 import { Suspense } from "react";
 import { ChartPanel, ChartLoading } from "@/components/ChartSection";
@@ -55,18 +56,68 @@ interface SearchParams {
   mw?: string;
 }
 
+const DEFAULT_METHOD: Method = "getTransaction";
+
+/** Parse the /performance query params into the page's filter state. */
+function parsePerformanceFilters(params: SearchParams) {
+  // `?regions=` is a comma-separated geo subset; empty = Overall (all active).
+  // Legacy single `?region=` links still resolve (one-geo subset).
+  const geoSet = new Set<string>(GEO_REGIONS);
+  const selectedGeos: GeoRegion[] = (params.regions ?? params.region ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s): s is GeoRegion => geoSet.has(s));
+  const windowHours = WINDOWS.some((w) => w.value === parseInt(params.window ?? "", 10))
+    ? parseInt(params.window!, 10)
+    : 24;
+  const connectionMode = (params.mode ?? "cold") as "cold" | "warm";
+  const wpRaw = params.wp ?? "all";
+  const selectedProvider: string | null = wpRaw === "all" ? null : wpRaw;
+  const selectedBenchmarkedSet = new Set<string>(
+    (params.bp ?? "").split(",").map((s) => s.trim()).filter((s) => s.length > 0 && s !== "all"),
+  );
+
+  // `?method=` is a comma-separated list; the chart blends the score across all
+  // of them. The breakdown/region tables are per-method, so they key off the
+  // first selected method.
+  const methodSet = new Set<string>(ALL_METHODS);
+  const selectedMethods: Method[] = (params.method ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s): s is Method => methodSet.has(s));
+  if (selectedMethods.length === 0) selectedMethods.push(DEFAULT_METHOD);
+  const selectedMethod: Method = selectedMethods[0]!;
+  const selectedMethodSet = new Set<string>(selectedMethods);
+  const chartMethods: readonly Method[] = selectedMethods;
+
+  // Sparse per-method weight overrides from `?mw=` (method:weight,…) — seeds the
+  // scoreboard's tunable weights so a shared link reproduces the tuned view.
+  const mwOverrides: MethodWeights = {};
+  for (const pair of (params.mw ?? "").split(",")) {
+    const [m, wStr] = pair.split(":");
+    const w = Number(wStr);
+    if (m && methodSet.has(m) && Number.isFinite(w) && w >= 0) mwOverrides[m as Method] = w;
+  }
+
+  return {
+    selectedGeos,
+    windowHours,
+    connectionMode,
+    selectedProvider,
+    selectedBenchmarkedSet,
+    selectedMethods,
+    selectedMethod,
+    selectedMethodSet,
+    chartMethods,
+    mwOverrides,
+  };
+}
+
 function urlWith(
   params: SearchParams,
   override: Partial<Record<keyof SearchParams, string | null>>,
 ): string {
-  const merged: Record<string, string> = {};
-  for (const [k, v] of Object.entries(params)) if (v != null) merged[k] = String(v);
-  for (const [k, v] of Object.entries(override)) {
-    if (v === null) delete merged[k];
-    else if (v != null) merged[k] = String(v);
-  }
-  const qs = new URLSearchParams(merged).toString();
-  return qs ? `/performance?${qs}` : "/performance";
+  return buildPageUrl("/performance", params, override);
 }
 
 /**
@@ -119,45 +170,18 @@ export default async function PerformancePage({
   searchParams: Promise<SearchParams>;
 }) {
   const params = await searchParams;
-  // `?regions=` is a comma-separated geo subset; empty = Overall (all active).
-  // Legacy single `?region=` links still resolve (one-geo subset).
-  const geoSet = new Set<string>(GEO_REGIONS);
-  const selectedGeos: GeoRegion[] = (params.regions ?? params.region ?? "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter((s): s is GeoRegion => geoSet.has(s));
-  const windowHours = WINDOWS.some((w) => w.value === parseInt(params.window ?? "", 10))
-    ? parseInt(params.window!, 10)
-    : 24;
-  const connectionMode = (params.mode ?? "cold") as "cold" | "warm";
-  const wpRaw = params.wp ?? "all";
-  const selectedProvider: string | null = wpRaw === "all" ? null : wpRaw;
-  const selectedBenchmarkedSet = new Set<string>(
-    (params.bp ?? "").split(",").map((s) => s.trim()).filter((s) => s.length > 0 && s !== "all"),
-  );
-
-  const DEFAULT_METHOD: Method = "getTransaction";
-  // `?method=` is a comma-separated list; the chart blends the score across all
-  // of them. The breakdown/region tables are per-method, so they key off the
-  // first selected method.
-  const methodSet = new Set<string>(ALL_METHODS);
-  const selectedMethods: Method[] = (params.method ?? "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter((s): s is Method => methodSet.has(s));
-  if (selectedMethods.length === 0) selectedMethods.push(DEFAULT_METHOD);
-  const selectedMethod: Method = selectedMethods[0]!;
-  const selectedMethodSet = new Set<string>(selectedMethods);
-  const chartMethods: readonly Method[] = selectedMethods;
-
-  // Sparse per-method weight overrides from `?mw=` (method:weight,…) — seeds the
-  // scoreboard's tunable weights so a shared link reproduces the tuned view.
-  const mwOverrides: MethodWeights = {};
-  for (const pair of (params.mw ?? "").split(",")) {
-    const [m, wStr] = pair.split(":");
-    const w = Number(wStr);
-    if (m && methodSet.has(m) && Number.isFinite(w) && w >= 0) mwOverrides[m as Method] = w;
-  }
+  const {
+    selectedGeos,
+    windowHours,
+    connectionMode,
+    selectedProvider,
+    selectedBenchmarkedSet,
+    selectedMethods,
+    selectedMethod,
+    selectedMethodSet,
+    chartMethods,
+    mwOverrides,
+  } = parsePerformanceFilters(params);
 
   type GeoRows = { geo: GeoRegion; rows: Awaited<ReturnType<typeof fetchAggregatesForGeo>> };
   let regionTableCold: GeoRows[] = [];
@@ -475,10 +499,10 @@ export default async function PerformancePage({
       )}
 
       {/* Performance over time. */}
-      <section className="pt-4">
+      <section className="pt-1">
         <div className="flex justify-between items-start gap-8 mb-3">
           <div>
-            <h2 className="text-[26px] font-medium tracking-[-0.022em] mt-2 mb-0">
+            <h2 className="text-[26px] font-medium tracking-[-0.022em] mt-0 mb-0">
               Performance over time
             </h2>
           </div>

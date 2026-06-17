@@ -66,15 +66,12 @@ export class WorkerContainer extends Container<Env> {
 }
 
 /**
- * Multi-lane CF deployment: we run N named container instances, each backed
- * by its own Durable Object. CF's scheduler places each DO+container at a
- * PoP independently — in practice they tend to spread geographically because
- * CF accounts for placement locality. Each container then reports its own
- * PoP via cdn-cgi/trace (apps/worker/src/index.ts:detectCfPop).
- *
- * Lane names are arbitrary — CF doesn't honor them as geo hints. They just
- * disambiguate DO instances. Match the count to max_instances in
- * wrangler.jsonc.
+ * Multi-lane CF deployment: N named container instances, each backed by its own
+ * Durable Object, which CF's scheduler places at a PoP independently (they tend
+ * to spread geographically). Each container reports its own PoP via cdn-cgi/trace
+ * (apps/worker/src/index.ts:detectCfPop). Lane names are NOT geo hints — CF
+ * ignores them; they only disambiguate DO instances. Keep the count matched to
+ * max_instances in wrangler.jsonc.
  */
 const LANES = ["cf1", "cf2", "cf3", "cf4", "cf5", "cf6"] as const;
 
@@ -84,10 +81,8 @@ function laneContainer(env: Env, lane: string) {
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    // Inbound traffic: route to a random lane. Lets us hit /healthcheck on
-    // whichever container is most responsive. Each lane's container reports
-    // its own PoP state in the JSON, so curl-ing repeatedly will show
-    // different PoPs as you bounce across lanes.
+    // Route inbound traffic to a random lane so /healthcheck reaches whichever
+    // container is responsive; each lane reports its own PoP in the JSON.
     const lane = LANES[Math.floor(Math.random() * LANES.length)]!;
     const c = laneContainer(env, lane);
     const res = await c.fetch(request);

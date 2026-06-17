@@ -6,14 +6,13 @@
  * Warm: per-provider serialized HTTP/2 pool (one in-flight at a time per provider/worker).
  */
 
-import { Agent, Pool, request } from "undici";
+import { Pool } from "undici";
 import {
   CONFIGURED_BENCHMARKED,
   resolveEndpointUrl,
   timedColdPost,
   type Method,
 } from "@rpcbench/shared";
-import { HANDLERS } from "@rpcbench/methods";
 import { lookup } from "node:dns/promises";
 
 const TIMEOUT_MS = 5000;
@@ -306,6 +305,3 @@ export async function fanout(
 
   return { results, provider_tip_slots };
 }
-
-void HANDLERS; // keep handler imports referenced (used in classify path)
-void Agent; // imported for h2 capability via Pool option

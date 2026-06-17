@@ -27,7 +27,7 @@ const secrets = new SecretsStack(app, "RpcBenchSecrets", {
   env: { account, region: HOME_REGION },
 });
 
-const homeWorkerServices: ReturnType<typeof workerService>[] = [];
+const homeWorkerServices: WorkerStack["service"][] = [];
 let generatorService: GeneratorStack["service"] | null = null;
 
 for (const region of WORKER_REGIONS) {
@@ -63,7 +63,7 @@ for (const region of WORKER_REGIONS) {
       secret: secrets.secret,
     });
     generatorService = generator.service;
-    homeWorkerServices.push(workerService(workerA), workerService(workerB));
+    homeWorkerServices.push(workerA.service, workerB.service);
   }
 }
 
@@ -76,8 +76,4 @@ if (generatorService) {
     generatorService,
     workerServices: homeWorkerServices,
   });
-}
-
-function workerService(w: WorkerStack): WorkerStack["service"] {
-  return w.service;
 }

@@ -30,8 +30,7 @@ import { ChartSkeleton } from "./ChartSkeleton";
 import { SvgChartTooltip } from "./SvgChartTooltip";
 
 const W = 1280;
-const H_DESKTOP = 420;
-const H_MOBILE = 420;
+const H = 420;
 const PAD_L = 56;
 const PAD_R = 16;
 const PAD_T = 16;
@@ -106,6 +105,22 @@ const PILL_BASE =
   "inline-block border-0 px-[11px] py-[5px] text-[12px] rounded-full font-geistmono tracking-[0.01em] cursor-pointer transition-colors no-underline";
 const pillCls = (active: boolean): string =>
   `${PILL_BASE} ${active ? "bg-fg text-bg" : "bg-transparent text-fg2 hover:text-fg hover:no-underline"}`;
+
+// Axis/tooltip formatters. `mounted` gates Intl (locale-aware) vs a UTC fallback
+// so server and first client render agree (no hydration mismatch).
+function formatHourMinute(d: Date, mounted: boolean): string {
+  return mounted
+    ? new Intl.DateTimeFormat([], { hour: "2-digit", minute: "2-digit", hour12: false }).format(d)
+    : `${d.getUTCHours().toString().padStart(2, "0")}:${d.getUTCMinutes().toString().padStart(2, "0")}`;
+}
+function formatMonthDay(d: Date, mounted: boolean): string {
+  return mounted
+    ? new Intl.DateTimeFormat([], { month: "2-digit", day: "2-digit" }).format(d)
+    : `${(d.getUTCMonth() + 1).toString().padStart(2, "0")}/${d.getUTCDate().toString().padStart(2, "0")}`;
+}
+function providerName(id: string): string {
+  return BENCHMARKED_PROVIDERS.find((p) => p.id === id)?.name ?? id;
+}
 
 export function LatencyChart({
   series,
@@ -231,18 +246,15 @@ export function LatencyChart({
   // hover-crosshair on touch devices.
   const compact = useMediaQuery("(max-width: 767px)");
   const touch = useMediaQuery("(hover: none)");
-  const H = compact ? H_MOBILE : H_DESKTOP;
 
-  // Percentile toggle (chart filter). The whole pipeline below operates on a
-  // single `p95_ms` field for historical reasons; we feed it whichever
-  // percentile is selected so nothing downstream needs to change.
+  // Percentile toggle (chart filter). The pipeline below carries one numeric
+  // `p95_ms` field (a historical name) regardless of what it holds — we feed it
+  // the selected percentile, or the composite 0-100 score in score mode, so
+  // nothing downstream has to branch.
   const [percentile, setPercentile] = useState<"p50" | "p95">("p95");
 
-  // Normalize Date — Next.js may hand us strings across the boundary in
-  // some serialization paths, even though Server-Components-to-Client
-  // generally preserves Date. The whole pipeline below operates on a single
-  // numeric `p95_ms` field (historical name); in score mode we feed it the
-  // composite 0-100 score so nothing downstream needs to branch.
+  // Normalize Date — Next.js may hand us strings across the SC→CC boundary in
+  // some serialization paths.
   const sourceSeries = useMemo(
     () =>
       isScore
@@ -667,7 +679,6 @@ const LatencyChartCanvas = memo(function LatencyChartCanvas({
 }) {
   const [hover, setHover] = useState<HoverState | null>(null);
 
-  const H = compact ? H_MOBILE : H_DESKTOP;
   const PLOT_W = W - PAD_L - PAD_R;
   const PLOT_H = H - PAD_T - PAD_B;
 
@@ -716,17 +727,9 @@ const LatencyChartCanvas = memo(function LatencyChartCanvas({
   // Time-of-day formatter. Pre-mount = UTC (matches Vercel server). Post-mount
   // = browser-local. `mounted`/`tzShort` are owned by the parent (it also needs
   // tzShort for the caption) and passed down.
-  const fmtHM = (d: Date) =>
-    mounted
-      ? new Intl.DateTimeFormat([], { hour: "2-digit", minute: "2-digit", hour12: false }).format(d)
-      : `${d.getUTCHours().toString().padStart(2, "0")}:${d.getUTCMinutes().toString().padStart(2, "0")}`;
-  const fmtMD = (d: Date) =>
-    mounted
-      ? new Intl.DateTimeFormat([], { month: "2-digit", day: "2-digit" }).format(d)
-      : `${(d.getUTCMonth() + 1).toString().padStart(2, "0")}/${d.getUTCDate().toString().padStart(2, "0")}`;
+  const fmtHM = (d: Date) => formatHourMinute(d, mounted);
+  const fmtMD = (d: Date) => formatMonthDay(d, mounted);
   const fmtVal = (v: number) => (isScore ? v.toFixed(1) : `${Math.round(v)}ms`);
-  const providerName = (id: string) =>
-    BENCHMARKED_PROVIDERS.find((p) => p.id === id)?.name ?? id;
 
   // Shared "compute hover state from svg-space (sx, sy)" — used by both mouse
   // move (desktop) and touch pin (mobile).

@@ -1,17 +1,13 @@
 /**
- * Slot / freshness helpers shared by the context-wrapped methods added in the
- * "value-bearing & time-advancing" batch (getBalance, getSupply, getTokenSupply,
- * getTokenLargestAccounts, getLatestBlockhash, getTokenAccountBalance).
- *
- * These responses are all context-wrapped (`{context:{slot}, value:…}`). The
- * `slot` each provider returns is its observed tip for the read, and is the
- * cross-provider-comparable freshness signal for the time-advancing scalars
- * (getSupply / getLatestBlockhash) and the Hybrid liveness fallback
- * (getBalance / getTokenSupply / getTokenAccountBalance).
+ * Slot / freshness helpers shared by the context-wrapped methods (responses
+ * shaped `{context:{slot}, value:…}`). The `slot` each provider returns is its
+ * observed tip for the read — the cross-provider-comparable freshness signal
+ * for time-advancing scalars and the Hybrid value methods' liveness fallback.
  *
  * Tolerances mirror getSlot.ts: a tight CONSENSUS window (panel queried in
- * parallel) and a wide AUDITOR window (auditor captured at challenge generation
- * t=0; panel measured at fanout t+δ, δ up to the 30s TTL ≈ ~75 slots).
+ * parallel) and a wide AUDITOR window. The auditor is captured at challenge
+ * generation (t=0) but the panel is measured at fanout (t+δ, δ up to the 30s
+ * TTL), so the wider window absorbs that legitimate drift.
  */
 
 import { byteEqualHash, type CanonicalProjection, type Correctness } from "@rpcbench/shared";
@@ -101,24 +97,6 @@ export function valueVerdict(
   if (r === null) return "correct"; // no reference value → fail-open (liveness)
   if (v >= r - tol) return "correct";
   return "stale";
-}
-
-/** Two projections agree if their carried slots are within `tolerance`. */
-function slotsWithin(a: CanonicalProjection, b: CanonicalProjection, tolerance: number): boolean {
-  const sa = slotFromShape(a.shape);
-  const sb = slotFromShape(b.shape);
-  if (sa === null || sb === null) return false;
-  return Math.abs(sa - sb) <= tolerance;
-}
-
-/** Consensus match for the time-advancing scalars: tight slot tolerance. */
-export function slotProjectionsMatch(a: CanonicalProjection, b: CanonicalProjection): boolean {
-  return slotsWithin(a, b, SLOT_TOLERANCE);
-}
-
-/** Auditor match for the time-advancing scalars: wide slot tolerance. */
-export function slotProjectionsMatchAuditor(a: CanonicalProjection, b: CanonicalProjection): boolean {
-  return slotsWithin(a, b, SLOT_AUDITOR_TOLERANCE);
 }
 
 /**

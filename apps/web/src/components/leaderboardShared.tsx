@@ -250,52 +250,6 @@ export function SubScoreBreakdown({
 }
 
 /**
- * Overall-score breakdown: how the per-region scores blend into one number.
- * `overall = Σ (region_score × normalized_region_weight)`. Weights are the
- * region weights renormalized over the regions where the provider is eligible
- * (so they sum to 1) — matching blendRegionScores().
- */
-export function RegionBlendBreakdown({
-  regions,
-  total,
-}: {
-  regions: ReadonlyArray<{ label: string; weight: number; score: number }>;
-  total: number;
-}) {
-  // Columns: region · score · × · weight · = · product
-  const gridStyle: React.CSSProperties = {
-    display: "grid",
-    gridTemplateColumns: "auto 48px auto 44px auto 52px",
-    columnGap: 8,
-    rowGap: 2,
-    alignItems: "baseline",
-  };
-  return (
-    <div
-      className={`font-mono text-[11px] text-neutral-300 mt-1.5 tabular-nums ${BREAKDOWN_RESET}`}
-      style={gridStyle}
-    >
-      {regions.map((r) => (
-        <Fragment key={r.label}>
-          <span className="text-neutral-400">{r.label}</span>
-          <span style={{ textAlign: "right" }}>{r.score.toFixed(1)}</span>
-          <span className="text-neutral-500">×</span>
-          <span style={{ textAlign: "right" }}>{r.weight.toFixed(2)}</span>
-          <span className="text-neutral-500">=</span>
-          <span style={{ textAlign: "right" }}>{(r.score * r.weight).toFixed(2)}</span>
-        </Fragment>
-      ))}
-      <span style={{ gridColumn: "1 / -1", borderTop: "1px solid #404040", marginTop: 4 }} />
-      <span style={{ gridColumn: "1 / span 4" }} />
-      <span className="text-neutral-400">=</span>
-      <span className="text-neutral-100" style={{ textAlign: "right" }}>
-        {total.toFixed(1)}
-      </span>
-    </div>
-  );
-}
-
-/**
  * Why a provider's success % is below 100: the failed calls grouped by failure
  * category (counts reconcile with sample_count_failed, so they sum to the
  * missing %). Rendered inside the success-% tooltips on the leaderboard and the

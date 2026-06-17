@@ -18,6 +18,7 @@ import {
   type ChallengeContext,
   type Correctness,
   type MethodHandlers,
+  buffersEqual,
 } from "@rpcbench/shared";
 import { jaccardAtLeast } from "./setsim.js";
 
@@ -63,11 +64,6 @@ function projectImpl(response: GetVoteAccountsResponse): CanonicalProjection {
   return { hash: hashProjection(canonicalize(shape)), shape };
 }
 
-function buffersEqual(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.byteLength !== b.byteLength) return false;
-  for (let i = 0; i < a.byteLength; i++) if (a[i] !== b[i]) return false;
-  return true;
-}
 
 /** Consensus / auditor match: Jaccard over the vote-pubkey sets. */
 export function voteAccountsProjectionsMatch(a: CanonicalProjection, b: CanonicalProjection): boolean {

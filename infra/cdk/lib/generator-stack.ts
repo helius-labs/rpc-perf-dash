@@ -2,16 +2,14 @@ import { Stack, type StackProps, Duration } from "aws-cdk-lib";
 import type { Vpc } from "aws-cdk-lib/aws-ec2";
 import {
   Cluster,
-  ContainerImage,
   FargateService,
   FargateTaskDefinition,
   LogDrivers,
-  Secret as EcsSecret,
 } from "aws-cdk-lib/aws-ecs";
 import { LogGroup, RetentionDays } from "aws-cdk-lib/aws-logs";
-import { Platform } from "aws-cdk-lib/aws-ecr-assets";
 import type { Secret } from "aws-cdk-lib/aws-secretsmanager";
 import type { Construct } from "constructs";
+import { secretEnv, linuxAmd64Image, NEON_SECRET_KEYS, PANEL_SECRET_KEYS } from "./util.js";
 
 interface GeneratorStackProps extends StackProps {
   vpc: Vpc;
@@ -28,28 +26,22 @@ export class GeneratorStack extends Stack {
   constructor(scope: Construct, id: string, props: GeneratorStackProps) {
     super(scope, id, props);
 
-    // 1 vCPU / 2GB. Smaller sizing lets the dispatch tick exceed its 25s
-    // budget under load, which trips the no-challenges watchdog into
-    // restarting the task. See docs/operations.md § Generator saturation.
+    // 1 vCPU / 2GB is the floor — don't size down. Anything smaller lets the
+    // dispatch tick exceed its 25s budget under load, tripping the
+    // no-challenges watchdog into restarting the task. See
+    // docs/operations.md § Generator saturation.
     const taskDef = new FargateTaskDefinition(this, "GeneratorTask", {
       cpu: 1024,
       memoryLimitMiB: 2048,
     });
 
     const secrets = secretEnv(props.secret, [
-      "NEON_DATABASE_URL_POOLED",
-      "NEON_DATABASE_URL_DIRECT",
+      ...NEON_SECRET_KEYS,
       "GENERATOR_SECRET",
-      // Benchmarked panel URLs. The generator never CALLS these — workers do —
-      // but assertAuditorIndependent needs them resolvable in the generator's
-      // env so the host-overlap check has something to compare against.
-      // Removing any of these silently disables the auditor-independence
-      // assertion for that provider.
-      "HELIUS_API_KEY",
-      "HELIUS_GATEKEEPER_URL",
-      "TRITON_URL",
-      "ALCHEMY_URL",
-      "QUICKNODE_URL",
+      // Panel URLs — the generator never CALLS these (workers do), but
+      // assertAuditorIndependent needs them resolvable to run its host-overlap
+      // check. See PANEL_SECRET_KEYS in util.ts.
+      ...PANEL_SECRET_KEYS,
       // Independent auditor (utility) endpoint chain. Operator MUST be
       // panel-independent — see assertAuditorIndependent. The keys must be
       // present in the secret (empty string OK; resolveEndpointUrl filters
@@ -66,13 +58,7 @@ export class GeneratorStack extends Stack {
     ]);
 
     taskDef.addContainer("generator", {
-      // platform: LINUX_AMD64 forces an x86_64 build regardless of host arch
-      // (Apple Silicon → arm64 by default, which crashes on Fargate x86_64
-      // tasks with "exec format error").
-      image: ContainerImage.fromAsset("../../", {
-        file: "apps/generator/Dockerfile",
-        platform: Platform.LINUX_AMD64,
-      }),
+      image: linuxAmd64Image("apps/generator/Dockerfile"),
       logging: LogDrivers.awsLogs({
         streamPrefix: "generator",
         logGroup: new LogGroup(this, "GeneratorLogs", {
@@ -90,10 +76,4 @@ export class GeneratorStack extends Stack {
       healthCheckGracePeriod: Duration.minutes(2),
     });
   }
-}
-
-function secretEnv(s: Secret, keys: string[]): Record<string, EcsSecret> {
-  const out: Record<string, EcsSecret> = {};
-  for (const k of keys) out[k] = EcsSecret.fromSecretsManager(s, k);
-  return out;
 }

@@ -19,7 +19,7 @@ import {
 export const BUCKETS = ["default"] as const;
 export type GetGenesisHashBucket = (typeof BUCKETS)[number];
 
-export interface GetGenesisHashParams {}
+export type GetGenesisHashParams = Record<string, never>;
 
 type GetGenesisHashResponse = string;
 

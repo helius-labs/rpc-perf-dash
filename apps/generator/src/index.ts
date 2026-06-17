@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
   METHODOLOGY_VERSION,
   UTILITY_PROVIDER,
+  EMITTED_METHODS,
   assertAuditorIndependent,
   loadEnv,
   resolveEndpointUrl,
@@ -14,7 +15,7 @@ import {
 loadEnv(import.meta.url);
 import { HANDLERS } from "@rpcbench/methods";
 import { paramsAsArray } from "./params.js";
-import { createDb, createReadyChallenge, stashSeed } from "@rpcbench/db";
+import { createDb, createReadyChallenge, stashSeed, executeRows, firstRow } from "@rpcbench/db";
 import { createUtilityClient, type MultiEndpointRpcClient } from "./utility-client.js";
 import { SlotObserver } from "./observe.js";
 import { auditorCallOptsForBucket, fetchAuditorReference } from "./auditor.js";
@@ -93,11 +94,14 @@ const BACKPRESSURE_THRESHOLD = 500;
 let _activeVantages: Array<{ worker_provider: string; region: string; egress_path: string }> = [];
 
 async function refreshActiveVantages(db: ReturnType<typeof createDb>): Promise<void> {
-  const rows = (await db.execute(sql`
+  const rows = await executeRows<{ worker_provider: string; region: string; egress_path: string }>(
+    db,
+    sql`
     SELECT DISTINCT worker_provider, region, egress_path
     FROM worker_heartbeat
     WHERE beat_at > now() - (${VANTAGE_FRESHNESS_S}::int || ' seconds')::interval
-  `)) as unknown as Array<{ worker_provider: string; region: string; egress_path: string }>;
+  `,
+  );
   _activeVantages = rows.map((r) => ({
     worker_provider: r.worker_provider,
     region: r.region,
@@ -140,14 +144,17 @@ function sampleK<T>(arr: readonly T[], k: number): T[] {
 async function countClaimableUnclaimed(
   db: ReturnType<typeof createDb>,
 ): Promise<number> {
-  const r = (await db.execute(sql`
+  const r = await firstRow<{ n: number }>(
+    db,
+    sql`
     SELECT count(*)::int AS n
     FROM challenge_assignments ca
     JOIN challenges c ON c.id = ca.challenge_id
     WHERE ca.status = 'unclaimed'
       AND c.expires_at > now()
-  `)) as unknown as Array<{ n: number }>;
-  return r[0]?.n ?? 0;
+  `,
+  );
+  return r?.n ?? 0;
 }
 
 /**
@@ -221,70 +228,10 @@ function utilityClient(): MultiEndpointRpcClient {
 }
 
 function allMethodBucketCombos(): Array<{ method: Method; bucket: string }> {
-  const methods: Method[] = [
-    "getBlock",
-    "getTransaction",
-    "getSignaturesForAddress",
-    "getSlot",
-    "getAccountInfo",
-    "getProgramAccounts",
-    "getTokenAccountsByOwner",
-    "getBalance",
-    // getSupply is intentionally NOT emitted: on the current panel only triton
-    // (~6s) and alchemy (~9s) compute it live and agree, quicknode serves a
-    // stale cache, helius hangs >30s — so it can never reach the 3-voter
-    // consensus minimum regardless of timeout. The handler is kept registered
-    // (dormant) so any in-flight straggler resolves safely and it's trivial
-    // to re-enable. See docs/methodology.md.
-    "getTokenSupply",
-    "getTokenLargestAccounts",
-    "getLatestBlockhash",
-    "getTokenAccountBalance",
-    "getGenesisHash",
-    "getEpochSchedule",
-    "getInflationGovernor",
-    "getInflationRate",
-    "getBlockTime",
-    "getBlockCommitment",
-    "getBlocks",
-    "getInflationReward",
-    "getLeaderSchedule",
-    "getBlockProduction",
-    "getMaxRetransmitSlot",
-    "getMaxShredInsertSlot",
-    "getEpochInfo",
-    "getBlockHeight",
-    "getTransactionCount",
-    "getVoteAccounts",
-    "getRecentPerformanceSamples",
-    "getIdentity",
-    "getVersion",
-    "getHealth",
-    "isBlockhashValid",
-    "getSlotLeader",
-    "getSlotLeaders",
-    "simulateTransaction",
-    "simulateBundle",
-    "getMultipleAccounts",
-    "getSignatureStatuses",
-    "getMinimumBalanceForRentExemption",
-    "getStakeMinimumDelegation",
-    "getBlocksWithLimit",
-    "getRecentPrioritizationFees",
-    "getFeeForMessage",
-    // Custom indexer-backed method; 3-voter panel (QuickNode serves a
-    // non-comparable variant — see providers.ts).
-    "getTransactionsForAddress",
-    // getClusterNodes and getLargestAccounts are intentionally NOT emitted
-    // (dormant, like getSupply). getLargestAccounts is served only by
-    // QuickNode (Helius 500s, Triton rate-limits, Alchemy blocks it) so it can
-    // never reach 3 voters; getClusterNodes' ~4576-node payload only succeeds
-    // ~50% under fanout, so ≥3 voters rarely co-occur on a challenge. Handlers
-    // stay registered; re-enable here if a future panel/network converges.
-    // See docs/methodology.md.
-  ];
+  // Emitted methods (and their dormant counterparts) are defined in
+  // @rpcbench/shared so the generator and benchmark CLI can't drift.
   const out: Array<{ method: Method; bucket: string }> = [];
-  for (const m of methods) {
+  for (const m of EMITTED_METHODS) {
     for (const b of HANDLERS[m].buckets) {
       out.push({ method: m, bucket: b });
     }
@@ -550,12 +497,15 @@ async function main() {
   const WATCHDOG_STALE_THRESHOLD_MS = 5 * 60_000;
   setInterval(() => {
     (async () => {
-      const r = (await db.execute(sql`
+      const r = await firstRow<{ n: number }>(
+        db,
+        sql`
         SELECT count(*)::int AS n
         FROM challenges
         WHERE generated_at > now() - make_interval(secs => ${WATCHDOG_STALE_THRESHOLD_MS / 1000})
-      `)) as unknown as Array<{ n: number }>;
-      const n = r[0]?.n ?? 0;
+      `,
+      );
+      const n = r?.n ?? 0;
       if (n === 0) {
         console.error(
           `[watchdog] no challenges inserted in the last ${WATCHDOG_STALE_THRESHOLD_MS / 1000}s — exiting so ECS restarts. ` +
@@ -740,7 +690,8 @@ async function main() {
   setInterval(runMaintenanceJob, MAINTENANCE_INTERVAL_MS);
   runMaintenanceJob();
 
-  // Use unref to allow shutdown signals; main process stays alive on intervals.
+  // Park forever; the setInterval timers above keep the process alive, and the
+  // SIGTERM/SIGINT handlers drive shutdown.
   await new Promise(() => {}); // run forever
 }
 

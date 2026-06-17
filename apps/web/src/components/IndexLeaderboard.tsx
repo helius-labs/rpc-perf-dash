@@ -469,9 +469,10 @@ export function IndexLeaderboard({
   // During warmup no provider has cleared the eligibility floor.
   const ranked = indexRows.some((r) => r.coverageOk && r.score > 0);
 
-  // First place starts expanded by default; the rest collapsed. (Only the
-  // initial mount — once the user toggles, their choices persist; switching
-  // presets remounts via key= and re-expands the new #1.)
+  // On first load the #1 provider is expanded. The board re-ranks in place when
+  // the preset / methods / regions change (no remount), and we deliberately
+  // leave the open rows alone — whatever the user has expanded stays expanded,
+  // regardless of who's #1 now.
   const [open, setOpen] = useState<Set<string>>(() => {
     const first = rows[0]?.provider_id;
     return new Set(first ? [first] : []);

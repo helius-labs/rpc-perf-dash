@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import type { DbClient } from "@rpcbench/db";
+import { type DbClient, firstRow } from "@rpcbench/db";
 import { hostname } from "node:os";
 
 const ADVISORY_LOCK_KEY = 0x52504342_47454e31n; // 'RPCBGEN1'
@@ -10,10 +10,10 @@ const ADVISORY_LOCK_OBJID = Number(ADVISORY_LOCK_KEY & 0xffffffffn);
 /** Acquire the generator leader lock. Returns true if this process is now the leader. */
 export async function acquireLeader(db: DbClient): Promise<boolean> {
   // BigInt params trip postgres-js's type inference; inline as raw bigint literal.
-  const rows = await db.execute(
+  const r = await firstRow<{ got: boolean }>(
+    db,
     sql.raw(`SELECT pg_try_advisory_lock(${ADVISORY_LOCK_KEY.toString()}::bigint) AS got`),
   );
-  const r = (rows as unknown as Array<{ got: boolean }>)[0];
   return r?.got === true;
 }
 
@@ -21,13 +21,13 @@ export async function acquireLeader(db: DbClient): Promise<boolean> {
  * whose advisory-lock-holder DB session is now idle/orphan, then retry. */
 export async function evictAndAcquireLeader(db: DbClient, staleSeconds = 30): Promise<boolean> {
   // Path 1: heartbeat-based eviction (intended use).
-  const stale = await db.execute(
+  const r = await firstRow<{ pid: number }>(
+    db,
     sql.raw(`
       SELECT pid FROM generator_heartbeat
       WHERE beat_at < now() - make_interval(secs => ${staleSeconds})
     `),
   );
-  const r = (stale as unknown as Array<{ pid: number }>)[0];
   if (r?.pid) {
     await db.execute(sql.raw(`SELECT pg_terminate_backend(${r.pid})`)).catch(() => {});
   }

@@ -19,7 +19,7 @@ import {
 export const BUCKETS = ["default"] as const;
 export type GetEpochScheduleBucket = (typeof BUCKETS)[number];
 
-export interface GetEpochScheduleParams {}
+export type GetEpochScheduleParams = Record<string, never>;
 
 interface GetEpochScheduleResponse {
   slotsPerEpoch?: number;

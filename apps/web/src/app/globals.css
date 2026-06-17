@@ -253,8 +253,7 @@ summary:has(.rcc-caret)::-webkit-details-marker { display: none; }
 /**
  * Flash animation for newly-arrived rows in the streaming recent-challenges
  * table. ~1.8s ease-out from an accent-tinted highlight back to default —
- * makes it visually obvious which rows just landed. Used by both
- * ClickableRow (<tr>) and ClickableCard (<div>).
+ * makes it visually obvious which rows just landed. Used by ClickableRow.
  */
 @keyframes recent-row-flash {
   0%   { background-color: color-mix(in oklch, var(--accent) 16%, transparent); }

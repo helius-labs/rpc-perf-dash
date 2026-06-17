@@ -21,6 +21,7 @@ import {
   type ChallengeContext,
   type Correctness,
   type MethodHandlers,
+  buffersEqual,
 } from "@rpcbench/shared";
 import { TOKEN_PROGRAM_ID } from "./spl.js";
 import { contextSlot, freshnessVerdict } from "./freshness.js";
@@ -105,8 +106,3 @@ export const handlers: MethodHandlers<GetTokenAccountBalanceParams, GetTokenAcco
   },
 };
 
-function buffersEqual(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.byteLength !== b.byteLength) return false;
-  for (let i = 0; i < a.byteLength; i++) if (a[i] !== b[i]) return false;
-  return true;
-}

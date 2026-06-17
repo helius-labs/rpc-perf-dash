@@ -90,9 +90,9 @@ export interface ProviderRow {
  * Tier caps / pricing fields are point-in-time audits of each provider's
  * published plan pages (see the verified-on dates in the inline comments).
  *
- * As of methodology_version=2 the rotating neutral quorum is removed.
- * Correctness comes from majority consensus across the benchmarked panel,
- * with the UTILITY_PROVIDER serving as an independent auditor tripwire.
+ * Correctness comes from majority consensus across the benchmarked panel
+ * (there is no rotating neutral quorum), with the UTILITY_PROVIDER serving
+ * as an independent auditor tripwire.
  * The auditor's endpoint operator MUST be independent of every benchmarked
  * provider — see `assertAuditorIndependent()` below.
  */

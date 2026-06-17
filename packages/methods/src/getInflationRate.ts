@@ -21,7 +21,7 @@ import {
 export const BUCKETS = ["default"] as const;
 export type GetInflationRateBucket = (typeof BUCKETS)[number];
 
-export interface GetInflationRateParams {}
+export type GetInflationRateParams = Record<string, never>;
 
 interface GetInflationRateResponse {
   epoch?: number;

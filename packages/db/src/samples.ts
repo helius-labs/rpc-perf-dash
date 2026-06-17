@@ -70,16 +70,3 @@ export async function insertSamples(db: DbClient, rows: SampleRow[]): Promise<vo
     console.error("[insertSamples] has_samples flag update failed (non-fatal)", err);
   }
 }
-
-/**
- * Lookup samples by challenge id. Used by `/raw?challenge=...`.
- */
-export async function samplesForChallenge(
-  db: DbClient,
-  challengeId: string,
-): Promise<SampleRow[]> {
-  const rows = await db.query.samples.findMany({
-    where: (s, { eq }) => eq(s.challenge_id, challengeId),
-  });
-  return rows as unknown as SampleRow[];
-}

@@ -66,7 +66,7 @@ export async function createReadyChallenge(
         method: c.method,
         params: c.params,
         bucket: c.bucket,
-        commitment_hash: c.commitment_hash as never,
+        commitment_hash: c.commitment_hash,
         // Both timestamps come from the DB clock so they can never disagree.
         // generated_at would default to now() anyway; we set it explicitly to
         // make the "same clock as expires_at" invariant obvious at the call site.
@@ -77,7 +77,7 @@ export async function createReadyChallenge(
         is_honeypot: c.is_honeypot,
         run_id: c.run_id ?? null,
         reference_response: reference.response,
-        reference_hash: reference.hash as never,
+        reference_hash: reference.hash,
         reference_tip_slot: reference.tip_slot,
       })
       .returning({ id: challenges.id });

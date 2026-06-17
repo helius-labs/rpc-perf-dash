@@ -119,12 +119,9 @@ async function fetchPipelineStatusImpl(): Promise<PipelineStatus> {
          FROM challenges WHERE generated_at > now() - interval '5 min')                              AS ttl_avg_s,
       (SELECT round(min(extract(epoch from expires_at - generated_at))::numeric, 1)
          FROM challenges WHERE generated_at > now() - interval '5 min')                              AS ttl_min_s,
-      -- "last seen" bounded to 15 min, not 24h. The samples/assignments tables
-      -- are high-volume (37 methods × fanout) with no standalone time index, so
-      -- a 24h max()-scan was 2–15s and blew the cache-revalidation budget,
-      -- freezing the page on a >1d-old snapshot. A 15-min recent slice is
-      -- partition-pruned and fast; a >15-min gap already means the stage is
-      -- down (age → null) — and down-detection uses the 5-min count, not the age.
+      -- "last seen" bounded to 15 min: a 24h max()-scan over these high-volume,
+      -- time-unindexed tables blew the revalidation budget. A >15-min gap already
+      -- means the stage is down, and down-detection uses the 5-min count anyway.
       (SELECT extract(epoch from now() - max(generated_at))::int
          FROM challenges WHERE generated_at > now() - interval '15 min')                             AS dispatch_age_s,
       (SELECT count(*) FROM challenge_assignments WHERE claimed_at > now() - interval '5 min')::int  AS claimed_5m,
@@ -157,11 +154,10 @@ async function fetchPipelineStatusImpl(): Promise<PipelineStatus> {
       FROM challenge_assignments WHERE claimed_at > now() - interval '5 min' GROUP BY 1
     ),
     smp AS (
-      -- 15-min window (was 24h): the matrix only needs the 5-min rate + a recent
-      -- "last sample" per cloud. A 24h grouped scan ran 2.5–100s (no standalone
-      -- time index); a 15-min partition-pruned slice is fast. Healthy clouds
-      -- sample every second so last_sample is always present; a dead cloud
-      -- (>15m) shows the ">2h" fallback in the UI.
+      -- 15-min window: the matrix only needs the 5-min rate + a recent "last
+      -- sample" per cloud, and a 24h grouped scan over the time-unindexed
+      -- samples table was too slow. Healthy clouds sample every second; a dead
+      -- cloud (>15m) shows the ">2h" fallback in the UI.
       SELECT worker_provider,
         count(*) FILTER (WHERE started_at > now() - interval '5 min')::int AS sampled_5m,
         extract(epoch from now() - max(started_at))::int                   AS sample_age_s,

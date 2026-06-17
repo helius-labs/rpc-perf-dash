@@ -108,16 +108,19 @@ function groupByMatch<R>(
   return groups;
 }
 
+/** Byte-for-byte equality of two raw byte arrays. */
+export function buffersEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.byteLength !== b.byteLength) return false;
+  for (let i = 0; i < a.byteLength; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
 /** Default predicate: byte-equal projection-hash compare. */
 export function byteEqualHash(
   a: Voter<unknown>["projection"],
   b: Voter<unknown>["projection"],
 ): boolean {
-  if (a.hash.length !== b.hash.length) return false;
-  for (let i = 0; i < a.hash.length; i++) {
-    if (a.hash[i] !== b.hash[i]) return false;
-  }
-  return true;
+  return buffersEqual(a.hash, b.hash);
 }
 
 export function decideConsensus<R>(

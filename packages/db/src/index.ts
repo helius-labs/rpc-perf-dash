@@ -30,8 +30,7 @@ export function createDb(opts: DbOptions): DbClient {
 }
 
 export { schema };
+export * from "./query.js";
 export * from "./samples.js";
-export * from "./rollups.js";
 export * from "./control.js";
 export * from "./consensus.js";
-export * from "./tdigest.js";

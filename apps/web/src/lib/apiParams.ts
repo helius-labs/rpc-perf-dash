@@ -1,8 +1,8 @@
 /**
  * Shared query-param parsing + validation for the read API routes
- * (app/api/*). Mirrors the manual-validation style of recent-challenges/route.ts
- * — no zod (the web app doesn't use it). Each parser throws `ParamError` on bad
- * input; routes catch it and return a 400 via `badRequest()`.
+ * (app/api/*). Manual validation, no zod (the web app doesn't use it). Each
+ * parser throws `ParamError` on bad input; routes catch it and return a 400
+ * via `badRequest()`.
  */
 
 import {
@@ -97,4 +97,24 @@ export function parseInfra(
 /** Truthy flag parser ("1" / "true" → true; absent / anything else → false). */
 export function parseBool(raw: string | null): boolean {
   return raw === "1" || raw === "true";
+}
+
+/**
+ * Build a `${base}?${qs}` URL from the current page params plus overrides
+ * (null in an override drops that key). Shared by the filter links on the
+ * /performance and /challenges pages.
+ */
+export function buildPageUrl<P extends object>(
+  base: string,
+  params: P,
+  override: Partial<Record<keyof P, string | null>>,
+): string {
+  const merged: Record<string, string> = {};
+  for (const [k, v] of Object.entries(params)) if (v != null) merged[k] = String(v);
+  for (const [k, v] of Object.entries(override)) {
+    if (v === null) delete merged[k];
+    else if (v != null) merged[k] = String(v);
+  }
+  const qs = new URLSearchParams(merged).toString();
+  return qs ? `${base}?${qs}` : base;
 }

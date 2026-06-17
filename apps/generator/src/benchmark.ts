@@ -22,6 +22,7 @@ import {
   CONFIGURED_BENCHMARKED,
   METHODOLOGY_VERSION,
   UTILITY_PROVIDER,
+  EMITTED_METHODS,
   assertAuditorIndependent,
   loadEnv,
   resolveEndpointUrl,
@@ -32,7 +33,7 @@ import {
 } from "@rpcbench/shared";
 import { HANDLERS } from "@rpcbench/methods";
 import { paramsAsArray } from "./params.js";
-import { createDb, insertConsensusLog, insertSamples } from "@rpcbench/db";
+import { createDb, insertConsensusLog, insertSamples, firstRow } from "@rpcbench/db";
 import { fanout, fanoutTimeoutForBucket, buildSampleRowsV2, shouldArchive } from "@rpcbench/runner";
 import { auditorCallOptsForBucket } from "./auditor.js";
 import { createRpcClient } from "./rpc.js";
@@ -42,59 +43,10 @@ import { runLeaderboardPrecompute, runRollupTick } from "./rollup.js";
 
 loadEnv(import.meta.url);
 
-const VALID_METHODS: Method[] = [
-  "getBlock",
-  "getTransaction",
-  "getSignaturesForAddress",
-  "getSlot",
-  "getAccountInfo",
-  "getProgramAccounts",
-  "getTokenAccountsByOwner",
-  "getBalance",
-  // getSupply omitted — not benchmarkable on the current panel (see index.ts /
-  // docs/methodology.md). Handler stays registered; just not emitted.
-  "getTokenSupply",
-  "getTokenLargestAccounts",
-  "getLatestBlockhash",
-  "getTokenAccountBalance",
-  "getGenesisHash",
-  "getEpochSchedule",
-  "getInflationGovernor",
-  "getInflationRate",
-  "getBlockTime",
-  "getBlockCommitment",
-  "getBlocks",
-  "getInflationReward",
-  "getLeaderSchedule",
-  "getBlockProduction",
-  "getMaxRetransmitSlot",
-  "getMaxShredInsertSlot",
-  "getEpochInfo",
-  "getBlockHeight",
-  "getTransactionCount",
-  "getVoteAccounts",
-  "getRecentPerformanceSamples",
-  "getIdentity",
-  "getVersion",
-  "getHealth",
-  "isBlockhashValid",
-  "getSlotLeader",
-  "getSlotLeaders",
-  "simulateTransaction",
-  "simulateBundle",
-  "getMultipleAccounts",
-  "getSignatureStatuses",
-  "getMinimumBalanceForRentExemption",
-  "getStakeMinimumDelegation",
-  "getBlocksWithLimit",
-  "getRecentPrioritizationFees",
-  "getFeeForMessage",
-  "getTransactionsForAddress",
-  // Dormant (not in allMethodBucketCombos) but kept CLI-testable for
-  // re-validation — see docs/methodology.md / index.ts.
-  "getClusterNodes",
-  "getLargestAccounts",
-];
+// The emitted set, plus the two dormant methods kept CLI-testable for
+// re-validation (getSupply stays fully dormant). See @rpcbench/shared
+// EMITTED_METHODS / DORMANT_METHODS and docs/methodology.md.
+const VALID_METHODS: Method[] = [...EMITTED_METHODS, "getClusterNodes", "getLargestAccounts"];
 const REGION = process.env.WORKER_REGION ?? "us-east-2";
 const TICK_TIMEOUT_MS = 30_000;
 const MAX_DERIVATION_RETRIES = 3;
@@ -257,7 +209,9 @@ async function runOneChallenge(opts: {
   // Insert ready challenge (consensus model: no pending_quorum phase). Direct SQL because
   // the CLI is single-process and doesn't go through the createReadyChallenge
   // fan-out path (no assignments — the CLI is its own vantage).
-  const [row] = (await db.execute(sql`
+  const row = await firstRow<{ id: string }>(
+    db,
+    sql`
     INSERT INTO challenges (
       method, params, bucket, commitment_hash,
       generated_at, expires_at, methodology_version, status, is_honeypot, run_id,
@@ -274,7 +228,8 @@ async function runOneChallenge(opts: {
       ${seed}::bytea, now()
     )
     RETURNING id::text AS id
-  `)) as unknown as Array<{ id: string }>;
+  `,
+  );
   if (!row) throw new Error("insert ready challenge: no id");
   const challenge_id = row.id;
 
@@ -542,10 +497,11 @@ function printJson(opts: {
 
 async function checkContinuousRunning(db: ReturnType<typeof createDb>): Promise<boolean> {
   try {
-    const rows = (await db.execute(sql`
-      SELECT (now() - beat_at) < interval '30 seconds' AS fresh FROM generator_heartbeat
-    `)) as unknown as Array<{ fresh: boolean }>;
-    return rows[0]?.fresh === true;
+    const row = await firstRow<{ fresh: boolean }>(
+      db,
+      sql`SELECT (now() - beat_at) < interval '30 seconds' AS fresh FROM generator_heartbeat`,
+    );
+    return row?.fresh === true;
   } catch {
     return false;
   }

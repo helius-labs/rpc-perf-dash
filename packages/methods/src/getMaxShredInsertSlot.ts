@@ -20,7 +20,7 @@ import { freshnessVerdict, slotFromShape } from "./freshness.js";
 export const BUCKETS = ["default"] as const;
 export type GetMaxShredInsertSlotBucket = (typeof BUCKETS)[number];
 
-export interface GetMaxShredInsertSlotParams {}
+export type GetMaxShredInsertSlotParams = Record<string, never>;
 
 type GetMaxShredInsertSlotResponse = number;
 

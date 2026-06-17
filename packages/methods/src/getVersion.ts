@@ -21,7 +21,7 @@ import {
 export const BUCKETS = ["default"] as const;
 export type GetVersionBucket = (typeof BUCKETS)[number];
 
-export interface GetVersionParams {}
+export type GetVersionParams = Record<string, never>;
 
 interface GetVersionResponse {
   "solana-core"?: string;

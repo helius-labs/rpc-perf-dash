@@ -126,13 +126,10 @@ export const fetchActiveInfraGeo = unstable_cache(
 );
 
 /**
- * Eligibility floors, derived inline from the *selected* window so the gate
- * tracks the timeframe (1h/6h/24h/7d/30d) instead of the generator's fixed
- * 4h precompute. The quality floors (reliability / correctness / honeypot)
- * are fixed ratios and mirror the generator's eligibility gate in rollup.ts; the
- * sample-count floor scales with the window at the same per-hour rate as
- * that gate (50 valid samples / 4h = 12.5/hr) so confidence is comparable at
- * every window. Keep these in sync with rollup.ts:eligibilityThresholds().
+ * Eligibility floors derived from the *selected* window, so the gate tracks
+ * the timeframe rather than the generator's fixed 4h precompute. Quality floors
+ * are fixed ratios; the sample-count floor scales per-hour so confidence is
+ * comparable at every window. Keep in sync with rollup.ts:eligibilityThresholds().
  */
 export function eligibilityFloors(windowHours: number) {
   const test = process.env.TEST_MODE === "1";
@@ -155,25 +152,20 @@ export interface AggregateOpts {
 
 async function fetchAggregatesForGeoImpl(opts: AggregateOpts): Promise<RowAgg[]> {
   // All windows read the leaderboard precompute (leaderboard_agg_1h / _1d),
-  // refreshed every 5 min by the generator's rollup tick (trailing-2h upsert).
-  // Reading the precompute avoids scanning the ≤24h raw-`samples` path, which
-  // would scan the multi-million-row current-day partition twice per geo (×2
-  // again for warm). The precompute gives exact rates (summed num/den) and
-  // exact win-counts; percentiles are weight-averaged across hourly buckets, a
-  // benign approximation.
+  // refreshed every 5 min by the rollup tick — reading raw `samples` would scan
+  // the multi-million-row current-day partition per geo and mode. Rates and
+  // win-counts are exact; percentiles are weight-averaged across hourly buckets
+  // (a benign approximation).
   const floor = eligibilityFloors(opts.windowHours);
   return fetchAggregatesFromPrecompute(opts, floor);
 }
 
 /**
- * >24h leaderboard read. Sums the precomputed (geo, infra, provider, method,
- * mode, mv, time-bucket) rows over the window, weight-averaging the correct-only
- * percentiles by sample_count_valid across **time buckets only** (each row's
- * percentile already pooled regions + difficulty buckets at write time, so this
- * leaves only the benign time-averaging residual). Rates are exact ratios of
- * summed numerators/denominators; freshness is weighted by sample_count_total;
- * stddev is a weighted avg (approximate). Win-counts/challenge-counts are exact.
- * Returns the same RowAgg shape + inline eligibility as the ≤24h exact path.
+ * Leaderboard read off the precompute. Sums the precomputed time-bucket rows
+ * over the window: rates and win/challenge counts are exact (summed num/den),
+ * while percentiles and stddev are weight-averaged across time buckets — a
+ * benign approximation, since each row already pooled regions + buckets at
+ * write time. Returns the same RowAgg shape as the exact path.
  */
 async function fetchAggregatesFromPrecompute(
   opts: AggregateOpts,
@@ -295,10 +287,9 @@ export interface AggregateByMethodOpts {
  * so Balanced (45 methods × 6 geos) is 6 queries, not 270.
  *
  * Methods are a fixed `Method` enum, so we inline them as an escaped literal
- * `IN (...)` list and a `VALUES` table — NOT `= ANY(${array})`, which the Neon
- * pooler (prepare:false) silently binds as a scalar (see fetchScoreSeriesImpl /
- * the geoLiteral convention). The literal stays an indexed prefix on
- * `leaderboard_agg_*_read (geo, worker_provider, method, …)`.
+ * `IN (...)` list — never `= ANY(${array})`, which the Neon pooler
+ * (prepare:false) silently binds as a scalar. The literal also stays an indexed
+ * prefix on `leaderboard_agg_*_read (geo, worker_provider, method, …)`.
  */
 async function fetchAggregatesForGeoByMethodImpl(
   opts: AggregateByMethodOpts,

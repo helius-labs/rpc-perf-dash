@@ -14,8 +14,8 @@
  * standby never double-writes.
  */
 
-import { sql } from "drizzle-orm";
-import type { DbClient } from "@rpcbench/db";
+import { sql, type SQL } from "drizzle-orm";
+import { type DbClient, executeRows } from "@rpcbench/db";
 import { GEO_REGION_MAP, LATENCY_HIST, type Method } from "@rpcbench/shared";
 import { HANDLERS } from "@rpcbench/methods";
 import type { MultiEndpointRpcClient } from "./utility-client.js";
@@ -72,161 +72,108 @@ async function ensureWilsonFunction(db: DbClient): Promise<void> {
   `);
 }
 
-async function rollup5m(db: DbClient): Promise<void> {
+// The metric columns every tier writes, in INSERT order. The group keys +
+// window_start precede these in both the INSERT list and the SELECT.
+const ROLLUP_METRIC_COLUMNS = sql.raw(`
+  sample_count_total, sample_count_valid, sample_count_excluded,
+  latency_p50, latency_p95, latency_p99, latency_stddev,
+  success_rate, correctness_rate, completeness_rate,
+  freshness_avg_lag, freshness_p95_lag,
+  honeypot_pass_count, honeypot_total
+`);
+
+// The matching SELECT expressions for ROLLUP_METRIC_COLUMNS, same order.
+const ROLLUP_METRIC_SELECT = sql.raw(`
+  count(*)::int,
+  count(*) FILTER (WHERE correctness = 'correct')::int,
+  count(*) FILTER (WHERE correctness != 'correct')::int,
+  percentile_cont(0.50) WITHIN GROUP (ORDER BY latency_ms)::int,
+  percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms)::int,
+  percentile_cont(0.99) WITHIN GROUP (ORDER BY latency_ms)::int,
+  stddev_samp(latency_ms::float),
+  avg(CASE WHEN status = 'ok' AND correctness != 'ambiguous' THEN 1.0 ELSE 0.0 END)::real,
+  -- Correctness denominator excludes status != 'ok' (timeouts / network errors):
+  -- those are a *reliability* failure, not a *data* failure, so counting them here
+  -- would double-penalize timeout-prone providers (low R and low C from one sample).
+  (count(*) FILTER (WHERE status = 'ok' AND correctness = 'correct')::real
+   / NULLIF(count(*) FILTER (WHERE status = 'ok' AND correctness IN ('correct', 'incorrect', 'stale'))::real, 0)),
+  (count(*) FILTER (WHERE correctness IN ('correct', 'stale', 'incorrect'))::real
+   / NULLIF(count(*) FILTER (WHERE correctness != 'ambiguous')::real, 0)),
+  avg(freshness_lag)::real,
+  percentile_cont(0.95) WITHIN GROUP (ORDER BY freshness_lag)::int,
+  count(*) FILTER (WHERE is_honeypot AND correctness = 'correct')::int,
+  count(*) FILTER (WHERE is_honeypot)::int
+`);
+
+// The DO UPDATE SET for every metric column. Defining it once is the whole
+// point: a prior copy-paste had 1h/1d omit sample_count_excluded /
+// freshness_avg_lag (and 1d latency_stddev), freezing them on bucket re-fold.
+const ROLLUP_METRIC_UPDATE = sql.raw(`
+  sample_count_total    = EXCLUDED.sample_count_total,
+  sample_count_valid    = EXCLUDED.sample_count_valid,
+  sample_count_excluded = EXCLUDED.sample_count_excluded,
+  latency_p50           = EXCLUDED.latency_p50,
+  latency_p95           = EXCLUDED.latency_p95,
+  latency_p99           = EXCLUDED.latency_p99,
+  latency_stddev        = EXCLUDED.latency_stddev,
+  success_rate          = EXCLUDED.success_rate,
+  correctness_rate      = EXCLUDED.correctness_rate,
+  completeness_rate     = EXCLUDED.completeness_rate,
+  freshness_avg_lag     = EXCLUDED.freshness_avg_lag,
+  freshness_p95_lag     = EXCLUDED.freshness_p95_lag,
+  honeypot_pass_count   = EXCLUDED.honeypot_pass_count,
+  honeypot_total        = EXCLUDED.honeypot_total
+`);
+
+// Folds eligible samples into one rollup tier. The tiers differ only in target
+// table, how started_at is bucketed into window_start, and the time filter;
+// the aggregates and upsert columns are shared above so they can't drift apart.
+async function rollupTier(
+  db: DbClient,
+  opts: { table: "rollups_5m" | "rollups_1h" | "rollups_1d"; windowStart: SQL; timeFilter: SQL },
+): Promise<void> {
   await db.execute(sql`
-    INSERT INTO rollups_5m (
+    INSERT INTO ${sql.raw(opts.table)} (
       provider_id, method, worker_provider, region, bucket, connection_mode, methodology_version, window_start,
-      sample_count_total, sample_count_valid, sample_count_excluded,
-      latency_p50, latency_p95, latency_p99, latency_stddev,
-      success_rate, correctness_rate, completeness_rate,
-      freshness_avg_lag, freshness_p95_lag,
-      honeypot_pass_count, honeypot_total
+      ${ROLLUP_METRIC_COLUMNS}
     )
     SELECT
       provider_id, method, worker_provider, region, bucket, connection_mode, methodology_version,
-      date_trunc('hour', started_at) + floor(extract(minute from started_at) / 5) * interval '5 min' AS window_start,
-      count(*)::int                                                                                  AS sample_count_total,
-      count(*) FILTER (WHERE correctness = 'correct')::int                                           AS sample_count_valid,
-      count(*) FILTER (WHERE correctness != 'correct')::int                                          AS sample_count_excluded,
-      percentile_cont(0.50) WITHIN GROUP (ORDER BY latency_ms)::int                                  AS latency_p50,
-      percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms)::int                                  AS latency_p95,
-      percentile_cont(0.99) WITHIN GROUP (ORDER BY latency_ms)::int                                  AS latency_p99,
-      stddev_samp(latency_ms::float)                                                                 AS latency_stddev,
-      avg(CASE WHEN status = 'ok' AND correctness != 'ambiguous' THEN 1.0 ELSE 0.0 END)::real       AS success_rate,
-      -- Correctness denominator excludes status != 'ok' (timeouts / network
-      -- errors). classify() lumps those into correctness='incorrect' for
-      -- legacy enum reasons, but they're a *reliability* failure, not a
-      -- *data* failure — counting them here would double-penalize timeout-
-      -- prone providers (low R and low C from the same sample).
-      (count(*) FILTER (WHERE status = 'ok' AND correctness = 'correct')::real
-       / NULLIF(count(*) FILTER (WHERE status = 'ok' AND correctness IN ('correct', 'incorrect', 'stale'))::real, 0)) AS correctness_rate,
-      (count(*) FILTER (WHERE correctness IN ('correct', 'stale', 'incorrect'))::real
-       / NULLIF(count(*) FILTER (WHERE correctness != 'ambiguous')::real, 0))                       AS completeness_rate,
-      avg(freshness_lag)::real                                                                       AS freshness_avg_lag,
-      percentile_cont(0.95) WITHIN GROUP (ORDER BY freshness_lag)::int                              AS freshness_p95_lag,
-      count(*) FILTER (WHERE is_honeypot AND correctness = 'correct')::int                          AS honeypot_pass_count,
-      count(*) FILTER (WHERE is_honeypot)::int                                                      AS honeypot_total
+      ${opts.windowStart} AS window_start,
+      ${ROLLUP_METRIC_SELECT}
     FROM samples
-    WHERE started_at >= now() - interval '15 min'
-      AND started_at <  date_trunc('minute', now())
+    WHERE ${opts.timeFilter}
       AND ranking_eligible = true
     GROUP BY provider_id, method, worker_provider, region, bucket, connection_mode, methodology_version, window_start
     ON CONFLICT (provider_id, method, worker_provider, region, bucket, connection_mode, methodology_version, window_start)
-    DO UPDATE SET
-      sample_count_total    = EXCLUDED.sample_count_total,
-      sample_count_valid    = EXCLUDED.sample_count_valid,
-      sample_count_excluded = EXCLUDED.sample_count_excluded,
-      latency_p50           = EXCLUDED.latency_p50,
-      latency_p95           = EXCLUDED.latency_p95,
-      latency_p99           = EXCLUDED.latency_p99,
-      latency_stddev        = EXCLUDED.latency_stddev,
-      success_rate          = EXCLUDED.success_rate,
-      correctness_rate      = EXCLUDED.correctness_rate,
-      completeness_rate     = EXCLUDED.completeness_rate,
-      freshness_avg_lag     = EXCLUDED.freshness_avg_lag,
-      freshness_p95_lag     = EXCLUDED.freshness_p95_lag,
-      honeypot_pass_count   = EXCLUDED.honeypot_pass_count,
-      honeypot_total        = EXCLUDED.honeypot_total
+    DO UPDATE SET ${ROLLUP_METRIC_UPDATE}
   `);
+}
+
+async function rollup5m(db: DbClient): Promise<void> {
+  await rollupTier(db, {
+    table: "rollups_5m",
+    windowStart: sql`date_trunc('hour', started_at) + floor(extract(minute from started_at) / 5) * interval '5 min'`,
+    timeFilter: sql`started_at >= now() - interval '15 min' AND started_at < date_trunc('minute', now())`,
+  });
 }
 
 export async function rollup1h(db: DbClient, lookback = "2 hours"): Promise<void> {
-  await db.execute(sql`
-    INSERT INTO rollups_1h (
-      provider_id, method, worker_provider, region, bucket, connection_mode, methodology_version, window_start,
-      sample_count_total, sample_count_valid, sample_count_excluded,
-      latency_p50, latency_p95, latency_p99, latency_stddev,
-      success_rate, correctness_rate, completeness_rate,
-      freshness_avg_lag, freshness_p95_lag,
-      honeypot_pass_count, honeypot_total
-    )
-    SELECT
-      provider_id, method, worker_provider, region, bucket, connection_mode, methodology_version,
-      date_trunc('hour', started_at)                                                                 AS window_start,
-      count(*)::int, count(*) FILTER (WHERE correctness = 'correct')::int, count(*) FILTER (WHERE correctness != 'correct')::int,
-      percentile_cont(0.50) WITHIN GROUP (ORDER BY latency_ms)::int,
-      percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms)::int,
-      percentile_cont(0.99) WITHIN GROUP (ORDER BY latency_ms)::int,
-      stddev_samp(latency_ms::float),
-      avg(CASE WHEN status = 'ok' AND correctness != 'ambiguous' THEN 1.0 ELSE 0.0 END)::real,
-      -- See rollup_5m for the rationale on the status='ok' filter.
-      (count(*) FILTER (WHERE status = 'ok' AND correctness = 'correct')::real
-       / NULLIF(count(*) FILTER (WHERE status = 'ok' AND correctness IN ('correct', 'incorrect', 'stale'))::real, 0)),
-      (count(*) FILTER (WHERE correctness IN ('correct', 'stale', 'incorrect'))::real
-       / NULLIF(count(*) FILTER (WHERE correctness != 'ambiguous')::real, 0)),
-      avg(freshness_lag)::real,
-      percentile_cont(0.95) WITHIN GROUP (ORDER BY freshness_lag)::int,
-      count(*) FILTER (WHERE is_honeypot AND correctness = 'correct')::int,
-      count(*) FILTER (WHERE is_honeypot)::int
-    FROM samples
-    WHERE started_at >= date_trunc('hour', now()) - interval ${sql.raw(`'${lookback}'`)}
-      -- include current incomplete hour too; ON CONFLICT DO UPDATE keeps it fresh
-      AND ranking_eligible = true
-    GROUP BY provider_id, method, worker_provider, region, bucket, connection_mode, methodology_version, date_trunc('hour', started_at)
-    ON CONFLICT (provider_id, method, worker_provider, region, bucket, connection_mode, methodology_version, window_start)
-    DO UPDATE SET
-      sample_count_total = EXCLUDED.sample_count_total,
-      sample_count_valid = EXCLUDED.sample_count_valid,
-      latency_p50        = EXCLUDED.latency_p50,
-      latency_p95        = EXCLUDED.latency_p95,
-      latency_p99        = EXCLUDED.latency_p99,
-      latency_stddev     = EXCLUDED.latency_stddev,
-      success_rate       = EXCLUDED.success_rate,
-      correctness_rate   = EXCLUDED.correctness_rate,
-      completeness_rate  = EXCLUDED.completeness_rate,
-      freshness_p95_lag  = EXCLUDED.freshness_p95_lag,
-      honeypot_pass_count = EXCLUDED.honeypot_pass_count,
-      honeypot_total     = EXCLUDED.honeypot_total
-  `);
+  await rollupTier(db, {
+    table: "rollups_1h",
+    windowStart: sql`date_trunc('hour', started_at)`,
+    // include the current incomplete hour too; ON CONFLICT DO UPDATE keeps it fresh
+    timeFilter: sql`started_at >= date_trunc('hour', now()) - interval ${sql.raw(`'${lookback}'`)}`,
+  });
 }
 
 export async function rollup1d(db: DbClient, lookback = "2 days"): Promise<void> {
-  await db.execute(sql`
-    INSERT INTO rollups_1d (
-      provider_id, method, worker_provider, region, bucket, connection_mode, methodology_version, window_start,
-      sample_count_total, sample_count_valid, sample_count_excluded,
-      latency_p50, latency_p95, latency_p99, latency_stddev,
-      success_rate, correctness_rate, completeness_rate,
-      freshness_avg_lag, freshness_p95_lag,
-      honeypot_pass_count, honeypot_total
-    )
-    SELECT
-      provider_id, method, worker_provider, region, bucket, connection_mode, methodology_version,
-      date_trunc('day', started_at)                                                                  AS window_start,
-      count(*)::int, count(*) FILTER (WHERE correctness = 'correct')::int, count(*) FILTER (WHERE correctness != 'correct')::int,
-      percentile_cont(0.50) WITHIN GROUP (ORDER BY latency_ms)::int,
-      percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms)::int,
-      percentile_cont(0.99) WITHIN GROUP (ORDER BY latency_ms)::int,
-      stddev_samp(latency_ms::float),
-      avg(CASE WHEN status = 'ok' AND correctness != 'ambiguous' THEN 1.0 ELSE 0.0 END)::real,
-      -- See rollup_5m for the rationale on the status='ok' filter.
-      (count(*) FILTER (WHERE status = 'ok' AND correctness = 'correct')::real
-       / NULLIF(count(*) FILTER (WHERE status = 'ok' AND correctness IN ('correct', 'incorrect', 'stale'))::real, 0)),
-      (count(*) FILTER (WHERE correctness IN ('correct', 'stale', 'incorrect'))::real
-       / NULLIF(count(*) FILTER (WHERE correctness != 'ambiguous')::real, 0)),
-      avg(freshness_lag)::real,
-      percentile_cont(0.95) WITHIN GROUP (ORDER BY freshness_lag)::int,
-      count(*) FILTER (WHERE is_honeypot AND correctness = 'correct')::int,
-      count(*) FILTER (WHERE is_honeypot)::int
-    FROM samples
-    WHERE started_at >= date_trunc('day', now()) - interval ${sql.raw(`'${lookback}'`)}
-      -- include current incomplete day too; ON CONFLICT DO UPDATE keeps it fresh
-      AND ranking_eligible = true
-    GROUP BY provider_id, method, worker_provider, region, bucket, connection_mode, methodology_version, date_trunc('day', started_at)
-    ON CONFLICT (provider_id, method, worker_provider, region, bucket, connection_mode, methodology_version, window_start)
-    DO UPDATE SET
-      sample_count_total  = EXCLUDED.sample_count_total,
-      sample_count_valid  = EXCLUDED.sample_count_valid,
-      latency_p50         = EXCLUDED.latency_p50,
-      latency_p95         = EXCLUDED.latency_p95,
-      latency_p99         = EXCLUDED.latency_p99,
-      success_rate        = EXCLUDED.success_rate,
-      correctness_rate    = EXCLUDED.correctness_rate,
-      completeness_rate   = EXCLUDED.completeness_rate,
-      freshness_p95_lag   = EXCLUDED.freshness_p95_lag,
-      honeypot_pass_count = EXCLUDED.honeypot_pass_count,
-      honeypot_total      = EXCLUDED.honeypot_total
-  `);
+  await rollupTier(db, {
+    table: "rollups_1d",
+    windowStart: sql`date_trunc('day', started_at)`,
+    // include the current incomplete day too; ON CONFLICT DO UPDATE keeps it fresh
+    timeFilter: sql`started_at >= date_trunc('day', now()) - interval ${sql.raw(`'${lookback}'`)}`,
+  });
 }
 
 // Retention is tiered to exactly what the dashboard reads (see
@@ -324,14 +271,44 @@ export async function rollupLeaderboard(
   // — last-writer-wins per key. (The agg/chal/fail SELECTs are each unique on
   // their PK, so DO UPDATE never "affects a row a second time".)
   await db.transaction(async (tx) => {
-  // Delete the buckets we're about to rewrite (delete-then-insert).
-  await tx.execute(sql`DELETE FROM ${aggT}  WHERE window_start >= ${floor}`);
-  await tx.execute(sql`DELETE FROM ${chalT} WHERE window_start >= ${floor}`);
-  await tx.execute(sql`DELETE FROM ${failT} WHERE window_start >= ${floor}`);
-  await tx.execute(sql`DELETE FROM ${histT} WHERE window_start >= ${floor}`);
+    // Delete the buckets we're about to rewrite (delete-then-insert), then
+    // re-fold each precompute table. Each step is its own helper below; all
+    // share the same floor/bucket so they cover identical windows.
+    await tx.execute(sql`DELETE FROM ${aggT}  WHERE window_start >= ${floor}`);
+    await tx.execute(sql`DELETE FROM ${chalT} WHERE window_start >= ${floor}`);
+    await tx.execute(sql`DELETE FROM ${failT} WHERE window_start >= ${floor}`);
+    await tx.execute(sql`DELETE FROM ${histT} WHERE window_start >= ${floor}`);
 
-  // Aggregates (correct-only percentiles + counts) at both infra scopes, joined
-  // to the per-bucket win tally.
+    const scope = { floor, bucket, winBucket: bucket, aggT, chalT, failT, histT };
+    await insertLeaderboardAgg(tx, scope);
+    await insertChallengeCounts(tx, scope);
+    await insertFailureBreakdown(tx, scope);
+    await insertLatencyHistograms(tx, scope);
+  });
+}
+
+/** Transaction handle passed to the per-table leaderboard fold helpers. */
+type RollupTx = Parameters<Parameters<DbClient["transaction"]>[0]>[0];
+
+/**
+ * Shared inputs for the per-table folds. `bucket` and `winBucket` are both
+ * `date_trunc(trunc, started_at)` (the winBucket alias documents the win-tally
+ * CTE's use); the `*T` fields are the sql.raw target table names.
+ */
+interface LeaderboardScope {
+  floor: SQL;
+  bucket: SQL;
+  winBucket: SQL;
+  aggT: SQL;
+  chalT: SQL;
+  failT: SQL;
+  histT: SQL;
+}
+
+/** Aggregates (correct-only percentiles + counts) at both infra scopes, joined
+ *  to the per-bucket win tally. */
+async function insertLeaderboardAgg(tx: RollupTx, s: LeaderboardScope): Promise<void> {
+  const { floor, bucket, winBucket, aggT } = s;
   await tx.execute(sql`
     WITH base AS (
       SELECT s.*, grm.geo AS geo_r
@@ -380,14 +357,14 @@ export async function rollupLeaderboard(
     ),
     wins AS (
       SELECT geo_r AS geo, '__all__' AS worker_provider, provider_id, method, connection_mode, methodology_version,
-        ${sql`date_trunc(${sql.raw(`'${trunc}'`)}, started_at)`} AS window_start, count(*)::int AS n_wins
+        ${winBucket} AS window_start, count(*)::int AS n_wins
       FROM ranked WHERE rn_all = 1
-      GROUP BY geo_r, provider_id, method, connection_mode, methodology_version, ${sql`date_trunc(${sql.raw(`'${trunc}'`)}, started_at)`}
+      GROUP BY geo_r, provider_id, method, connection_mode, methodology_version, ${winBucket}
       UNION ALL
       SELECT geo_r, worker_provider, provider_id, method, connection_mode, methodology_version,
-        ${sql`date_trunc(${sql.raw(`'${trunc}'`)}, started_at)`}, count(*)::int
+        ${winBucket}, count(*)::int
       FROM ranked WHERE rn_infra = 1
-      GROUP BY geo_r, worker_provider, provider_id, method, connection_mode, methodology_version, ${sql`date_trunc(${sql.raw(`'${trunc}'`)}, started_at)`}
+      GROUP BY geo_r, worker_provider, provider_id, method, connection_mode, methodology_version, ${winBucket}
     )
     INSERT INTO ${aggT} (
       geo, worker_provider, provider_id, method, connection_mode, methodology_version, window_start,
@@ -431,8 +408,11 @@ export async function rollupLeaderboard(
       freshness_p95_lag   = EXCLUDED.freshness_p95_lag,
       n_wins              = EXCLUDED.n_wins
   `);
+}
 
-  // Companion challenge counts (rate denominator) at both infra scopes.
+/** Companion challenge counts (rate denominator) at both infra scopes. */
+async function insertChallengeCounts(tx: RollupTx, s: LeaderboardScope): Promise<void> {
+  const { floor, winBucket, chalT } = s;
   await tx.execute(sql`
     WITH base AS (
       SELECT s.*, grm.geo AS geo_r
@@ -454,25 +434,29 @@ export async function rollupLeaderboard(
     INSERT INTO ${chalT} (
       geo, worker_provider, method, connection_mode, methodology_version, window_start, n_challenges
     )
-    SELECT geo_r, '__all__', method, connection_mode, methodology_version, ${sql`date_trunc(${sql.raw(`'${trunc}'`)}, started_at)`}, count(*)::int
+    SELECT geo_r, '__all__', method, connection_mode, methodology_version, ${winBucket}, count(*)::int
     FROM ranked WHERE rn_all = 1
-    GROUP BY geo_r, method, connection_mode, methodology_version, ${sql`date_trunc(${sql.raw(`'${trunc}'`)}, started_at)`}
+    GROUP BY geo_r, method, connection_mode, methodology_version, ${winBucket}
     UNION ALL
-    SELECT geo_r, worker_provider, method, connection_mode, methodology_version, ${sql`date_trunc(${sql.raw(`'${trunc}'`)}, started_at)`}, count(*)::int
+    SELECT geo_r, worker_provider, method, connection_mode, methodology_version, ${winBucket}, count(*)::int
     FROM ranked WHERE rn_infra = 1
-    GROUP BY geo_r, worker_provider, method, connection_mode, methodology_version, ${sql`date_trunc(${sql.raw(`'${trunc}'`)}, started_at)`}
+    GROUP BY geo_r, worker_provider, method, connection_mode, methodology_version, ${winBucket}
     ON CONFLICT (geo, worker_provider, method, connection_mode, methodology_version, window_start)
     DO UPDATE SET n_challenges = EXCLUDED.n_challenges
   `);
+}
 
-  // Companion failure breakdown: per-failure_category counts at both infra
-  // scopes. The WHERE clause is the EXACT scf predicate the agg uses for
-  // sample_count_failed (correctness != 'ambiguous' AND (status != 'ok' OR
-  // correctness != 'correct')), so SUM(n) per (geo, infra, provider, method,
-  // mode, mv) window reconciles with the agg's failed count — i.e. the breakdown
-  // adds up to the missing success %. The `failure_category IS NOT NULL` guard
-  // drops pre-0006 backfilled failures (NULL category) so they can't violate the
-  // table's NOT NULL key — those buckets undercount rather than error.
+/**
+ * Companion failure breakdown: per-failure_category counts at both infra scopes.
+ * The WHERE clause is the EXACT scf predicate the agg uses for
+ * sample_count_failed, so SUM(n) per window reconciles with the agg's failed
+ * count (the breakdown adds up to the missing success %). The
+ * `failure_category IS NOT NULL` guard drops pre-0006 backfilled failures (NULL
+ * category) so they can't violate the table's NOT NULL key — those buckets
+ * undercount rather than error.
+ */
+async function insertFailureBreakdown(tx: RollupTx, s: LeaderboardScope): Promise<void> {
+  const { floor, bucket, failT } = s;
   await tx.execute(sql`
     WITH base AS (
       SELECT s.*, grm.geo AS geo_r
@@ -503,12 +487,16 @@ export async function rollupLeaderboard(
     ON CONFLICT (geo, worker_provider, provider_id, method, connection_mode, methodology_version, window_start, failure_category)
     DO UPDATE SET n = EXCLUDED.n
   `);
+}
 
-  // Latency-distribution histograms (correct-only) at both infra scopes. Each
-  // row holds a sparse JSONB bin map { "<1..60>": count } over the shared log
-  // domain plus the exact count + min. width_bucket is clamped to [1, NBINS] so
-  // the tails fall in the edge bins and Σ bins == n. Feeds the "Latency
-  // distribution" metric (sum bins across buckets → density / CDF / box).
+/**
+ * Latency-distribution histograms (correct-only) at both infra scopes. Each row
+ * holds a sparse JSONB bin map { "<1..60>": count } over the shared log domain
+ * plus the exact count + min. width_bucket is clamped to [1, NBINS] so the tails
+ * fall in the edge bins and Σ bins == n. Feeds the "Latency distribution" metric.
+ */
+async function insertLatencyHistograms(tx: RollupTx, s: LeaderboardScope): Promise<void> {
+  const { floor, bucket, histT } = s;
   await tx.execute(sql`
     WITH base AS (
       SELECT s.provider_id, s.method, s.connection_mode, s.methodology_version,
@@ -548,7 +536,6 @@ export async function rollupLeaderboard(
     ON CONFLICT (geo, worker_provider, provider_id, method, connection_mode, methodology_version, window_start)
     DO UPDATE SET bins = EXCLUDED.bins, n = EXCLUDED.n, min_ms = EXCLUDED.min_ms
   `);
-  });
 }
 
 // Retention tiered to dashboard reads: the *_1h tables only feed windows ≤7d,
@@ -726,7 +713,15 @@ async function reverifyFinalizedChallenges(
 ): Promise<void> {
   // Method-bucket eligibility for re-check: only finalized/immutable shapes.
   // Mirrors docs/methodology.md § Deferred finality re-verification.
-  const rows = (await db.execute(sql`
+  const rows = await executeRows<{
+    id: string;
+    method: string;
+    bucket: string;
+    params: unknown;
+    reference_hash: Buffer | string;
+  }>(
+    db,
+    sql`
     SELECT c.id::text AS id,
            c.method,
            c.bucket,
@@ -748,13 +743,8 @@ async function reverifyFinalizedChallenges(
       )
     ORDER BY c.generated_at ASC
     LIMIT ${FINALITY_RECHECK_BATCH}
-  `)) as unknown as Array<{
-    id: string;
-    method: string;
-    bucket: string;
-    params: unknown;
-    reference_hash: Buffer | string;
-  }>;
+  `,
+  );
 
   for (const r of rows) {
     const method = r.method as Method;

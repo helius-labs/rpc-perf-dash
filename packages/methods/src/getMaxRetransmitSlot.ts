@@ -21,7 +21,7 @@ import { freshnessVerdict, slotFromShape } from "./freshness.js";
 export const BUCKETS = ["default"] as const;
 export type GetMaxRetransmitSlotBucket = (typeof BUCKETS)[number];
 
-export interface GetMaxRetransmitSlotParams {}
+export type GetMaxRetransmitSlotParams = Record<string, never>;
 
 type GetMaxRetransmitSlotResponse = number;
 

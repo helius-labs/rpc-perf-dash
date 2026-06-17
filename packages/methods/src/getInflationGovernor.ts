@@ -19,7 +19,7 @@ import {
 export const BUCKETS = ["default"] as const;
 export type GetInflationGovernorBucket = (typeof BUCKETS)[number];
 
-export interface GetInflationGovernorParams {}
+export type GetInflationGovernorParams = Record<string, never>;
 
 interface GetInflationGovernorResponse {
   initial?: number;

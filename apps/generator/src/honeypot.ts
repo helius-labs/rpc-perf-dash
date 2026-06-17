@@ -1,6 +1,6 @@
 /** Honeypot pool seeding + draw. */
 import { sql } from "drizzle-orm";
-import { schema, type DbClient } from "@rpcbench/db";
+import { schema, type DbClient, firstRow } from "@rpcbench/db";
 import {
   HONEYPOT_INJECTION_RATE,
   HONEYPOT_POOL_TARGET_PER_METHOD,
@@ -17,7 +17,14 @@ export async function drawHoneypot(
   db: DbClient,
   method: Method,
 ): Promise<{ id: string; params: unknown; expected_projection: unknown; expected_projection_hash: Buffer } | null> {
-  const rows = await db.execute(sql`
+  return firstRow<{
+    id: string;
+    params: unknown;
+    expected_projection: unknown;
+    expected_projection_hash: Buffer;
+  }>(
+    db,
+    sql`
     UPDATE honeypot_pool
     SET last_used_at = now(), use_count = use_count + 1
     WHERE id = (
@@ -27,14 +34,8 @@ export async function drawHoneypot(
       LIMIT 1
     )
     RETURNING id, params, expected_projection, expected_projection_hash
-  `);
-  const r = (rows as unknown as Array<{
-    id: string;
-    params: unknown;
-    expected_projection: unknown;
-    expected_projection_hash: Buffer;
-  }>)[0];
-  return r ?? null;
+  `,
+  );
 }
 
 /**
@@ -129,7 +130,7 @@ export async function seedHoneypotPool(opts: {
       .values({
         method: opts.method,
         params: params,
-        expected_projection_hash: Buffer.from(projection.hash) as never,
+        expected_projection_hash: Buffer.from(projection.hash),
         expected_projection: projection.shape,
         methodology_version: opts.methodologyVersion,
       })

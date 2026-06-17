@@ -13,8 +13,6 @@ export const WINDOWS = [
   { value: 720, label: "30d" },
 ] as const;
 
-export type WindowOption = (typeof WINDOWS)[number];
-
 /** Set of valid window-hour values, for O(1) param validation. */
 export const WINDOW_VALUES: ReadonlySet<number> = new Set(
   WINDOWS.map((w) => w.value),
