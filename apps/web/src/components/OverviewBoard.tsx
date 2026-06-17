@@ -133,9 +133,16 @@ export function OverviewBoard({
   );
   const [customizeOpen, setCustomizeOpen] = useState(false);
 
+  // Which preset pill is shown active. Tracked in client state (not read off the
+  // server `presetId` prop) so it flips the instant a pill is clicked, without
+  // waiting for the URL navigation to round-trip. Re-synced from the prop below
+  // whenever the server-resolved preset changes.
+  const [selectedPresetId, setSelectedPresetId] = useState<PresetId>(presetId);
+
   const [prevPresetId, setPrevPresetId] = useState(presetId);
   if (presetId !== prevPresetId) {
     setPrevPresetId(presetId);
+    setSelectedPresetId(presetId);
     setComponentWeights(preset.weights);
     setRegionWeights({ ...preset.regionWeights });
     setSelectedMethods(new Set(preset.methods));
@@ -186,6 +193,7 @@ export function OverviewBoard({
   // set. Used by the preset pills (so clicking one always re-applies it, even
   // when it's already the selected preset and the URL won't change) and Reset.
   const applyPreset = (p: (typeof SCORE_PRESETS)[number]) => {
+    setSelectedPresetId(p.id);
     setComponentWeights(p.weights);
     setRegionWeights({ ...p.regionWeights });
     setSelectedMethods(new Set(p.methods));
@@ -216,11 +224,12 @@ export function OverviewBoard({
     };
   }, [presetRows]);
 
-  // Whether the current tuning still equals the active preset's defaults. Once
-  // the user diverges (component weights, method set, or region set), no preset
-  // pill is shown as active.
-  const matchesPreset = useMemo(() => {
-    const w = preset.weights;
+  // Whether the current tuning still equals a given preset's defaults. Once the
+  // user diverges (component weights, method set, or region set), no preset pill
+  // is shown as active. Compared against the passed preset (not the server-prop
+  // one) so a freshly-clicked pill matches instantly, pre-navigation.
+  const tuningMatchesPreset = (p: (typeof SCORE_PRESETS)[number]): boolean => {
+    const w = p.weights;
     const cw = componentWeights;
     if (
       cw.latency !== w.latency ||
@@ -231,15 +240,15 @@ export function OverviewBoard({
     ) {
       return false;
     }
-    if (selectedMethods.size !== preset.methods.length) return false;
-    for (const m of preset.methods) if (!selectedMethods.has(m)) return false;
-    const presetRegions = Object.keys(preset.regionWeights);
+    if (selectedMethods.size !== p.methods.length) return false;
+    for (const m of p.methods) if (!selectedMethods.has(m)) return false;
+    const presetRegions = Object.keys(p.regionWeights);
     if (GEO_REGIONS.filter((g) => regionWeights[g] != null).length !== presetRegions.length) {
       return false;
     }
     for (const g of presetRegions) if (regionWeights[g as GeoRegion] == null) return false;
     return true;
-  }, [preset, componentWeights, selectedMethods, regionWeights]);
+  };
 
   const searchParams = useSearchParams();
   const windowParam = Number(searchParams.get("window"));
@@ -254,7 +263,7 @@ export function OverviewBoard({
   };
 
   const shareFilters: ShareFilters = {
-    presetId,
+    presetId: selectedPresetId,
     methods: [...selectedMethods],
     methodWeights: equalMethodWeights([...selectedMethods]),
     regions: GEO_REGIONS.filter((g) => regionWeights[g] != null),
@@ -322,8 +331,10 @@ export function OverviewBoard({
             <div className="flex items-stretch gap-1.5 flex-1 min-w-0">
               {SCORE_PRESETS.map((pr) => {
                 // Active only when this is the selected preset AND the tuning is
-                // still its defaults — customizing deactivates the pill.
-                const active = presetId === pr.id && matchesPreset;
+                // still its defaults — customizing deactivates the pill. Both are
+                // client-state-derived, so the active pill flips on click without
+                // waiting for the URL navigation.
+                const active = selectedPresetId === pr.id && tuningMatchesPreset(pr);
                 return (
                   <Link
                     key={pr.id}
