@@ -3,8 +3,9 @@
  *
  * Latency-distribution series (CDF / histogram / box) for one method×mode×window
  * ×geo×infra, read lazily by the Performance page's "Latency distribution"
- * metric. Hits the raw `samples` table, so it is intentionally NOT fetched on
- * normal page loads — only when a user selects the distribution metric.
+ * metric. Reads the precomputed `latency_histogram_*` tables (see
+ * lib/distribution.ts), so it is fast at any window; fetched only when a user
+ * selects the distribution metric.
  *
  * Query params (mirrors the Performance page filters):
  *   method  — RPC method (default getTransaction)

@@ -6,6 +6,7 @@ import "./globals.css";
 import NavLinks from "@/components/NavLinks";
 import MobileMenu from "@/components/MobileMenu";
 import HeaderStatus from "@/components/HeaderStatus";
+import { Analytics } from "@vercel/analytics/next";
 import { siteUrl } from "@/lib/siteUrl";
 
 const geistSans = Geist({ subsets: ["latin"], variable: "--font-sans-geist", display: "swap" });
@@ -59,6 +60,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <main className="max-w-[1240px] w-full mx-auto px-10 pt-3 pb-8 max-[640px]:px-5 max-[640px]:pt-0 max-[640px]:pb-8">
           {children}
         </main>
+        <Analytics />
       </body>
     </html>
   );

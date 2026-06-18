@@ -12,6 +12,7 @@
   "dependencies": {
     "@rpcbench/db": "workspace:*",
     "@rpcbench/shared": "workspace:*",
+    "@vercel/analytics": "^2.0.1",
     "drizzle-orm": "^0.36.0",
     "next": "^15.1.3",
     "postgres": "^3.4.5",

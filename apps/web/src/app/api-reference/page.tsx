@@ -1,10 +1,16 @@
 /**
- * Hidden internal API reference. Documents the read-only JSON endpoints
- * (/api/leaderboard, /api/meta, /api/by-method, /api/providers/[id]).
+ * Hidden internal API reference. Documents the read-only JSON endpoints:
+ * the scored/ranked data (/api/leaderboard, /api/meta, /api/by-method,
+ * /api/providers/[id]) plus the data feeds and health endpoints
+ * (/api/distribution, /api/challenges, /api/fleet-status, /api/sample-count).
  *
  * Deliberately unlinked — there is no nav entry anywhere; it's reachable only by
- * typing the URL. Valid-value lists are rendered live from the same shared
- * constants the param parsers validate against, so the docs can't drift.
+ * typing the URL.
+ *
+ * DRIFT NOTE: only the "Valid values" lists below render live from the shared
+ * constants the param parsers validate against, so those can't drift. The
+ * endpoint roster and per-endpoint param tables are hand-maintained — update them
+ * here whenever a route handler's params or response shape change.
  */
 
 import type { Metadata } from "next";
@@ -15,6 +21,7 @@ import {
 } from "@rpcbench/shared";
 import { ALL_METHODS } from "@/lib/methods";
 import { WINDOWS } from "@/lib/windows";
+import { SCORE_PRESETS } from "@/lib/workloadPresets";
 
 // Keep this page out of any sitemap / crawl.
 export const metadata: Metadata = {
@@ -41,15 +48,24 @@ const ENDPOINTS: Endpoint[] = [
     method: "GET",
     path: "/api/leaderboard",
     blurb:
-      "Ranked leaderboard. Overall cross-region blend by default; a single-region board when region is concrete. Returns rank, composite score (+ L/W/R/C/F sub-scores in region mode), p50/p95/p99, win-rate, sample counts, success/correctness rates, eligibility, and failure breakdown.",
+      "Ranked leaderboard. Overall cross-region blend by default; a single-region board when region is concrete. The Overall board is a workload-preset method-blend (see preset) unless method= is set, which forces a legacy single-method board. Returns rank, composite score (+ L/W/R/C/F sub-scores in region mode), p50/p95/p99, win-rate, sample counts, success/correctness rates, eligibility, and failure breakdown.",
     params: [
       { name: "region", values: "overall | " + GEO_REGIONS.join(" | "), def: "overall" },
+      {
+        name: "preset",
+        values: SCORE_PRESETS.map((p) => p.id).join(" | ") + " (Overall method-blend)",
+        def: "balanced",
+      },
       {
         name: "infra",
         values: Object.keys(WORKER_PROVIDER_LABELS).join(" | ") + " (concrete region only)",
         def: "pooled (__all__)",
       },
-      { name: "method", values: "any method (see /api/meta)", def: "getTransaction" },
+      {
+        name: "method",
+        values: "any method (see /api/meta) → forces single-method board",
+        def: "preset blend (getTransaction when method is set)",
+      },
       { name: "mode", values: "cold | warm", def: "cold" },
       { name: "window", values: WINDOWS.map((w) => w.value).join(" | ") + " (hours)", def: "24" },
       { name: "eligibleOnly", values: "1 | true → drop ineligible providers", def: "off" },
@@ -60,7 +76,7 @@ const ENDPOINTS: Endpoint[] = [
     method: "GET",
     path: "/api/meta",
     blurb:
-      "Everything needed to build a valid /api/leaderboard query: methods, regions, modes, windows, scoring weights, methodology version, the provider roster, and the currently-active geos / infra / infra×geo pairs.",
+      "Everything needed to build a valid /api/leaderboard query: methods, regions, modes, windows, scoring weights, default region weights, min method coverage, the workload presets (method/region/component weights per preset), methodology version, the provider roster, and the currently-active geos / infra / infra×geo pairs.",
     params: [],
     example: "/api/meta",
   },
@@ -80,11 +96,69 @@ const ENDPOINTS: Endpoint[] = [
     blurb:
       "Single-provider deep dive: overall rank, composite score, per-geo sub-score breakdown, blended percentiles, win-rate, call totals, and failure breakdown, from the same Overall board /api/leaderboard returns. [id] accepts the slug or the raw provider_id.",
     params: [
-      { name: "method", values: "any method (see /api/meta)", def: "getTransaction" },
+      {
+        name: "preset",
+        values: SCORE_PRESETS.map((p) => p.id).join(" | ") + " (Overall method-blend)",
+        def: "balanced",
+      },
+      {
+        name: "method",
+        values: "any method (see /api/meta) → forces single-method board",
+        def: "preset blend (getTransaction when method is set)",
+      },
       { name: "mode", values: "cold | warm", def: "cold" },
       { name: "window", values: WINDOWS.map((w) => w.value).join(" | ") + " (hours)", def: "24" },
     ],
     example: "/api/providers/" + (BENCHMARKED_PROVIDERS[0]?.id ?? "helius"),
+  },
+  {
+    method: "GET",
+    path: "/api/distribution",
+    blurb:
+      "Latency-distribution series (CDF / histogram / box) for one method × mode × window × geo × infra, read from the precomputed latency_histogram_* tables (fast at any window). Note: region here is a GEO, not a raw cloud region; intended for lazy fetch when a user selects the distribution metric.",
+    params: [
+      { name: "method", values: "any method (see /api/meta)", def: "getTransaction" },
+      { name: "mode", values: "cold | warm", def: "cold" },
+      { name: "hours", values: WINDOWS.map((w) => w.value).join(" | ") + " (window)", def: "24" },
+      { name: "region", values: GEO_REGIONS.join(" | ") + " (GEO)", def: "Overall (all geos)" },
+      {
+        name: "wp",
+        values: Object.keys(WORKER_PROVIDER_LABELS).join(" | ") + " | all (infra)",
+        def: "all (pooled)",
+      },
+    ],
+    example: "/api/distribution?method=getTransaction&mode=cold&hours=24",
+  },
+  {
+    method: "GET",
+    path: "/api/challenges",
+    blurb:
+      "Read-only feed of recent challenges (the verification rows behind /raw), paginated. Returns the same slice the /challenges table renders.",
+    params: [
+      { name: "method", values: "any method (see /api/meta)", def: "all" },
+      { name: "bucket", values: "challenge bucket (validated downstream)", def: "all" },
+      { name: "status", values: "ready | expired", def: "all" },
+      { name: "window", values: WINDOWS.map((w) => w.value).join(" | ") + " (hours)", def: "1" },
+      { name: "target", values: "provider substring match (max 128 chars)", def: "all" },
+      { name: "offset", values: "row offset, in steps of 50 (capped at 500)", def: "0" },
+    ],
+    example: "/api/challenges?window=1&offset=0",
+  },
+  {
+    method: "GET",
+    path: "/api/fleet-status",
+    blurb:
+      "Compact fleet-health summary (the data behind the header status pill). No params.",
+    params: [],
+    example: "/api/fleet-status",
+  },
+  {
+    method: "GET",
+    path: "/api/sample-count",
+    blurb:
+      "Live cumulative sample count (the data behind the Overview counter). No params.",
+    params: [],
+    example: "/api/sample-count",
   },
 ];
 
@@ -178,6 +252,7 @@ export default function ApiReferencePage() {
           Rendered live from the same constants the endpoints validate against.
         </p>
         <ValueList title="methods" items={ALL_METHODS} />
+        <ValueList title="presets" items={SCORE_PRESETS.map((p) => p.id)} />
         <ValueList title="regions" items={["overall", ...GEO_REGIONS]} />
         <ValueList title="infra (concrete region)" items={Object.keys(WORKER_PROVIDER_LABELS)} />
         <ValueList title="connection modes" items={["cold", "warm"]} />

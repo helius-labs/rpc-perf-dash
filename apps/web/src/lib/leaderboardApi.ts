@@ -36,7 +36,7 @@ import {
   type PresetLeaderRow,
   type SingleLeaderRow,
 } from "@/components/leaderboardShared";
-import { type PresetId } from "@/lib/workloadPresets";
+import { presetById, type PresetId } from "@/lib/workloadPresets";
 
 export interface LeaderboardParams {
   region: GeoRegion | "overall";
@@ -162,7 +162,10 @@ async function fetchLeaderboardImpl(
       connection_mode: connectionMode,
       window_hours: windowHours,
       methodology_version: METHODOLOGY_VERSION,
-      weights: DEFAULT_WEIGHTS,
+      // The preset board scores with the preset's own component weights
+      // (fetchRankedPreset); the legacy single-method/region boards use the
+      // defaults. Report whichever was actually applied.
+      weights: usePreset ? presetById(preset).weights : DEFAULT_WEIGHTS,
       eligible_count: eligibleCount,
       generated_at: new Date().toISOString(),
     },
