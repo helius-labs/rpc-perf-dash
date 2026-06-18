@@ -9,38 +9,50 @@
  * tabs from the original design are intentionally omitted (no live data).
  */
 
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { GEO_REGIONS, GEO_REGION_LABELS, type GeoRegion } from "@rpcbench/shared/types";
 import { brandColorFor, colorFor } from "@/lib/providerColors";
 import { ExportButtons } from "./ExportButtons";
 import { toCSV } from "@/lib/exportData";
 
-interface ProviderCol {
+export interface ProviderCol {
   id: string;
   name: string;
 }
-interface PctPair {
+export interface PctPair {
   p50: number | null;
   p95: number | null;
 }
-interface CellValue {
+export interface CellValue {
   cold: PctPair;
   warm: PctPair;
 }
-interface BreakdownRow {
+export interface BreakdownRow {
   key: string;
   label: string;
   isCode?: boolean;
   values: Record<string, CellValue>;
 }
 /** Flat (geo × method × provider × mode) cube rows powering the drill-down. */
-interface CubeRow {
+export interface CubeRow {
   geo: GeoRegion;
   method: string;
   provider_id: string;
   connection_mode: "cold" | "warm";
   p50: number | null;
   p95: number | null;
+}
+/** Pre-built table data for one infra (pooled `all` or a single cloud). The page
+ *  ships one of these per active infra so the table's Infra dropdown can switch
+ *  client-side with no server round-trip. */
+export interface InfraTableData {
+  methodRows: BreakdownRow[];
+  cubeRows: CubeRow[];
+}
+/** One option in the table's Infra dropdown (`all` = pooled across clouds). */
+export interface InfraOption {
+  id: string;
+  label: string;
 }
 
 function dotColor(id: string): string {
@@ -51,6 +63,186 @@ function pillCls(active: boolean): string {
   return (
     "border-0 px-[11px] py-[5px] text-[12px] rounded-full font-geistmono tracking-[0.01em] cursor-pointer transition-colors " +
     (active ? "bg-fg text-bg" : "bg-transparent text-fg2 hover:text-fg")
+  );
+}
+
+// Trigger styling for the Infra / RPC dropdown pills — a bordered rounded pill
+// matching the table's other control groups, with the ▾ affordance.
+const TRIGGER_CLS =
+  "inline-flex items-center gap-1.5 px-[11px] py-[6px] text-[12px] rounded-full font-geistmono tracking-[0.01em] cursor-pointer transition-colors bg-bg border border-line text-fg2 hover:text-fg";
+
+/** Shared open/close behavior for the dropdown pills (click-outside + Escape). */
+function useDropdown() {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onEsc);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onEsc);
+    };
+  }, [open]);
+  return { open, setOpen, ref };
+}
+
+/** Single-select Infra dropdown — scopes the whole table to one cloud (or the
+ *  pooled `all` view), client-side and independent of the chart's Infra filter. */
+function InfraDropdown({
+  options,
+  selected,
+  onSelect,
+}: {
+  options: InfraOption[];
+  selected: string;
+  onSelect: (id: string) => void;
+}) {
+  const { open, setOpen, ref } = useDropdown();
+  const label = options.find((o) => o.id === selected)?.label ?? options[0]?.label ?? "Infra";
+  return (
+    <div ref={ref} className="relative inline-block shrink-0">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        className={TRIGGER_CLS}
+      >
+        <span className="truncate">{label}</span>
+        <span aria-hidden className="text-[9px] opacity-70 shrink-0">
+          ▾
+        </span>
+      </button>
+      {open && (
+        <div
+          role="listbox"
+          className="absolute right-0 top-[calc(100%+6px)] z-20 min-w-[180px] p-1.5 rounded-md border border-line bg-bg shadow-lg max-h-[400px] overflow-y-auto"
+        >
+          {options.map((o) => {
+            const active = o.id === selected;
+            return (
+              <button
+                key={o.id}
+                type="button"
+                role="option"
+                aria-selected={active}
+                onClick={() => {
+                  onSelect(o.id);
+                  setOpen(false);
+                }}
+                className={
+                  "flex w-full items-center text-left rounded px-2.5 py-[6px] text-[12px] font-geistmono tracking-[0.01em] cursor-pointer transition-colors hover:bg-line/40 " +
+                  (active ? "text-fg font-medium" : "text-fg2 hover:text-fg")
+                }
+              >
+                <span className="truncate">{o.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Multi-select RPC dropdown — toggles which provider columns are shown. All
+ *  checked by default; the last visible column can't be removed. */
+function RpcDropdown({
+  providers,
+  visible,
+  onToggle,
+  onShowAll,
+}: {
+  providers: ProviderCol[];
+  visible: ReadonlySet<string>;
+  onToggle: (id: string) => void;
+  onShowAll: () => void;
+}) {
+  const { open, setOpen, ref } = useDropdown();
+  const allShown = visible.size === providers.length;
+  const label = allShown ? "All RPCs" : `${visible.size} RPC${visible.size === 1 ? "" : "s"}`;
+  return (
+    <div ref={ref} className="relative inline-block shrink-0">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        className={TRIGGER_CLS}
+      >
+        <span className="truncate">{label}</span>
+        <span aria-hidden className="text-[9px] opacity-70 shrink-0">
+          ▾
+        </span>
+      </button>
+      {open && (
+        <div
+          role="listbox"
+          aria-multiselectable
+          className="absolute right-0 top-[calc(100%+6px)] z-20 min-w-[200px] p-1.5 rounded-md border border-line bg-bg shadow-lg max-h-[400px] overflow-y-auto"
+        >
+          <button
+            type="button"
+            onClick={onShowAll}
+            className={
+              "flex w-full items-center text-left rounded px-2.5 py-[6px] mb-0.5 text-[12px] font-geistmono tracking-[0.01em] cursor-pointer transition-colors hover:bg-line/40 " +
+              (allShown ? "text-fg font-medium" : "text-fg2 hover:text-fg")
+            }
+          >
+            Show all
+          </button>
+          {providers.map((p) => {
+            const shown = visible.has(p.id);
+            return (
+              <div
+                key={p.id}
+                role="option"
+                aria-selected={shown}
+                className="flex items-center rounded text-[12px] font-geistmono tracking-[0.01em] hover:bg-line/40"
+              >
+                <button
+                  type="button"
+                  onClick={() => onToggle(p.id)}
+                  aria-label={(shown ? "Hide " : "Show ") + p.name}
+                  className="flex items-center pl-2.5 pr-1.5 py-[6px] shrink-0 cursor-pointer"
+                >
+                  <span
+                    aria-hidden
+                    className={
+                      "w-[14px] h-[14px] rounded-[3px] border flex items-center justify-center text-[9px] leading-none transition-colors " +
+                      (shown ? "bg-fg text-bg border-fg" : "border-line text-transparent hover:border-fg2")
+                    }
+                  >
+                    ✓
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onToggle(p.id)}
+                  className={
+                    "flex-1 min-w-0 flex items-center gap-1.5 text-left pr-3 py-[6px] cursor-pointer transition-colors " +
+                    (shown ? "text-fg font-medium" : "text-fg2 hover:text-fg")
+                  }
+                >
+                  <span
+                    className="inline-block w-[7px] h-[7px] rounded-full shrink-0"
+                    style={{ background: dotColor(p.id) }}
+                  />
+                  <span className="truncate">{p.name}</span>
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -121,24 +313,96 @@ function RowCells({
 
 export function MethodRegionTabs({
   providers,
-  methodRows,
-  regionRows,
-  cubeRows,
-  infraLabel,
+  byInfra,
+  infraOptions,
+  selectedMethod,
 }: {
   providers: ProviderCol[];
-  methodRows: BreakdownRow[];
-  regionRows: BreakdownRow[];
-  /** Flat (geo × method × provider × mode) cube for the click-to-expand drill-down. */
-  cubeRows: CubeRow[];
-  /** Display name of the selected Infra pill (worker_provider). Undefined =
-   *  pooled across all infra; when set, every value reflects that one cloud. */
-  infraLabel?: string | undefined;
+  /** Pre-built table data per infra; the Infra dropdown picks one client-side. */
+  byInfra: Record<string, InfraTableData>;
+  /** Infra dropdown options (`all` = pooled, then one per active cloud). */
+  infraOptions: InfraOption[];
+  /** The page's first selected method — used to derive the By-region rows from
+   *  the active infra's cube (so they track the table's own Infra filter). */
+  selectedMethod: string;
 }) {
   const [tab, setTab] = useState<"method" | "region">("method");
   const [percentile, setPercentile] = useState<"p50" | "p95">("p95");
   const [mode, setMode] = useState<"cold" | "warm">("cold");
   const [open, setOpen] = useState<Set<string>>(() => new Set());
+  // Table-local Infra filter — independent of the chart's `wp` filter.
+  const [tableInfra, setTableInfra] = useState<string>(() => infraOptions[0]?.id ?? "all");
+  // RPC column show/hide — the set of currently-visible provider ids (all shown
+  // by default). Toggling never empties (the last column stays). Initialized
+  // lazily from props (the benchmarked provider set is stable).
+  const [visibleProviders, setVisibleProviders] = useState<Set<string>>(
+    () => new Set(providers.map((p) => p.id)),
+  );
+
+  const active = byInfra[tableInfra] ?? byInfra.all ?? { methodRows: [], cubeRows: [] };
+  const methodRows = active.methodRows;
+  const cubeRows = active.cubeRows;
+  const infraLabel =
+    tableInfra === "all" ? undefined : infraOptions.find((o) => o.id === tableInfra)?.label;
+
+  // Columns to render — providers filtered to the RPC multi-select.
+  const shownProviders = useMemo(
+    () =>
+      visibleProviders.size === providers.length
+        ? providers
+        : providers.filter((p) => visibleProviders.has(p.id)),
+    [providers, visibleProviders],
+  );
+  const toggleProvider = useCallback(
+    (id: string) =>
+      setVisibleProviders((prev) => {
+        const next = new Set(prev);
+        if (next.has(id)) {
+          if (next.size === 1) return prev; // keep at least one column
+          next.delete(id);
+        } else next.add(id);
+        return next;
+      }),
+    [],
+  );
+  const showAllProviders = useCallback(
+    () => setVisibleProviders(new Set(providers.map((p) => p.id))),
+    [providers],
+  );
+
+  // By-region rows derived from the active infra's cube, sliced to the page's
+  // selected method and grouped by geo (canonical order, only geos with data).
+  // This keeps the By-region table on the table's own Infra filter without an
+  // extra server fetch.
+  const regionRows = useMemo<BreakdownRow[]>(() => {
+    const byGeoProv = new Map<string, Map<string, CellValue>>();
+    for (const r of cubeRows) {
+      if (r.method !== selectedMethod) continue;
+      let pm = byGeoProv.get(r.geo);
+      if (!pm) {
+        pm = new Map();
+        byGeoProv.set(r.geo, pm);
+      }
+      let c = pm.get(r.provider_id);
+      if (!c) {
+        c = { cold: { p50: null, p95: null }, warm: { p50: null, p95: null } };
+        pm.set(r.provider_id, c);
+      }
+      c[r.connection_mode] = { p50: r.p50, p95: r.p95 };
+    }
+    const out: BreakdownRow[] = [];
+    for (const geo of GEO_REGIONS) {
+      const pm = byGeoProv.get(geo);
+      if (!pm) continue;
+      out.push({
+        key: geo,
+        label: GEO_REGION_LABELS[geo],
+        isCode: false,
+        values: Object.fromEntries(pm),
+      });
+    }
+    return out;
+  }, [cubeRows, selectedMethod]);
 
   const toggle = useCallback(
     (id: string) =>
@@ -243,15 +507,24 @@ export function MethodRegionTabs({
       <div className="flex justify-between items-end gap-3 mb-4 flex-wrap">
         <div>
           <h2 className="text-[20px] md:text-[26px] font-medium tracking-[-0.022em] mt-2 mb-0">
-            {mode} {percentile} latency by method &amp; region
+            Latency Table
             {infraLabel ? <span className="text-fg2"> on {infraLabel}</span> : null}
           </h2>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          {infraOptions.length > 1 && (
+            <InfraDropdown options={infraOptions} selected={tableInfra} onSelect={setTableInfra} />
+          )}
+          <RpcDropdown
+            providers={providers}
+            visible={visibleProviders}
+            onToggle={toggleProvider}
+            onShowAll={showAllProviders}
+          />
           <div className="flex gap-[3px] p-[3px] bg-bg border border-line rounded-full">
             {(["cold", "warm"] as const).map((mm) => (
               <button key={mm} type="button" className={pillCls(mode === mm)} onClick={() => setMode(mm)}>
-                {mm}
+                {mm === "cold" ? "Cold" : "Warm"}
               </button>
             ))}
           </div>
@@ -274,10 +547,10 @@ export function MethodRegionTabs({
             filename={`rpc-by-${tab}-${mode}-${percentile}`}
             buildCsv={() =>
               toCSV(
-                [firstCol, ...providers.map((p) => p.name)],
+                [firstCol, ...shownProviders.map((p) => p.name)],
                 rows.map((r) => [
                   r.label,
-                  ...providers.map((p) => r.values[p.id]?.[mode]?.[percentile] ?? null),
+                  ...shownProviders.map((p) => r.values[p.id]?.[mode]?.[percentile] ?? null),
                 ]),
               )
             }
@@ -285,7 +558,7 @@ export function MethodRegionTabs({
               dimension: tab,
               mode,
               percentile,
-              providers: providers.map((p) => ({ id: p.id, name: p.name })),
+              providers: shownProviders.map((p) => ({ id: p.id, name: p.name })),
               rows: rows.map((r) => ({ key: r.key, label: r.label, values: r.values })),
             })}
           />
@@ -299,7 +572,7 @@ export function MethodRegionTabs({
               <th className="sticky left-0 top-0 bg-bg z-[3] text-left font-geistmono text-[10px] font-medium tracking-[0.14em] uppercase text-muted py-2.5 pr-3 md:pr-4 border-b border-line">
                 {firstCol}
               </th>
-              {providers.map((p) => (
+              {shownProviders.map((p) => (
                 <th
                   key={p.id}
                   className="sticky top-0 bg-bg z-[2] text-left font-geistmono text-[10px] font-medium tracking-[0.14em] uppercase text-muted py-2.5 px-3 md:px-4 border-b border-line whitespace-nowrap"
@@ -343,7 +616,7 @@ export function MethodRegionTabs({
                     </td>
                     <RowCells
                       row={r}
-                      providers={providers}
+                      providers={shownProviders}
                       mode={mode}
                       percentile={percentile}
                       cellCls="py-0 px-3 md:px-4 align-middle min-w-[96px] md:min-w-[110px]"
@@ -351,7 +624,7 @@ export function MethodRegionTabs({
                   </tr>
                   {isOpen && (
                     <tr className="border-b border-line/60 last:border-b-0">
-                      <td colSpan={providers.length + 1} className="p-0">
+                      <td colSpan={shownProviders.length + 1} className="p-0">
                         <div className="mrtab-reveal">
                          <div className="overflow-hidden">
                           <div className="my-2 mx-1 px-3 py-2 rounded-lg border border-line/60 bg-[color-mix(in_srgb,var(--text)_3%,transparent)]">
@@ -366,7 +639,7 @@ export function MethodRegionTabs({
                                   <th className="text-left font-geistmono text-[10px] font-medium tracking-[0.14em] uppercase text-muted py-2 pr-3 md:pr-4 whitespace-nowrap">
                                     {subHeader}
                                   </th>
-                                  {providers.map((p) => (
+                                  {shownProviders.map((p) => (
                                     <th
                                       key={p.id}
                                       className="text-left font-geistmono text-[10px] font-medium tracking-[0.14em] uppercase text-muted py-2 px-3 md:px-4 whitespace-nowrap min-w-[96px] md:min-w-[110px]"
@@ -396,7 +669,7 @@ export function MethodRegionTabs({
                                     </td>
                                     <RowCells
                                       row={sr}
-                                      providers={providers}
+                                      providers={shownProviders}
                                       mode={mode}
                                       percentile={percentile}
                                       cellCls="py-0 px-3 md:px-4 align-middle min-w-[96px] md:min-w-[110px]"

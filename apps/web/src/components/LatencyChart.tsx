@@ -170,6 +170,17 @@ export function LatencyChart({
     else url.searchParams.set("bp", ids.join(","));
     window.history.replaceState(window.history.state, "", url);
   }, [selectedBenchmarked, showRpcFilter]);
+  // Persist the RPC line selection for the session (alongside the shareable `bp`
+  // param) so a method/region/window switch — which remounts this chart via the
+  // Suspense key — keeps the same lines instead of snapping back to "show all".
+  const persistRpc = (next: Set<string>) => {
+    try {
+      if (next.size === 0) window.sessionStorage.removeItem("perf.rpc");
+      else window.sessionStorage.setItem("perf.rpc", [...next].join(","));
+    } catch {
+      /* ignore */
+    }
+  };
 
   const [metric, setMetric] = useState<Metric>("latency");
   const isScore = hasScore && metric === "score";
@@ -197,6 +208,18 @@ export function LatencyChart({
       if (m === "score" || m === "distribution" || m === "latency") setMetric(m);
       const d = window.sessionStorage.getItem("perf.distMode");
       if (d === "cumulative" || d === "histogram" || d === "box") setDistMode(d);
+      const pc = window.sessionStorage.getItem("perf.percentile");
+      if (pc === "p50" || pc === "p95") setPercentile(pc);
+      const bn = window.sessionStorage.getItem("perf.binMinutes");
+      if (bn != null && bn !== "" && Number.isFinite(Number(bn))) setBinMinutes(Number(bn));
+      const ho = window.sessionStorage.getItem("perf.hideOutliers");
+      if (ho === "true" || ho === "false") setHideOutliers(ho === "true");
+      // RPC line selection — a shared `?bp=` link (initialBenchmarked) wins; only
+      // fall back to the session-persisted set when no bp was provided.
+      if (!(initialBenchmarked && initialBenchmarked.length > 0)) {
+        const rpc = window.sessionStorage.getItem("perf.rpc");
+        if (rpc) setSelectedBenchmarked(new Set(rpc.split(",").filter(Boolean)));
+      }
     } catch {
       /* sessionStorage unavailable — fall back to defaults */
     }
@@ -316,7 +339,7 @@ export function LatencyChart({
   // is filtered independently because providers have different baselines —
   // a "spike" for Helius isn't the same value as one for Alchemy. Below ~6
   // points the IQR isn't meaningful, so we skip filtering on tiny series.
-  const [hideOutliers, setHideOutliers] = useState(false);
+  const [hideOutliers, setHideOutliers] = useState(true);
   const normalized = useMemo(() => {
     if (!hideOutliers) return binned;
     return binned.map((s) => {
@@ -368,7 +391,11 @@ export function LatencyChart({
           {/* Multi-select: click to toggle a provider's line; empty = show all. */}
           <button
             type="button"
-            onClick={() => setSelectedBenchmarked(new Set())}
+            onClick={() => {
+              const n = new Set<string>();
+              persistRpc(n);
+              setSelectedBenchmarked(n);
+            }}
             className={pillCls(selectedBenchmarked.size === 0)}
           >
             All
@@ -382,6 +409,7 @@ export function LatencyChart({
                   const next = new Set(prev);
                   if (next.has(p.id)) next.delete(p.id);
                   else next.add(p.id);
+                  persistRpc(next);
                   return next;
                 })
               }
@@ -416,7 +444,19 @@ export function LatencyChart({
       {!isScore && !isDist && (
         <FilterGroup label="Percentile">
           {(["p50", "p95"] as const).map((pp) => (
-            <button key={pp} type="button" onClick={() => setPercentile(pp)} className={pillCls(percentile === pp)}>
+            <button
+              key={pp}
+              type="button"
+              onClick={() => {
+                setPercentile(pp);
+                try {
+                  window.sessionStorage.setItem("perf.percentile", pp);
+                } catch {
+                  /* ignore */
+                }
+              }}
+              className={pillCls(percentile === pp)}
+            >
               {pp}
             </button>
           ))}
@@ -425,7 +465,19 @@ export function LatencyChart({
       {!isDist && binOptions.length > 1 && (
         <FilterGroup label="Bin">
           {binOptions.map((m) => (
-            <button key={m} type="button" onClick={() => setBinMinutes(m)} className={pillCls(m === effectiveBin)}>
+            <button
+              key={m}
+              type="button"
+              onClick={() => {
+                setBinMinutes(m);
+                try {
+                  window.sessionStorage.setItem("perf.binMinutes", String(m));
+                } catch {
+                  /* ignore */
+                }
+              }}
+              className={pillCls(m === effectiveBin)}
+            >
               {binLabel(m)}
             </button>
           ))}
@@ -435,7 +487,17 @@ export function LatencyChart({
         <FilterGroup label="Outliers">
           <button
             type="button"
-            onClick={() => setHideOutliers((v) => !v)}
+            onClick={() =>
+              setHideOutliers((v) => {
+                const nv = !v;
+                try {
+                  window.sessionStorage.setItem("perf.hideOutliers", String(nv));
+                } catch {
+                  /* ignore */
+                }
+                return nv;
+              })
+            }
             className={pillCls(hideOutliers)}
             title="Drop points above Q3 + 1.5·IQR per series. Hides isolated spikes while keeping sustained degradation visible."
           >

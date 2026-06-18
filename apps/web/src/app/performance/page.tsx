@@ -19,7 +19,13 @@ import { buildPageUrl } from "@/lib/apiParams";
 import { ogImagePath, parseShareParams } from "@/lib/share";
 import { Suspense } from "react";
 import { ChartPanel, ChartLoading } from "@/components/ChartSection";
-import { MethodRegionTabs } from "@/components/MethodRegionTabs";
+import {
+  MethodRegionTabs,
+  type BreakdownRow,
+  type CubeRow,
+  type InfraOption,
+  type InfraTableData,
+} from "@/components/MethodRegionTabs";
 import { PerfScoreboard } from "@/components/PerfScoreboard";
 import {
   buildMiniScoreRows,
@@ -189,15 +195,25 @@ export default async function PerformancePage({
   let activeGeos: GeoRegion[] = [];
   let activeInfraGeo: InfraGeoPair[] = [];
   let activeProviders: string[] = [];
-  let methodLat: MethodLatencyRow[] = [];
-  let methodGeoLat: MethodGeoLatencyRow[] = [];
+  // Per-infra table data: index i aligns with infraKeys[i] ("all" = pooled).
+  let infraKeys: string[] = ["all"];
+  let methodLatByInfra: MethodLatencyRow[][] = [];
+  let methodGeoLatByInfra: MethodGeoLatencyRow[][] = [];
   // Per-(method, geo) cube for the tunable scoreboard — built only when >1 method
   // is selected (single method has nothing to reweight → cheaper prebuilt path).
   let cube: MethodGeoRows[] | null = null;
   let error: string | null = null;
 
   try {
-    [activeGeos, activeInfraGeo] = await Promise.all([fetchActiveGeos(), fetchActiveInfraGeo()]);
+    [activeGeos, activeInfraGeo, activeProviders] = await Promise.all([
+      fetchActiveGeos(),
+      fetchActiveInfraGeo(),
+      fetchActiveProviders(),
+    ]);
+    // The table owns its own Infra filter (decoupled from the chart's `wp`), so
+    // pre-fetch its per-infra aggregates for every active cloud (plus pooled
+    // `all`) up front — the dropdown then switches client-side, no round-trip.
+    infraKeys = ["all", ...activeProviders];
     const fetchGeoRows = (geos: GeoRegion[], mode: "cold" | "warm"): Promise<GeoRows[]> =>
       Promise.all(
         geos.map(async (g) => {
@@ -211,24 +227,24 @@ export default async function PerformancePage({
           return { geo: g, rows };
         }),
       );
-    const [providers, ml, mgl, regionColdRaw, regionWarmRaw] = await Promise.all([
-      fetchActiveProviders(),
-      fetchMethodLatency({
-        windowHours,
-        ...(selectedProvider ? { workerProvider: selectedProvider } : {}),
-      }),
-      fetchMethodGeoLatency({
-        windowHours,
-        ...(selectedProvider ? { workerProvider: selectedProvider } : {}),
-      }),
+    const [mlByInfra, mglByInfra, regionColdRaw, regionWarmRaw] = await Promise.all([
+      Promise.all(
+        infraKeys.map((k) =>
+          fetchMethodLatency({ windowHours, ...(k !== "all" ? { workerProvider: k } : {}) }),
+        ),
+      ),
+      Promise.all(
+        infraKeys.map((k) =>
+          fetchMethodGeoLatency({ windowHours, ...(k !== "all" ? { workerProvider: k } : {}) }),
+        ),
+      ),
       fetchGeoRows(activeGeos, "cold"),
       fetchGeoRows(activeGeos, "warm"),
     ]);
     regionTableCold = regionColdRaw;
     regionTableWarm = regionWarmRaw;
-    activeProviders = providers;
-    methodLat = ml;
-    methodGeoLat = mgl;
+    methodLatByInfra = mlByInfra;
+    methodGeoLatByInfra = mglByInfra;
 
     // Tunable scoreboard cube: when multiple methods are selected, fetch the
     // per-(method, geo) aggregates over the selected region subset (or all
@@ -262,59 +278,52 @@ export default async function PerformancePage({
     error = DB_ERROR_MESSAGE;
   }
 
-  // Build the per-method & per-region breakdown tables. Columns = benchmarked
-  // providers; By method pools all regions (fetchMethodLatency), By region
-  // reuses the per-geo aggregates loaded above.
+  // Build the per-method breakdown rows (columns = benchmarked providers; By
+  // method pools all regions via fetchMethodLatency) for one infra. The By-region
+  // rows are derived client-side in MethodRegionTabs from the per-infra cube, so
+  // they're not built here. One of these is built per infra below.
   const tableProviders = BENCHMARKED_PROVIDERS.filter((p) => p.benchmarked).map((p) => ({
     id: p.id,
     name: p.name,
   }));
-  const methodBreakdownRows = [...ALL_METHODS]
-    .sort((a, b) => a.localeCompare(b))
-    .map((m) => ({
-      key: m,
-      label: m,
-      isCode: true,
-      values: Object.fromEntries(
-        tableProviders.map((p) => {
-          const cold = methodLat.find(
-            (r) => r.method === m && r.provider_id === p.id && r.connection_mode === "cold",
-          );
-          const warm = methodLat.find(
-            (r) => r.method === m && r.provider_id === p.id && r.connection_mode === "warm",
-          );
-          return [
-            p.id,
-            {
-              cold: { p50: cold?.p50 ?? null, p95: cold?.p95 ?? null },
-              warm: { p50: warm?.p50 ?? null, p95: warm?.p95 ?? null },
-            },
-          ];
-        }),
-      ),
-    }));
-  const warmRowsByGeo = new Map(regionTableWarm.map((o) => [o.geo, o.rows]));
-  const regionBreakdownRows = regionTableCold.map((o) => {
-    const warmRows = warmRowsByGeo.get(o.geo) ?? [];
-    return {
-      key: o.geo,
-      label: GEO_REGION_LABELS[o.geo],
-      isCode: false,
-      values: Object.fromEntries(
-        tableProviders.map((p) => {
-          const cold = o.rows.find((r) => r.provider_id === p.id);
-          const warm = warmRows.find((r) => r.provider_id === p.id);
-          return [
-            p.id,
-            {
-              cold: { p50: cold?.p50_ms ?? null, p95: cold?.p95_ms ?? null },
-              warm: { p50: warm?.p50_ms ?? null, p95: warm?.p95_ms ?? null },
-            },
-          ];
-        }),
-      ),
+  const buildMethodRows = (ml: MethodLatencyRow[]): BreakdownRow[] =>
+    [...ALL_METHODS]
+      .sort((a, b) => a.localeCompare(b))
+      .map((m) => ({
+        key: m,
+        label: m,
+        isCode: true,
+        values: Object.fromEntries(
+          tableProviders.map((p) => {
+            const cold = ml.find(
+              (r) => r.method === m && r.provider_id === p.id && r.connection_mode === "cold",
+            );
+            const warm = ml.find(
+              (r) => r.method === m && r.provider_id === p.id && r.connection_mode === "warm",
+            );
+            return [
+              p.id,
+              {
+                cold: { p50: cold?.p50 ?? null, p95: cold?.p95 ?? null },
+                warm: { p50: warm?.p50 ?? null, p95: warm?.p95 ?? null },
+              },
+            ];
+          }),
+        ),
+      }));
+  // Assemble the per-infra table payload the dropdown switches between, plus the
+  // dropdown options (`all` = pooled across clouds, then one per active cloud).
+  const byInfra: Record<string, InfraTableData> = {};
+  infraKeys.forEach((key, i) => {
+    byInfra[key] = {
+      methodRows: buildMethodRows(methodLatByInfra[i] ?? []),
+      cubeRows: (methodGeoLatByInfra[i] ?? []) as CubeRow[],
     };
   });
+  const infraOptions: InfraOption[] = [
+    { id: "all", label: "All infra" },
+    ...activeProviders.map((p) => ({ id: p, label: WORKER_PROVIDER_LABELS[p] ?? p })),
+  ];
 
   // Context-aware filter coverage: which (infra, geo) pairs actually have
   // workers. Disable impossible combinations; the selected pill is never
@@ -522,15 +531,13 @@ export default async function PerformancePage({
         </Suspense>
       </section>
 
-      {/* Per-method & per-region latency breakdown (By method / By region). */}
+      {/* Per-method & per-region latency breakdown (By method / By region). The
+          table owns its own Infra + RPC dropdowns, decoupled from the chart. */}
       <MethodRegionTabs
         providers={tableProviders}
-        methodRows={methodBreakdownRows}
-        regionRows={regionBreakdownRows}
-        cubeRows={methodGeoLat}
-        infraLabel={
-          selectedProvider ? (WORKER_PROVIDER_LABELS[selectedProvider] ?? selectedProvider) : undefined
-        }
+        byInfra={byInfra}
+        infraOptions={infraOptions}
+        selectedMethod={selectedMethod}
       />
     </div>
   );
