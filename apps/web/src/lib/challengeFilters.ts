@@ -85,11 +85,11 @@ export function parseChallengesFilters(
   const window = WINDOW_VALUES.has(windowHours) ? windowHours : 1;
   // Cap target search to avoid pathological inputs in the ILIKE.
   const target = (params.target ?? "").slice(0, MAX_TARGET_LEN).trim();
-  // Cap deep pagination at 10 pages. OFFSET is expensive in this query — the
-  // per-row LATERAL sample-count join runs for every skipped row (measured
-  // ~15ms/row live: OFFSET 2000 ≈ 30s) — so the cap is deliberately tight.
-  // Replacing OFFSET with keyset pagination (cursor on generated_at) would
-  // lift the limit cheaply if deeper browsing is ever needed.
-  const offset = Math.min(500, Math.max(0, Number.parseInt(params.offset ?? "0", 10) || 0));
+  // Cap deep pagination at 100 pages. The row query now selects the page of
+  // challenges first and only LATERAL-joins sample counts onto those ≤50 rows
+  // (lib/challengeRows.ts), so OFFSET no longer re-runs the expensive join for
+  // skipped rows — its cost is just an index scan over the skipped challenge
+  // rows. That scan is still O(offset), so a (generous) cap stays to bound it.
+  const offset = Math.min(5000, Math.max(0, Number.parseInt(params.offset ?? "0", 10) || 0));
   return { method, bucket, status, window, target, offset };
 }

@@ -72,6 +72,13 @@ export const challenges = pgTable(
     // ORDER BY generated_at DESC — the (status|method, generated_at) indexes
     // above lead with a non-time column. See migration 0016.
     by_generated_at: index("challenges_generated_at_idx").on(t.generated_at.desc()),
+    // /challenges browser bucket filter (row query + count). text_pattern_ops so
+    // both the exact (=) and family (LIKE 'prefix%') arms are index-usable. See
+    // migration 0024.
+    by_bucket: index("challenges_bucket_idx").on(
+      t.bucket.op("text_pattern_ops"),
+      t.generated_at.desc(),
+    ),
   }),
 );
 

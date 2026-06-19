@@ -46,22 +46,45 @@ export function whereFor(f: ChallengesFiltersNoOffset) {
 
 /**
  * The page slice. This is the only query keyed by `offset`, so paging Prev/Next
- * re-runs only this — the count + bucket queries stay cached. The LATERAL
- * consensus counts use the per-challenge_id sample index (one lookup per row).
+ * re-runs only this — the count + bucket queries stay cached.
+ *
+ * Two structural choices keep this fast:
+ *
+ *   1. The page of challenges is selected first (WHERE + ORDER BY + LIMIT/OFFSET
+ *      on `challenges` alone, no join) in the `page` CTE, then the LATERAL
+ *      sample-count join runs only on those ≤50 rows. The old shape had the
+ *      LATERAL at top level, so OFFSET made it fire for every *skipped* row too
+ *      (~15ms/row → OFFSET 500 ≈ 8s). Now OFFSET cost is just an index scan over
+ *      the skipped challenge rows + exactly PAGE_SIZE LATERAL probes.
+ *
+ *   2. The LATERAL bounds `started_at` to a window around the challenge's
+ *      `generated_at`. `samples` is partitioned daily by `started_at`, so this
+ *      lets the executor runtime-prune to the 1–2 partitions that can hold the
+ *      challenge's samples instead of probing all ~30. A challenge's TTL is 30s,
+ *      so every sample lands within seconds of `generated_at`; the bound is wide
+ *      (−1h/+6h) so worker↔DB clock skew can't drop a lagging worker's samples
+ *      and undercount the consensus columns.
  */
 async function fetchChallengeRowsImpl(f: ChallengesFilters): Promise<ChallengeRow[]> {
   const where = whereFor(f);
   const rows = await db().execute(sql`
+    WITH page AS (
+      SELECT c.id, c.method, c.bucket, c.status, c.generated_at, c.params, c.is_honeypot
+      FROM challenges c
+      ${where}
+      ORDER BY c.generated_at DESC
+      LIMIT ${PAGE_SIZE} OFFSET ${f.offset}
+    )
     SELECT
-      c.id::text AS id,
-      c.method,
-      c.bucket,
-      c.status,
-      c.generated_at,
-      c.params,
-      c.is_honeypot,
+      page.id::text AS id,
+      page.method,
+      page.bucket,
+      page.status,
+      page.generated_at,
+      page.params,
+      page.is_honeypot,
       s.total, s.correct, s.ambiguous, s.incorrect, s.disputed
-    FROM challenges c
+    FROM page
     LEFT JOIN LATERAL (
       SELECT
         count(*)::int AS total,
@@ -69,11 +92,12 @@ async function fetchChallengeRowsImpl(f: ChallengesFilters): Promise<ChallengeRo
         count(*) FILTER (WHERE correctness = 'ambiguous')::int AS ambiguous,
         count(*) FILTER (WHERE correctness = 'incorrect')::int AS incorrect,
         count(*) FILTER (WHERE exclusion_reason = 'consensus_disputed')::int AS disputed
-      FROM samples WHERE challenge_id = c.id
+      FROM samples
+      WHERE challenge_id = page.id
+        AND started_at >= page.generated_at - interval '1 hour'
+        AND started_at <  page.generated_at + interval '6 hours'
     ) s ON true
-    ${where}
-    ORDER BY c.generated_at DESC
-    LIMIT ${PAGE_SIZE} OFFSET ${f.offset}
+    ORDER BY page.generated_at DESC
   `);
   return rows as unknown as ChallengeRow[];
 }
