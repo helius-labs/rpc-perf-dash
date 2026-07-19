@@ -1,0 +1,23 @@
+{
+  "name": "generator",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx --watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "bootstrap": "tsx src/bootstrap.ts",
+    "seed-honeypots": "tsx src/seed-honeypots.ts",
+    "benchmark": "tsx src/benchmark.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@rpcbench/db": "workspace:*",
+    "@rpcbench/methods": "workspace:*",
+    "@rpcbench/runner": "workspace:*",
+    "@rpcbench/shared": "workspace:*",
+    "drizzle-orm": "^0.45.2",
+    "postgres": "^3.4.5",
+    "tsx": "^4.19.2"
+  }
+}

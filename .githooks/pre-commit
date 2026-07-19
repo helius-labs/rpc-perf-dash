@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Pre-commit guard: refuse to commit likely secrets or operator-internal
+# identifiers. Wired automatically by the root package.json "prepare" script
+# (git config core.hooksPath .githooks). Same scan CI runs on push, plus any
+# operator-local patterns in packages/shared/scripts/check-secrets.local.
+set -euo pipefail
+bash "$(git rev-parse --show-toplevel)/packages/shared/scripts/check-secrets.sh"

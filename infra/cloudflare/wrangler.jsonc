@@ -1,0 +1,84 @@
+{
+  // rpc-perf-dash worker — Cloudflare Containers vantage.
+  //
+  // Architecture: a thin Worker (Durable Object class WorkerContainer) wraps
+  // the container that runs the same Node.js worker process used on AWS / TSW.
+  // CF dispatches HTTP requests to the Worker → container; the container's
+  // 8080 HTTP listener (apps/worker/src/index.ts: startHealthServer) handles
+  // both healthchecks and admin pings. The actual benchmark work runs
+  // independently inside the container on the existing polling loop.
+  //
+  // Surfaces in the leaderboard as worker_provider=cloudflare, region=global,
+  // egress_path=cf-containers — rendered separately from the per-geo blend
+  // per docs/methodology.md § Region weights.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "rpc-bench-worker-cf",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-05-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // Serve on the account workers.dev subdomain. This MUST be pinned true: the
+  // healthcheck/keep-alive path that boots + wakes the container relies on the
+  // workers.dev URL, and a `wrangler delete` + redeploy otherwise leaves the
+  // subdomain route DISABLED — inbound requests then hit a Cloudflare edge
+  // error 1042 (never reaching the Worker) and the container can only boot on
+  // the 6h cron. Keeping this explicit re-enables the route on every deploy.
+  "workers_dev": true,
+
+  // Account is taken from the CLOUDFLARE_ACCOUNT_ID env var (exported by
+  // deploy-cf.sh) rather than pinned here, so the committed config carries
+  // no account-specific values.
+
+  "containers": [
+    {
+      "class_name": "WorkerContainer",
+      // Pre-built image pushed via `wrangler containers push`. The build/push
+      // is handled by deploy-cf.sh which runs `docker buildx build` from the
+      // repo root (so the Dockerfile's COPY pnpm-lock.yaml etc. resolve).
+      // CF rejects mutable :latest tags; deploy-cf.sh rewrites this line to
+      // pin the git SHA of the build before `wrangler deploy`.
+      // __ACCOUNT_ID__ and __IMAGE_TAG__ are replaced at deploy time by
+      // deploy-cf.sh (account from $CLOUDFLARE_ACCOUNT_ID, tag from the git
+      // short-SHA of the build). Kept as placeholders in git so the
+      // committed file doesn't churn every deploy.
+      "image": "registry.cloudflare.com/__ACCOUNT_ID__/rpc-bench-worker-cf:__IMAGE_TAG__",
+      // 6 lanes — one DO+container per "lane name" (cf1..cf6 in
+      // src/index.ts). CF's scheduler places each at a PoP independently,
+      // giving us geographic spread. Each container reports its own PoP
+      // via cdn-cgi/trace so they self-label as yyz/iad/fra/etc.
+      "max_instances": 6,
+      // `lite` (0.0625 vCPU / 256 MiB) OOM-kills Node before `listen()` —
+      // verified via `wrangler containers info`: instance state stays
+      // "inactive" and no container stdout ever reaches wrangler tail.
+      // `basic` (0.5 vCPU / 1 GiB) gives Node + tsx + drizzle headroom.
+      "instance_type": "basic"
+    }
+  ],
+
+  "durable_objects": {
+    "bindings": [
+      { "name": "WORKER_CONTAINER", "class_name": "WorkerContainer" }
+    ]
+  },
+
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["WorkerContainer"] }
+  ],
+
+  "vars": {
+    "WORKER_PROVIDER": "cloudflare",
+    "WORKER_REGION": "global",
+    "WORKER_EGRESS_PATH": "cf-containers",
+    "PORT": "8080"
+  },
+
+  // Keep-alive ping every 6h so the container doesn't sleep when no inbound
+  // HTTP traffic is hitting the Worker. The cron fires the Worker's
+  // `scheduled` handler which dispatches a fetch to the container.
+  "triggers": {
+    "crons": ["0 */6 * * *"]
+  }
+
+  // Secrets (Neon URLs, RPC keys) provisioned via `wrangler secret put` —
+  // see deploy-cf.sh. Same values as every other vantage.
+}

@@ -1,0 +1,19 @@
+{
+  "name": "infra-cdk",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "synth": "cdk synth",
+    "deploy": "cdk deploy --profile experiments-admin",
+    "diff": "cdk diff --profile experiments-admin",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.170.0",
+    "constructs": "^10.4.2"
+  },
+  "devDependencies": {
+    "aws-cdk": "^2.170.0"
+  }
+}
