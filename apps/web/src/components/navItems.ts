@@ -7,6 +7,8 @@
  * those too; the other items match on prefix so nested routes keep their parent
  * highlighted.
  */
+import { isFeatureEnabled } from "@/lib/flags";
+
 export const NAV_ITEMS: ReadonlyArray<{ href: string; label: string }> = [
   { href: "/", label: "Overview" },
   { href: "/performance", label: "Performance" },
@@ -14,6 +16,9 @@ export const NAV_ITEMS: ReadonlyArray<{ href: string; label: string }> = [
   { href: "/status", label: "Status" },
   { href: "/methodology", label: "Methodology" },
   { href: "/changelog", label: "Changelog" },
+  // Cost comparator — gated behind NEXT_PUBLIC_FEATURE_COSTS (see lib/flags.ts).
+  // Appended last so it's a no-op for the existing tabs when the flag is off.
+  ...(isFeatureEnabled("costs") ? [{ href: "/costs", label: "Costs" }] : []),
 ];
 
 export function isActive(href: string, pathname: string): boolean {
