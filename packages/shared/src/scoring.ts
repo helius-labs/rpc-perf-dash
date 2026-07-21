@@ -1,0 +1,356 @@
+/**
+ * Scoring formulas — must match `methodology.md` § Scoring.
+ *
+ *   L_score = 0.5 · clamp(0..100, best_p50 / provider_p50 * 100)
+ *           + 0.5 · clamp(0..100, best_p95 / provider_p95 * 100)
+ *             # Blends "usually fast" (p50) with "tight tail" (p95).
+ *             # p50-only would ignore tail latency; p95-only ignores median.
+ *   W_score = clamp(0..100, provider_win_rate / best_win_rate * 100)
+ *             # Win rate = fraction of challenges where this provider had the
+ *             # lowest-latency correct sample. Normalized to best so the leader
+ *             # pins to 100 (same shape as L/F).
+ *             # If best_win_rate == 0 (no provider ever wins — degenerate),
+ *             # W=100 for everyone (component contributes nothing useful).
+ *   R_score = success_rate * 100
+ *             # success_rate excludes ambiguous from denominator
+ *             # HTTP 200 with `incorrect` data counts as RELIABLE (server responded)
+ *             #   but NOT correct.
+ *   C_score = correct / validated * 100
+ *             # validated = correct + incorrect + stale (excludes ambiguous AND
+ *             # incomplete — completeness is its own metric)
+ *   F_score = clamp(0..100, best_freshness_p95_lag / provider_freshness_p95_lag * 100)
+ *             # if best == 0, all-tied at 100; else use numerator floor of 1.
+ *
+ *   total = 0.25 L + 0.25 W + 0.25 R + 0.20 C + 0.05 F
+ */
+
+import { GEO_REGIONS, type GeoRegion } from "./types.js";
+
+export interface ScoringWeights {
+  latency: number;
+  winRate: number;
+  reliability: number;
+  correctness: number;
+  freshness: number;
+}
+
+export const DEFAULT_WEIGHTS: ScoringWeights = {
+  latency: 0.25,
+  winRate: 0.25,
+  reliability: 0.25,
+  correctness: 0.2,
+  freshness: 0.05,
+};
+
+/**
+ * Per-geo-region weight used when blending per-region provider scores into a
+ * single "overall" leaderboard ranking. Defaults bias toward EU Central and
+ * NA East, which is where the largest share of Solana RPC traffic terminates.
+ * Weights sum to 1.0. `blendRegionScores` renormalizes over the regions where
+ * each provider actually has data, so a provider absent from a region is not
+ * penalized for it.
+ */
+export type RegionWeights = Record<GeoRegion, number>;
+
+export const DEFAULT_REGION_WEIGHTS: RegionWeights = {
+  "na-east": 0.35,
+  "eu-central": 0.35,
+  "ap-northeast": 0.15,
+  "na-west": 0.05,
+  // All six geos now have live vantages (though not every cloud runs workers in
+  // every geo). eu-west / ap-southeast carry small weights — meaningful but
+  // light, since their vantage coverage is thinner than the primaries.
+  "eu-west": 0.05,
+  "ap-southeast": 0.05,
+};
+
+export interface ProviderMetrics {
+  provider_id: string;
+  p50_latency_ms: number;
+  p95_latency_ms: number;
+  success_rate: number; // 0..1
+  correct_count: number;
+  validated_count: number; // correct + incorrect + stale
+  freshness_p95_lag: number; // slots
+  n_wins: number;
+  n_challenges_with_winner: number;
+}
+
+export interface ScoredProvider {
+  provider_id: string;
+  total: number;
+  latency: number;
+  winRate: number;
+  reliability: number;
+  correctness: number;
+  freshness: number;
+}
+
+export function clamp(x: number, lo: number, hi: number): number {
+  return Math.min(hi, Math.max(lo, x));
+}
+
+export function score(
+  metrics: readonly ProviderMetrics[],
+  weights: ScoringWeights = DEFAULT_WEIGHTS,
+): ScoredProvider[] {
+  if (metrics.length === 0) return [];
+
+  const best_p50 = Math.min(...metrics.map((m) => m.p50_latency_ms));
+  const best_p95 = Math.min(...metrics.map((m) => m.p95_latency_ms));
+  const best_freshness = Math.min(...metrics.map((m) => m.freshness_p95_lag));
+  const winRates = metrics.map((m) =>
+    m.n_challenges_with_winner > 0 ? m.n_wins / m.n_challenges_with_winner : 0,
+  );
+  const best_win_rate = Math.max(0, ...winRates);
+
+  return metrics.map((m, i) => {
+    const L_p50 = clamp((best_p50 / m.p50_latency_ms) * 100, 0, 100);
+    const L_p95 = clamp((best_p95 / m.p95_latency_ms) * 100, 0, 100);
+    const L = 0.5 * L_p50 + 0.5 * L_p95;
+    const wr = winRates[i] ?? 0;
+    // Normalized to best winner. If no provider has ever won (best==0), the W
+    // component carries no information — give everyone W=100 so it doesn't
+    // drag any score down unfairly.
+    const W = best_win_rate === 0 ? 100 : clamp((wr / best_win_rate) * 100, 0, 100);
+    const R = clamp(m.success_rate * 100, 0, 100);
+    const C =
+      m.validated_count === 0
+        ? 0
+        : clamp((m.correct_count / m.validated_count) * 100, 0, 100);
+    // Freshness lag can be negative (provider's tip is briefly ahead of the
+    // reference tip captured a moment earlier). Treat lag <= 0 as "perfectly
+    // fresh" — F=100 — so we don't reward providers for being further behind
+    // than the reference and don't surface negative scores.
+    const providerLag = Math.max(0, m.freshness_p95_lag);
+    const bestLag = Math.max(0, best_freshness);
+    const F =
+      bestLag === 0
+        ? providerLag === 0
+          ? 100
+          : clamp((1 / providerLag) * 100, 0, 100)
+        : clamp((bestLag / Math.max(1, providerLag)) * 100, 0, 100);
+
+    const total = clamp(
+      weights.latency * L +
+        weights.winRate * W +
+        weights.reliability * R +
+        weights.correctness * C +
+        weights.freshness * F,
+      0,
+      100,
+    );
+
+    return {
+      provider_id: m.provider_id,
+      total,
+      latency: L,
+      winRate: W,
+      reliability: R,
+      correctness: C,
+      freshness: F,
+    };
+  });
+}
+
+/**
+ * Blend per-geo-region scores into a single overall score per provider.
+ *
+ * Inputs: a Map<GeoRegion, ScoredProvider[]> (one already-scored set per region).
+ *
+ * Eligible-subset renormalization: a provider that's only eligible in EU + NA
+ * shouldn't have its blend ceiling depressed by AP-Northeast's weight. So for
+ * each provider, we re-normalize the weights over only the regions where that
+ * provider appears.
+ *
+ * Returns one ScoredProvider per provider that's eligible in at least one
+ * region, with `total` = weighted blend, and L/W/R/C/F left as 0 (they're
+ * per-region quantities and don't blend meaningfully). Callers that need the
+ * per-region breakdown should keep the original per-region scoring around.
+ */
+export function blendRegionScores(
+  perRegion: Map<GeoRegion, readonly ScoredProvider[]>,
+  weights: Partial<RegionWeights> = DEFAULT_REGION_WEIGHTS,
+  opts?: { subs?: boolean },
+): ScoredProvider[] {
+  // For each provider, collect (region, score) and the weight it would draw.
+  const byProvider = new Map<string, Array<{ region: GeoRegion; score: ScoredProvider }>>();
+  for (const region of GEO_REGIONS) {
+    const list = perRegion.get(region);
+    if (!list) continue;
+    for (const sp of list) {
+      const arr = byProvider.get(sp.provider_id) ?? [];
+      arr.push({ region, score: sp });
+      byProvider.set(sp.provider_id, arr);
+    }
+  }
+
+  // By default the L/W/R/C/F sub-scores are left 0 (they're per-region
+  // quantities and historically didn't blend). `opts.subs` opts into blending
+  // them with the SAME renormalized region weights as `total` — used by the
+  // method-blend pipeline, which needs per-method sub-scores to combine.
+  const blendSubs = opts?.subs === true;
+  const out: ScoredProvider[] = [];
+  for (const [provider_id, entries] of byProvider) {
+    const wSum = entries.reduce((acc, e) => acc + (weights[e.region] ?? 0), 0);
+    if (wSum <= 0) continue;
+    let total = 0;
+    let latency = 0;
+    let winRate = 0;
+    let reliability = 0;
+    let correctness = 0;
+    let freshness = 0;
+    for (const e of entries) {
+      const w = (weights[e.region] ?? 0) / wSum;
+      total += w * e.score.total;
+      if (blendSubs) {
+        latency += w * e.score.latency;
+        winRate += w * e.score.winRate;
+        reliability += w * e.score.reliability;
+        correctness += w * e.score.correctness;
+        freshness += w * e.score.freshness;
+      }
+    }
+    out.push({
+      provider_id,
+      total: clamp(total, 0, 100),
+      latency,
+      winRate,
+      reliability,
+      correctness,
+      freshness,
+    });
+  }
+  // Sort by total desc for caller convenience.
+  out.sort((a, b) => b.total - a.total);
+  return out;
+}
+
+/**
+ * Region-weighted mean of a plain per-region scalar (e.g. a raw win rate), using
+ * the SAME eligible-subset renormalization as `blendRegionScores`: weights are
+ * renormalized over only the regions present in `perRegion` (so a provider absent
+ * from a region isn't penalized for it). The caller passes only the regions the
+ * provider is eligible in, so this mirrors the region weighting the score applies.
+ * Returns `null` when no present region carries positive weight (nothing to blend).
+ */
+export function blendRegionScalar(
+  perRegion: Map<GeoRegion, number>,
+  weights: Partial<RegionWeights> = DEFAULT_REGION_WEIGHTS,
+): number | null {
+  let wSum = 0;
+  let acc = 0;
+  for (const [region, value] of perRegion) {
+    const w = weights[region] ?? 0;
+    wSum += w;
+    acc += w * value;
+  }
+  return wSum > 0 ? acc / wSum : null;
+}
+
+/** Per-RPC-method weight used when blending per-method provider scores into a
+ *  single workload-preset score. Keys are method names; values need not sum to
+ *  1 (the blend renormalizes). The key SET also defines the preset's method
+ *  universe used by the coverage gate. */
+export type MethodWeights = Record<string, number>;
+
+/**
+ * A provider must be eligible (have a region-blended score) in methods whose
+ * summed weight is at least this fraction of the preset's total method weight,
+ * or it's excluded from the ranking and flagged "insufficient coverage". Guards
+ * against a provider topping a preset on partial method coverage. Empirically
+ * every current provider clears ~0.93+ of the method universe, so 0.60 excludes
+ * nobody today while protecting future / sparse-window cases.
+ */
+export const MIN_METHOD_COVERAGE = 0.6;
+
+/**
+ * Blend per-method (already region-blended) provider scores into one overall
+ * score per provider — the workload-preset headline number.
+ *
+ * Mirrors `blendRegionScores`' eligible-subset renormalization (a provider not
+ * measured on a method isn't penalized by that method's weight), and adds the
+ * minimum-coverage gate: a provider covering less than `minCoverage` of the
+ * preset's total method weight is dropped from `ranked` (but still reported in
+ * `coverage` so callers can render an "insufficient coverage" row).
+ *
+ * `total` and the L/W/R/C/F sub-scores are all blended (sub-scores are
+ * normalized 0–100, so they combine meaningfully across methods — unlike raw
+ * latency ms). Pass per-method scores produced by
+ * `blendRegionScores(..., { subs: true })` so the sub-scores are populated.
+ */
+export function blendMethodScores(
+  perMethod: Map<string, readonly ScoredProvider[]>,
+  weights: MethodWeights,
+  minCoverage: number = MIN_METHOD_COVERAGE,
+): { ranked: ScoredProvider[]; coverage: Map<string, number> } {
+  // Total weight of the preset's method universe (denominator for coverage).
+  const totalWeight = Object.values(weights).reduce((a, w) => a + Math.max(0, w), 0);
+
+  // For each provider, collect the (method, score) entries it actually has.
+  const byProvider = new Map<string, Array<{ method: string; score: ScoredProvider }>>();
+  for (const [method, list] of perMethod) {
+    for (const sp of list) {
+      const arr = byProvider.get(sp.provider_id) ?? [];
+      arr.push({ method, score: sp });
+      byProvider.set(sp.provider_id, arr);
+    }
+  }
+
+  const ranked: ScoredProvider[] = [];
+  const coverage = new Map<string, number>();
+  for (const [provider_id, entries] of byProvider) {
+    const coveredWeight = entries.reduce((acc, e) => acc + Math.max(0, weights[e.method] ?? 0), 0);
+    const covered = totalWeight > 0 ? coveredWeight / totalWeight : 0;
+    coverage.set(provider_id, covered);
+    if (coveredWeight <= 0 || covered < minCoverage) continue;
+
+    let total = 0;
+    let latency = 0;
+    let winRate = 0;
+    let reliability = 0;
+    let correctness = 0;
+    let freshness = 0;
+    for (const e of entries) {
+      const w = Math.max(0, weights[e.method] ?? 0) / coveredWeight;
+      total += w * e.score.total;
+      latency += w * e.score.latency;
+      winRate += w * e.score.winRate;
+      reliability += w * e.score.reliability;
+      correctness += w * e.score.correctness;
+      freshness += w * e.score.freshness;
+    }
+    ranked.push({
+      provider_id,
+      total: clamp(total, 0, 100),
+      latency,
+      winRate,
+      reliability,
+      correctness,
+      freshness,
+    });
+  }
+  ranked.sort((a, b) => b.total - a.total);
+  return { ranked, coverage };
+}
+
+/**
+ * Method-weighted mean of a plain per-method scalar (e.g. a region-blended win
+ * rate), mirroring `blendMethodScores`' per-method renormalization: weights are
+ * renormalized over only the methods present in `perMethod` (negative weights
+ * clamped to 0). No coverage gate — the caller decides eligibility upstream.
+ * Returns `null` when no present method carries positive weight.
+ */
+export function blendMethodScalar(
+  perMethod: Map<string, number>,
+  weights: MethodWeights,
+): number | null {
+  let wSum = 0;
+  let acc = 0;
+  for (const [method, value] of perMethod) {
+    const w = Math.max(0, weights[method] ?? 0);
+    wSum += w;
+    acc += w * value;
+  }
+  return wSum > 0 ? acc / wSum : null;
+}

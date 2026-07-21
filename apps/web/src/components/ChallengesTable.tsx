@@ -1,0 +1,258 @@
+"use client";
+
+/**
+ * Real-time /challenges results table. Initial rows come from the server
+ * (SSR), then the component polls /api/challenges every 5s with the page's
+ * active filters and replaces the list. Newly-arrived rows fade in for ~1.5s
+ * so it's visible the table is streaming (diff + highlight + per-second
+ * relative-time tick).
+ *
+ * Scaling: the API route is cached server-side for 10s + edge-cached for 5s,
+ * so N concurrent polling clients on a filter set converge to ~1 DB query /
+ * 10s. See apps/web/src/app/api/challenges/route.ts.
+ */
+
+import { useEffect, useRef, useState } from "react";
+import { apiPath } from "@/lib/basePath";
+import { BucketTags } from "@/components/BucketTags";
+import { ChallengeTarget } from "@/components/ChallengeTarget";
+import { ClickableRow, ClickableCard } from "@/components/ClickableRow";
+import { ConsensusSummary, type ConsensusCounts } from "@/components/ConsensusSummary";
+import { FloatingTooltip } from "@/components/FloatingTooltip";
+import {
+  STATUS_OPTIONS,
+  type ChallengeRow,
+  type ChallengesFilters,
+} from "@/lib/challengeFilters";
+
+const POLL_INTERVAL_MS = 5_000;
+const HIGHLIGHT_DURATION_MS = 1_800;
+const RELATIVE_TIME_TICK_MS = 1_000;
+
+function fmtRelativeTime(t: string | Date): string {
+  const ts = (typeof t === "string" ? new Date(t) : t).getTime();
+  const dt = (Date.now() - ts) / 1000;
+  if (dt < 60) return `${Math.max(1, Math.floor(dt))}s ago`;
+  if (dt < 3600) return `${Math.floor(dt / 60)}m ago`;
+  if (dt < 86400) return `${Math.floor(dt / 3600)}h ago`;
+  return `${Math.floor(dt / 86400)}d ago`;
+}
+
+function pollUrl(f: ChallengesFilters): string {
+  const qs = new URLSearchParams();
+  if (f.method) qs.set("method", f.method);
+  if (f.bucket) qs.set("bucket", f.bucket);
+  if (f.status) qs.set("status", f.status);
+  qs.set("window", String(f.window));
+  if (f.target) qs.set("target", f.target);
+  if (f.offset > 0) qs.set("offset", String(f.offset));
+  // apiPath: client fetch() isn't basePath-prefixed by Next, so a bare
+  // "/api/…" would hit the apex domain (wrong app) under the /benchmarks proxy.
+  return apiPath(`/api/challenges?${qs.toString()}`);
+}
+
+export function ChallengesTable({
+  initial,
+  filters,
+  emptyText,
+}: {
+  initial: ChallengeRow[];
+  filters: ChallengesFilters;
+  emptyText: string;
+}) {
+  const [rows, setRows] = useState<ChallengeRow[]>(initial);
+  // IDs of rows that just arrived this tick — animate a brief highlight so
+  // it's obvious which rows are new.
+  const [newIds, setNewIds] = useState<Set<string>>(new Set());
+  // Force a re-render every second so the "X seconds ago" column ticks
+  // continuously instead of jumping every 5s when the poll fires.
+  const [, setTick] = useState(0);
+  // Seed the "known IDs" set with the initial server-rendered batch so the
+  // first poll doesn't flash everything as "new".
+  const knownIdsRef = useRef<Set<string>>(new Set(initial.map((c) => c.id)));
+
+  useEffect(() => {
+    const id = setInterval(() => setTick((n) => n + 1), RELATIVE_TIME_TICK_MS);
+    return () => clearInterval(id);
+  }, []);
+
+  const url = pollUrl(filters);
+  useEffect(() => {
+    let cancelled = false;
+    let highlightTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const poll = async () => {
+      try {
+        const r = await fetch(url, { cache: "no-store" });
+        if (!r.ok) return;
+        const data = (await r.json()) as ChallengeRow[];
+        if (cancelled) return;
+
+        // Diff against the previous tick's IDs (not the SSR seed) so a row
+        // that's been there for 10s doesn't keep flashing.
+        const arrived: string[] = [];
+        for (const c of data) {
+          if (!knownIdsRef.current.has(c.id)) arrived.push(c.id);
+        }
+        knownIdsRef.current = new Set(data.map((c) => c.id));
+        setRows(data);
+
+        if (arrived.length > 0) {
+          setNewIds((prev) => {
+            const next = new Set(prev);
+            for (const id of arrived) next.add(id);
+            return next;
+          });
+          // Clear the highlight after the animation completes.
+          if (highlightTimer) clearTimeout(highlightTimer);
+          highlightTimer = setTimeout(() => {
+            if (cancelled) return;
+            setNewIds((prev) => {
+              const next = new Set(prev);
+              for (const id of arrived) next.delete(id);
+              return next;
+            });
+          }, HIGHLIGHT_DURATION_MS);
+        }
+      } catch {
+        // Swallow — next interval will retry. Fetch failures during a deploy
+        // or transient network blip shouldn't surface as a broken UI.
+      }
+    };
+
+    const id = setInterval(poll, POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+      if (highlightTimer) clearTimeout(highlightTimer);
+    };
+  }, [url]);
+
+  if (rows.length === 0) {
+    return <p className="text-[13px] text-muted p-3">{emptyText}</p>;
+  }
+
+  const rowClass = (id: string) => (newIds.has(id) ? "recent-row-flash" : undefined);
+
+  const statusLabel = (status: string) =>
+    STATUS_OPTIONS.find((s) => s.value === status)?.label ?? status;
+  const countsOf = (c: ChallengeRow): ConsensusCounts => ({
+    total: c.total,
+    correct: c.correct,
+    ambiguous: c.ambiguous,
+    incorrect: c.incorrect,
+  });
+
+  return (
+    <>
+      {/* Mobile: stacked cards. The desktop table forces a ~980px min-width and
+          would otherwise force multi-screen side-scroll on a phone. */}
+      <div className="md:hidden flex flex-col gap-2 overflow-y-auto" style={{ maxHeight: 560 }}>
+        {rows.map((c) => (
+          <ClickableCard key={c.id} href={`/raw?challenge=${c.id}`} className={rowClass(c.id)}>
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <code className="prov-ch-method">{c.method}</code>
+              <span className="prov-ch-when text-[11px] text-muted shrink-0">
+                {fmtRelativeTime(c.generated_at)}
+              </span>
+            </div>
+            <div
+              className="mb-2 text-[13px]"
+              style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+            >
+              <ChallengeTarget method={c.method} params={c.params} />
+            </div>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+              <BucketTags raw={c.bucket} />
+              <code
+                style={{
+                  fontSize: 11,
+                  color: c.status === "ready" ? "#7be0a4" : "var(--text-2)",
+                }}
+              >
+                {statusLabel(c.status)}
+              </code>
+              <ConsensusSummary counts={countsOf(c)} />
+            </div>
+          </ClickableCard>
+        ))}
+      </div>
+
+      {/* Desktop: the full table. */}
+      <div className="prov-table-wrap is-scroll hidden md:block" style={{ maxHeight: 560 }}>
+      <table className="prov-table" style={{ tableLayout: "fixed", width: "100%", minWidth: 980 }}>
+        <colgroup>
+          <col style={{ width: 210 }} />
+          <col style={{ width: 250 }} />
+          <col style={{ width: 180 }} />
+          <col style={{ width: 110 }} />
+          {/* Compact consensus chip — see ConsensusSummary.tsx. 120px is
+              plenty even at worst-case "220 · 220 · 220". */}
+          <col style={{ width: 120 }} />
+          <col style={{ width: 80 }} />
+        </colgroup>
+        <thead>
+          <tr>
+            <th>Method</th>
+            <th>Bucket</th>
+            <th>Target</th>
+            <th>
+              <FloatingTooltip
+                title="Challenge status"
+                trigger={
+                  <span className="border-b border-dotted border-line">Status</span>
+                }
+              >
+                <p style={{ marginBottom: 6 }}>
+                  <strong style={{ color: "#7be0a4" }}>dispatched</strong> — live:
+                  generated and sent to the worker vantages, which claim it and report
+                  samples. A challenge stays <em>dispatched</em> for its whole active
+                  life — watch the Consensus column fill in as samples land.
+                </p>
+                <p>
+                  <strong>expired</strong> — its time-to-live passed with no samples (no
+                  vantage claimed it in time).
+                </p>
+              </FloatingTooltip>
+            </th>
+            <th>Consensus</th>
+            <th className="prov-num">When</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((c) => {
+            const counts = countsOf(c);
+            return (
+              <ClickableRow key={c.id} href={`/raw?challenge=${c.id}`} className={rowClass(c.id)}>
+                <td>
+                  <code className="prov-ch-method">{c.method}</code>
+                </td>
+                <td>
+                  <BucketTags raw={c.bucket} />
+                </td>
+                <td style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  <ChallengeTarget method={c.method} params={c.params} />
+                </td>
+                <td>
+                  <code
+                    style={{
+                      fontSize: 11,
+                      color: c.status === "ready" ? "#7be0a4" : "var(--text-2)",
+                    }}
+                  >
+                    {STATUS_OPTIONS.find((s) => s.value === c.status)?.label ?? c.status}
+                  </code>
+                </td>
+                <td>
+                  <ConsensusSummary counts={counts} />
+                </td>
+                <td className="prov-num prov-ch-when">{fmtRelativeTime(c.generated_at)}</td>
+              </ClickableRow>
+            );
+          })}
+        </tbody>
+      </table>
+      </div>
+    </>
+  );
+}

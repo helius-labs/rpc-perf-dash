@@ -1,0 +1,19 @@
+{
+  "name": "infra-cloudflare",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "./deploy-cf.sh",
+    "logs": "wrangler tail rpc-bench-worker-cf"
+  },
+  "dependencies": {
+    "@cloudflare/containers": "^0.0.20",
+    "@rpcbench/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250101.0",
+    "@types/node": "^22.9.0",
+    "wrangler": "^4.92.0"
+  }
+}

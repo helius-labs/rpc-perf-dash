@@ -1,0 +1,11 @@
+# Build artifacts the web build never reads and which break the CLI uploader.
+# infra/cdk/cdk.out accumulates dozens of full-repo asset copies from `cdk deploy`
+# (20k+ files), which blew past Vercel's 15k-file upload limit on manual deploys.
+#
+# NOTE: do NOT exclude workspace member dirs themselves (apps/*, packages/*,
+# infra/cdk) — `pnpm install --frozen-lockfile` needs every package.json the
+# lockfile references. Only artifact subtrees are listed here.
+**/cdk.out/
+**/.next/
+**/.turbo/
+.git/
