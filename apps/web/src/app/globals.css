@@ -1,0 +1,929 @@
+@import "tailwindcss";
+
+/* =========================================================
+   Styling conventions — when to reach for what (keep the
+   codebase from drifting back into ad-hoc CSS):
+
+   • Tailwind utilities — the default. Layout, spacing, static
+     color, responsive. Colors come from the bridged tokens
+     below (text-fg, bg-surface, border-line, text-accent,
+     text-muted, font-geistmono) — never re-hardcode a hex that
+     already has a token.
+   • Semantic class in this file — only for complex or repeated
+     components that utilities express poorly: multi-column
+     grids, ::before/::after pseudo-elements, ::-webkit-scrollbar,
+     container queries, @keyframes, and the unlayered nav @media
+     hack. These are documented inline where they live.
+   • Inline style={{}} — only for runtime-dynamic values:
+     computed widths/dimensions, SVG geometry, injected CSS vars,
+     and one-off brand/semantic colors with no matching token.
+   ========================================================= */
+
+/* =========================================================
+   Theme tokens — monochrome OLED-black editorial dark with a
+   near-white accent and Geist / Geist Mono type.
+   ========================================================= */
+:root {
+  color-scheme: dark;
+  /* Paint the root element so the whole viewport canvas is var(--bg),
+     regardless of content height. Without this, a content-shorter-than-
+     viewport page leaves a lighter UA dark band below body. */
+  background: var(--bg);
+
+  --bg:        #000000;
+  --surface:   #0C0C0E;
+  --surface-2: #141416;
+  --text:      #F4F4F2;
+  --text-2:    #B0B0AE;
+  --muted:     #6A6A68;
+  --border:    #1B1B1E;
+  --border-2:  #262629;
+  --grid:      #121214;
+
+  --accent:      #E5E5E5;
+  --accent-soft: color-mix(in oklch, var(--accent) 12%, transparent);
+  /* Foreground for content sitting ON the accent (button labels, selection,
+     filled pills). Must contrast with --accent, NOT with --bg — a light
+     accent like this near-white needs dark text on top. */
+  --accent-fg:   #0A0A0A;
+
+  /* Geist faces wired via next/font (see layout.tsx); ui fallbacks keep
+     SSR + non-latin glyphs sane before the webfont resolves. */
+  --font-sans:    var(--font-sans-geist), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono:    var(--font-mono-geist), "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --font-display: var(--font-sans);
+}
+
+/* Bridge the design tokens into Tailwind so utilities (text-fg, bg-surface,
+   border-line, text-accent, font-geistmono, …) resolve to the same values the
+   remaining CSS uses. `inline` keeps them as var() references so the :root
+   block above stays the single source of truth. */
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface2: var(--surface-2);
+  --color-fg: var(--text);
+  --color-fg2: var(--text-2);
+  --color-muted: var(--muted);
+  --color-line: var(--border);
+  --color-line2: var(--border-2);
+  --color-accent: var(--accent);
+  --color-accentfg: var(--accent-fg);
+  --color-grid: var(--grid);
+  --font-geistmono: var(--font-mono-geist), "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 15px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+::selection { background: var(--accent); color: var(--accent-fg); }
+
+/* Default link styling lives in @layer base so Tailwind utility classes
+   (e.g. text-neutral-500 / hover:text-white) can override per-link. */
+@layer base {
+  a { color: #3aa3ff; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+}
+table { border-collapse: collapse; width: 100%; }
+th, td { padding: 8px 12px; border-bottom: 1px solid var(--border); text-align: left; font-size: 14px; }
+th { font-weight: 600; color: var(--muted); }
+code { font-family: var(--font-mono); }
+.badge {
+  display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px;
+  background: #1a1a1a; color: #aaa; border: 1px solid #333;
+}
+.badge.warn { background: #2a1a08; color: #ffb84d; border-color: #5a3a18; }
+.badge.bad  { background: #2a0a0a; color: #ff6b6b; border-color: #5a2020; }
+.badge.good { background: #08200a; color: #6bf08c; border-color: #1a4a20; }
+
+/* Hide the scrollbar on horizontally scrollable filter strips on mobile. */
+.scrollbar-hide {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scrollbar-hide::-webkit-scrollbar { display: none; }
+
+/* CSS-gated hover popup used by <Tooltip>. */
+.tooltip-hover-popup { display: none; }
+@media (hover: hover) {
+  .group:hover > .tooltip-hover-popup { display: block; }
+}
+
+/* Collapsible-section caret. */
+details[open] > summary .rcc-caret { transform: rotate(90deg); }
+summary:has(.rcc-caret)::-webkit-details-marker { display: none; }
+
+/* =========================================================
+   Top nav — only the link underline pseudo stays in CSS; the rest of the
+   header is Tailwind utilities in layout.tsx.
+   ========================================================= */
+.nav-links {
+  display: flex;
+  gap: 26px;
+  font-size: 13.5px;
+  color: var(--text-2);
+  /* Shrink + scroll horizontally whenever the links don't fit the space
+     between the logo and the right-side actions — at any width, not just a
+     fixed mobile breakpoint. min-width:0 is what lets a flex item shrink below
+     its content size; overflow-y:hidden + padding-bottom keeps the active
+     underline from being clipped by the scroll container. */
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  flex-wrap: nowrap;
+  padding-bottom: 3px;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.nav-links::-webkit-scrollbar { display: none; }
+.nav-links a {
+  position: relative;
+  flex: 0 0 auto;
+  white-space: nowrap;
+  padding: 4px 0;
+  color: var(--text-2);
+  text-decoration: none;
+}
+.nav-links a:hover { color: var(--text); text-decoration: none; }
+.nav-links a::after {
+  content: "";
+  position: absolute;
+  left: 0; right: 0; bottom: -2px;
+  height: 1px;
+  background: var(--text);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.2s ease;
+}
+.nav-links a:hover::after { transform: scaleX(1); }
+.nav-links a.is-active { color: var(--text); }
+.nav-links a.is-active::after { background: var(--accent); transform: scaleX(1); }
+/* ≤640px the hamburger drawer (MobileMenu) takes over. This must live here,
+   unlayered: a Tailwind `max-[640px]:hidden` utility loses to the unlayered
+   `.nav-links { display: flex }` above regardless of order. */
+@media (max-width: 640px) {
+  .nav-links { display: none; }
+}
+
+/* =========================================================
+   Section kickers — "NN — label" mono labels
+   ========================================================= */
+.section-kicker {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--muted);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* =========================================================
+   INDEX leaderboard — pure typographic ranked list
+   ========================================================= */
+.lb-index { padding: 12px 0 12px; }
+.idx-head { margin-bottom: 14px; }
+.idx-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.idx-li { display: block; }
+.idx-row {
+  position: relative;
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto 1fr auto auto auto;
+  align-items: baseline;
+  gap: 20px;
+  padding: 8px 0 7px;
+  border-bottom: 1px solid var(--border);
+  background: none;
+  border-left: none; border-right: none; border-top: none;
+  text-align: left;
+  cursor: pointer;
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: clamp(27px, 3.4vw, 38px);
+  letter-spacing: -0.03em;
+  line-height: 1;
+  color: var(--muted);
+  transition: color 0.18s ease;
+}
+.idx-row:hover { color: var(--text-2); }
+.idx-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+
+/* Score-proportional gradient underline — black → tier color, ending at the
+   score position. Sits on the row's bottom edge. */
+.idx-score-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px;
+  pointer-events: none;
+}
+.idx-row-leader .idx-score-line { height: 3px; bottom: -1.5px; }
+
+.idx-arrow {
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px; height: 36px;
+  color: var(--muted);
+  border-radius: 4px;
+  transition: color 0.18s ease, transform 0.18s ease, background 0.18s ease;
+}
+.idx-arrow:hover {
+  color: var(--accent);
+  background: var(--accent-soft);
+  transform: translateX(2px);
+  text-decoration: none;
+}
+.idx-arrow:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Groups the outbound-website link + the detail-page arrow into the row's last
+   grid cell, so adding the website link doesn't add a 6th grid column. */
+.idx-actions {
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+/* Outbound provider-website link — same interaction affordance as the arrow
+   but a touch smaller/quieter, since the arrow is the primary action. */
+.idx-website {
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px; height: 30px;
+  color: var(--muted);
+  border-radius: 4px;
+  transition: color 0.18s ease, background 0.18s ease;
+}
+.idx-website:hover {
+  color: var(--accent);
+  background: var(--accent-soft);
+  text-decoration: none;
+}
+.idx-website:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.idx-website svg { width: 62%; height: 62%; }
+
+/**
+ * Flash animation for newly-arrived rows in the streaming recent-challenges
+ * table. ~1.8s ease-out from an accent-tinted highlight back to default —
+ * makes it visually obvious which rows just landed. Used by ClickableRow.
+ */
+@keyframes recent-row-flash {
+  0%   { background-color: color-mix(in oklch, var(--accent) 16%, transparent); }
+  100% { background-color: transparent; }
+}
+.recent-row-flash {
+  animation: recent-row-flash 1.8s ease-out;
+}
+/* The leader emphasizes ONLY the score + provider name. Its action icons match
+   rows 2–4: same size, same muted color (accent on hover only), and
+   bottom-aligned — since the leader row is taller, centering would float them
+   up and leave a larger gap to the divider than the other rows. Bottom-aligning
+   + the matched bottom padding below keeps that gap identical across all rows. */
+.idx-row-leader .idx-actions { align-self: end; }
+
+.idx-row-leader {
+  font-size: clamp(40px, 5.6vw, 64px);
+  font-weight: 600;
+  color: var(--text);
+  padding: 10px 0 7px;
+  border-bottom: 1px solid var(--border);
+  letter-spacing: -0.045em;
+}
+.idx-row-open { border-bottom-style: solid; }
+
+.idx-rank { font-variant-numeric: tabular-nums; color: var(--muted); font-weight: 400; }
+.idx-row-leader .idx-rank { color: var(--accent); font-weight: 500; }
+.idx-name { letter-spacing: -0.035em; font-weight: inherit; }
+.idx-row-leader .idx-name { color: var(--accent); font-style: italic; }
+.idx-score { font-variant-numeric: tabular-nums; font-weight: inherit; text-align: right; }
+.idx-row-leader .idx-score { color: var(--text); }
+/* "/100" denominator hint — em-relative so it scales with the row's display
+   font (leader vs standard), muted + lighter than the score itself. */
+.idx-score-unit {
+  font-size: 0.32em;
+  font-style: normal;
+  font-weight: 400;
+  color: var(--muted);
+  letter-spacing: 0;
+  margin-left: 0.12em;
+  vertical-align: baseline;
+}
+
+/* Collapsed-row relative metrics (win rate / success) — small mono cluster
+   that sits between the provider name and the score, reset out of the row's
+   big display font. */
+.idx-rowstats {
+  align-self: center;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 16px;
+  font-family: var(--font-mono);
+  letter-spacing: 0;
+  white-space: nowrap;
+  justify-self: end;
+}
+.idx-rowstat { color: var(--text); font-size: 14px; font-variant-numeric: tabular-nums; line-height: 1; }
+.idx-rowstat b { font-weight: 600; }
+.idx-rowstat i {
+  font-style: normal;
+  color: var(--muted);
+  font-size: 10.5px;
+  margin-left: 2px;
+  letter-spacing: 0.02em;
+}
+
+/* Detail (expanded) — stacked: method×region latency grid + a secondary
+   relative-metrics line. */
+.idx-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 12px 0 16px;
+  border-bottom: 1px solid var(--border);
+}
+.idx-detail-leader { border-bottom: 1px solid var(--border); }
+
+/* Provider deep-dive stat strip — a 6-up grid of p50/p95/p99/win/samples/success
+   (uses .idx-stat cells below). Kept separate from .idx-detail, which the
+   leaderboard repurposed as a flex column. */
+.prov-stat-strip {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 0;
+  padding: 10px 0 14px;
+  border-bottom: 1px solid var(--border);
+}
+.idx-stat {
+  padding: 0 14px;
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.idx-stat:first-child { border-left: none; padding-left: 0; }
+.idx-stat-l {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.idx-stat-v {
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 500;
+  letter-spacing: -0.018em;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.idx-stat-v i {
+  font-style: normal;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--muted);
+  margin-left: 2px;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+}
+@media (max-width: 720px) {
+  .prov-stat-strip { grid-template-columns: repeat(3, 1fr); gap: 12px 0; }
+  .idx-stat { padding: 0 10px; }
+  .idx-stat:nth-child(3n+1) { border-left: none; padding-left: 0; }
+}
+@media (max-width: 420px) {
+  .prov-stat-strip { grid-template-columns: repeat(2, 1fr); }
+  .idx-stat:nth-child(3n+1) { border-left: 1px solid var(--border); padding-left: 10px; }
+  .idx-stat:nth-child(2n+1) { border-left: none; padding-left: 0; }
+}
+
+.idx-mr-cap {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.idx-mr-scroll { overflow-x: auto; scrollbar-width: thin; }
+.idx-mr-note {
+  margin-top: 8px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.idx-mrtable {
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  min-width: 320px;
+}
+.idx-mrtable th {
+  text-align: right;
+  font-weight: 500;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  /* Tighter inter-column gap than the value rows: shifts the headers (and
+     their right edge) left so the cycle chevron fits without overflowing. */
+  padding: 0 0 6px 16px;
+}
+.idx-mrtable th:first-child { text-align: left; padding-left: 0; }
+/* Dedicated trailing column for the cycle control — narrow, shrink-to-fit, so
+   the chevron sits beside the right region column rather than inside it. */
+.idx-mr-cyclecol {
+  width: 1%;
+  white-space: nowrap;
+  padding-left: 10px;
+  text-align: left;
+  vertical-align: middle;
+}
+/* Chevron that cycles the displayed region pair. Muted by default, brightens
+   on hover/focus. */
+.idx-mr-cycle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: middle;
+  padding: 2px;
+  color: var(--muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+.idx-mr-cycle:hover,
+.idx-mr-cycle:focus-visible { color: var(--text); }
+.idx-mr-method { padding: 5px 0; }
+.idx-mr-method code {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: var(--text-2);
+  letter-spacing: 0;
+}
+.idx-mr-cell {
+  text-align: right;
+  padding: 5px 0 5px 16px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* Region swap: headers + value cells are React-keyed by geo, so cycling the
+   pair remounts them and replays this enter animation — the new numbers and
+   region labels fade + swipe in from the right. */
+@keyframes idxMrSwap {
+  from { opacity: 0; transform: translateX(10px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.idx-mr-cell,
+.idx-mrtable th:not(:first-child):not(.idx-mr-cyclecol) {
+  animation: idxMrSwap 0.28s ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .idx-mr-cell,
+  .idx-mrtable th:not(:first-child):not(.idx-mr-cyclecol) { animation: none; }
+}
+.idx-mr-cell i {
+  font-style: normal;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted);
+  margin-left: 1px;
+}
+.idx-mr-sep { color: var(--muted); }
+.idx-mr-empty { color: var(--muted); }
+
+/* MethodRegionTabs drill-down reveal. The expanded row is conditionally mounted
+   (so a collapsed row reserves zero height inside the table), which means a CSS
+   transition can't run — it would have no start state. Instead this one-shot
+   animation plays on mount: a grid-rows 0fr→1fr accordion (the child clips via
+   overflow:hidden) plus a fade, so the sub-grid slides open. */
+@keyframes mrtabReveal {
+  from { grid-template-rows: 0fr; opacity: 0; }
+  to   { grid-template-rows: 1fr; opacity: 1; }
+}
+.mrtab-reveal {
+  display: grid;
+  grid-template-rows: 1fr;
+  animation: mrtabReveal 0.28s ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .mrtab-reveal { animation: none; }
+}
+
+.idx-detail-secondary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 28px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+}
+.idx-ds { display: inline-flex; flex-direction: column; gap: 3px; }
+.idx-ds-l {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.idx-ds-v {
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 500;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.idx-ds-v i {
+  font-style: normal;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--muted);
+  margin-left: 2px;
+}
+/* Region names are longer text than the numeric stats — size them down so they
+   sit visually subordinate beside win rate / samples / correct. Placed after
+   .idx-ds-v so the (equal-specificity) font-size override wins. */
+.idx-ds-regions {
+  font-size: 13px;
+  letter-spacing: 0.01em;
+}
+@media (max-width: 720px) {
+  .idx-row { gap: 10px; font-size: clamp(22px, 7vw, 34px); padding: 8px 0 6px; }
+  .idx-row-leader { font-size: clamp(30px, 9.5vw, 52px); padding: 10px 0 8px; }
+  .idx-arrow { width: 28px; height: 28px; }
+  .idx-website { width: 26px; height: 26px; }
+  /* Collapsed inline metrics crowd the big display type on phones — hide them;
+     the per-row metrics + the method×region grid are one tap away on expand. */
+  .idx-rowstats { display: none; }
+}
+
+/* =========================================================
+   Compact data tables (Recent challenges + Consensus integrity)
+   ========================================================= */
+.home-extra { padding-top: 40px; }
+.prov-section { margin-top: 36px; }
+.home-extra > .prov-section { margin-top: 0; }
+.prov-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--text-2);
+  margin-bottom: 4px;
+}
+.prov-section-count {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--muted);
+  letter-spacing: 0.08em;
+}
+.prov-table-wrap { border-top: 1px solid var(--border); overflow-x: auto; }
+/* Scrollable variant — capped height with a sticky header so long feeds
+   (recent challenges, consensus integrity) scroll within the section. */
+.prov-table-wrap.is-scroll {
+  max-height: 420px;
+  overflow-y: auto;
+  border-bottom: 1px solid var(--border);
+  scrollbar-width: thin;
+}
+.prov-table-wrap.is-scroll thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg);
+}
+.prov-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.prov-table th {
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 10px 14px 8px 14px;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+}
+.prov-table th:first-child { padding-left: 0; }
+.prov-table th:last-child { padding-right: 0; }
+.prov-table th.prov-num { text-align: right; }
+.prov-table td {
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+  color: var(--text-2);
+  font-size: 12px;
+}
+.prov-table td:first-child { padding-left: 0; }
+.prov-table td:last-child { padding-right: 0; }
+.prov-table td.prov-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.prov-table tr:last-child td { border-bottom: none; }
+.prov-table tbody tr { transition: background 0.12s ease; }
+.prov-table tbody tr:hover { background: color-mix(in oklch, var(--text) 3%, transparent); }
+.prov-ch-method { font-family: var(--font-mono); font-size: 12px; color: var(--text); }
+.prov-ch-when { font-family: var(--font-mono); font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+.prov-amb-day { font-family: var(--font-mono); font-size: 12px; color: var(--text); }
+.prov-empty {
+  padding: 18px 0;
+  font-family: var(--font-display);
+  font-size: 16px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+/* =========================================================
+   Provider deep-dive page
+   ========================================================= */
+.prov-page { padding-top: 6px; }
+.prov-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 18px;
+  padding: 6px 0;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  transition: color 0.18s ease, gap 0.18s ease;
+}
+.prov-back:hover { color: var(--text); gap: 11px; text-decoration: none; }
+.prov-back svg { transition: transform 0.18s ease; }
+.prov-back:hover svg { transform: translateX(-2px); }
+.prov-head {
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+/* Outbound provider-website link in the provider-page header. */
+.prov-website {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  transition: color 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+}
+.prov-website:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  text-decoration: none;
+}
+.prov-website:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Hero row — big-type rank · name · score, like the Index leader row. */
+.idx-row-prov {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: baseline;
+  gap: 20px;
+  padding: 14px 0 12px;
+  border-top: 1px solid var(--text-2);
+  border-bottom: 2px solid var(--text);
+  font-family: var(--font-display);
+  font-size: clamp(48px, 7vw, 82px);
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.045em;
+  line-height: 1;
+}
+.idx-row-prov .idx-rank { color: var(--accent); font-weight: 500; font-variant-numeric: tabular-nums; }
+.idx-row-prov .idx-name { color: var(--accent); font-style: italic; letter-spacing: -0.035em; }
+.idx-row-prov .idx-score { color: var(--text); font-variant-numeric: tabular-nums; text-align: right; }
+
+.prov-caveat {
+  display: inline-flex;
+  align-items: center;
+  margin: 14px 0 0;
+}
+
+.prov-context {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 12px 0 0;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+}
+.prov-context-label { text-transform: uppercase; letter-spacing: 0.12em; }
+.prov-context-name {
+  font-family: var(--font-display);
+  font-style: italic;
+  color: var(--text-2);
+  font-size: 14px;
+  letter-spacing: -0.01em;
+}
+.prov-context-gap { color: var(--accent); }
+
+/* Typographic metric rows with bars (latency by method, failure breakdown) */
+.prov-list { list-style: none; padding: 0; margin: 0; }
+.prov-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.5fr) 1fr auto;
+  align-items: center;
+  gap: 22px;
+  padding: 12px 0 10px;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 400;
+  letter-spacing: -0.022em;
+  line-height: 1;
+  color: var(--text-2);
+  transition: color 0.18s ease;
+}
+.prov-row:hover { color: var(--text); }
+.prov-row-name { font-weight: 500; color: var(--text); }
+.prov-row-name code {
+  font-family: var(--font-mono);
+  font-size: 16px;
+  letter-spacing: 0;
+  color: var(--text);
+  font-weight: 500;
+}
+.prov-row-bar { height: 4px; background: var(--border-2); border-radius: 2px; overflow: hidden; display: block; }
+.prov-row-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--text-2);
+  border-radius: 2px;
+  opacity: 0.6;
+  transition: width 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.prov-row.is-best .prov-row-bar-fill { background: var(--accent); opacity: 1; }
+.prov-row.is-best .prov-row-val { color: var(--accent); font-weight: 500; }
+.prov-row.is-worst .prov-row-bar-fill { opacity: 0.35; }
+.prov-row.is-worst { color: var(--muted); }
+.prov-row-val {
+  font-family: var(--font-mono);
+  font-size: 17px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  letter-spacing: -0.01em;
+  text-align: right;
+}
+.prov-row-val i { font-style: normal; font-size: 12px; color: var(--muted); margin-left: 2px; font-weight: 400; }
+
+@media (max-width: 720px) {
+  .prov-row { grid-template-columns: 1fr auto; gap: 12px; font-size: 17px; }
+  .prov-row-bar { display: none; }
+  .idx-row-prov { font-size: clamp(40px, 12vw, 64px); }
+}
+
+/* =========================================================
+   /status — pipeline health page
+   ========================================================= */
+.status-header { margin: 4px 0 20px; }
+.status-title { font-size: 22px; font-weight: 600; letter-spacing: -0.01em; color: var(--text); }
+.status-page { display: flex; flex-direction: column; gap: 22px; }
+
+.status-banner {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 12px 16px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--surface); font-size: 14px;
+}
+.status-banner.status-ok   { border-color: #1a4a20; background: #08200a; }
+.status-banner.status-warn { border-color: #5a3a18; background: #2a1a08; }
+.status-banner.status-down { border-color: #5a2020; background: #2a0a0a; }
+.status-banner-text { font-weight: 600; color: var(--text); }
+.status-banner-time { margin-left: auto; font-size: 12px; color: var(--muted); font-family: var(--font-mono); }
+
+/* Funnel */
+.status-funnel { list-style: none; margin: 0; padding: 4px 0 0; }
+.status-stage { display: flex; gap: 14px; }
+.status-stage-rail { display: flex; flex-direction: column; align-items: center; padding-top: 4px; }
+.status-stage-line { flex: 1; width: 1px; background: var(--border); margin: 4px 0 -4px; min-height: 22px; }
+.status-stage-body { padding-bottom: 18px; flex: 1; }
+.status-stage-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.status-stage-label { font-size: 14px; font-weight: 600; color: var(--text); }
+.status-stage-metric { font-family: var(--font-mono); font-size: 12.5px; color: var(--muted); margin-left: auto; }
+.status-stage-detail { font-size: 12.5px; color: var(--muted); margin-top: 3px; line-height: 1.45; }
+.status-stage-broke { font-size: 12.5px; color: #ff8c8c; margin-top: 5px; }
+.status-stage-broke code { color: #ffb0b0; }
+.status-stage.status-down  .status-stage-label { color: #ff8c8c; }
+
+.status-aux { font-size: 12.5px; color: var(--text); margin-top: 8px; }
+.status-aux-muted { color: var(--muted); }
+
+/* Sparklines */
+.status-spark-grid { display: flex; flex-direction: column; gap: 12px; }
+.status-spark-row { display: flex; flex-direction: column; gap: 4px; }
+.status-spark-meta { font-size: 12.5px; color: var(--text); }
+.status-spark { display: block; width: 100%; height: 34px; }
+.status-spark-axis { display: flex; justify-content: space-between; font-family: var(--font-mono); font-size: 11px; color: var(--muted); margin-top: 6px; }
+
+/* Method Explorer left-rail items — clip a long method name to the rail width,
+   then scroll it horizontally on hover to reveal the full name (works for any
+   length via container queries). Stops the name bleeding into the detail pane. */
+.mx-item { container-type: inline-size; overflow: hidden; }
+.mx-name {
+  display: inline-block;
+  white-space: nowrap;
+  transition: transform 1.8s ease;
+}
+.mx-item:hover .mx-name,
+.mx-item:focus-visible .mx-name {
+  transform: translateX(min(0px, calc(100cqw - 100%)));
+}
+
+/* Weight sliders on the Overview (OverviewBoard). The filled portion of the
+   track is painted by an inline linear-gradient on the element (set per-axis in
+   JS); these rules give the track a thin rounded shape and a styled thumb that
+   match the design system instead of the raw browser control. */
+.weight-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  border-radius: 999px;
+  outline: none;
+  /* background (the accent→track gradient) is set inline per axis. The inset
+     ring gives the track subtle depth so it reads as a groove, not a flat bar. */
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.04);
+}
+.weight-slider::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 999px;
+  background: transparent;
+}
+.weight-slider::-moz-range-track {
+  height: 6px;
+  border-radius: 999px;
+  background: transparent;
+}
+.weight-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -4px; /* center the 14px thumb on the 6px track */
+  border-radius: 999px;
+  background: var(--text);
+  box-shadow: 0 0 0 1px var(--border-2), 0 1px 3px rgb(0 0 0 / 0.5);
+  cursor: pointer;
+  transition: box-shadow 0.15s ease, transform 0.15s ease;
+}
+.weight-slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: none;
+  border-radius: 999px;
+  background: var(--text);
+  box-shadow: 0 0 0 1px var(--border-2), 0 1px 3px rgb(0 0 0 / 0.5);
+  cursor: pointer;
+  transition: box-shadow 0.15s ease, transform 0.15s ease;
+}
+.weight-slider:hover::-webkit-slider-thumb {
+  transform: scale(1.08);
+  box-shadow: 0 0 0 4px var(--accent-soft), 0 1px 3px rgb(0 0 0 / 0.5);
+}
+.weight-slider:hover::-moz-range-thumb {
+  transform: scale(1.08);
+  box-shadow: 0 0 0 4px var(--accent-soft), 0 1px 3px rgb(0 0 0 / 0.5);
+}
+.weight-slider:active::-webkit-slider-thumb,
+.weight-slider:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 4px var(--accent-soft), 0 0 0 1px var(--accent);
+}
+.weight-slider:active::-moz-range-thumb,
+.weight-slider:focus-visible::-moz-range-thumb {
+  box-shadow: 0 0 0 4px var(--accent-soft), 0 0 0 1px var(--accent);
+}

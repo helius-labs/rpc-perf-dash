@@ -1,0 +1,21 @@
+{
+  "name": "cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Standalone, zero-infra BYO-keys benchmark CLI. Runs the RPC benchmark methodology locally against your own endpoints — no DB, no secret.",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@rpcbench/methods": "workspace:*",
+    "@rpcbench/runner": "workspace:*",
+    "@rpcbench/shared": "workspace:*",
+    "tsx": "^4.19.2",
+    "undici": "^7.28.0"
+  },
+  "devDependencies": {
+    "@rpcbench/db": "workspace:*"
+  }
+}

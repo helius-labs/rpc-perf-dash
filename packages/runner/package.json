@@ -1,0 +1,24 @@
+{
+  "name": "@rpcbench/runner",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./fanout": "./src/fanout.ts",
+    "./classify": "./src/classify.ts",
+    "./record": "./src/record.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test src/*.test.ts"
+  },
+  "dependencies": {
+    "@rpcbench/db": "workspace:*",
+    "@rpcbench/methods": "workspace:*",
+    "@rpcbench/shared": "workspace:*",
+    "undici": "^7.28.0"
+  }
+}
