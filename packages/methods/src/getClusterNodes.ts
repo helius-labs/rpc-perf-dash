@@ -38,12 +38,14 @@ import { jaccardAtLeast } from "./setsim.js";
 export const BUCKETS = ["default"] as const;
 /**
  * Committed scoring family. A Jaccard path over the node set rarely reaches a
- * 3-voter majority: all four providers serve ~4576 nodes each (counts within 7),
- * but the gossip views diverge / churn enough that the large sets don't converge
- * at 0.8 — the same failure mode as getRecentPerformanceSamples. So the committed
- * family is the well-formedness fallback: all serving providers hash `true` →
- * byte-equal consensus. Flip back to true only if a future panel/threshold
- * converges.
+ * 3-voter majority: the pre-Chainstack 4-provider panel served ~4576 nodes each
+ * (counts within 7), but the gossip views diverge / churn enough that the large
+ * sets don't converge at 0.8 — the same failure mode as
+ * getRecentPerformanceSamples. So the committed family is the well-formedness
+ * fallback: all serving providers hash `true` → byte-equal consensus.
+ * Chainstack's gossip node count/behavior for this method hasn't been
+ * dry-run-measured yet — re-validate against the full 5-provider panel before
+ * flipping USE_JACCARD.
  */
 const USE_JACCARD = false;
 

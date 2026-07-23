@@ -174,6 +174,9 @@ function Row({ row, rank }: { row: CardRow; rank: number }) {
 
 export function LeaderboardCard(props: CardProps) {
   const { rows, method, methodsLabel, regionLabel, contextLabel, timestamp, siteUrl } = props;
+  // Fixed at 4 regardless of provider count — the fixed 1200×630 canvas has no
+  // room for a 5th row (see Row's height values above). A 5th-ranked provider
+  // is intentionally omitted from share cards, not a bug.
   const ranked = rows.slice(0, 4);
 
   return (

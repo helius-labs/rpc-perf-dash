@@ -26,6 +26,7 @@ locals {
     "TRITON_URL",
     "ALCHEMY_URL",
     "QUICKNODE_URL",
+    "CHAINSTACK_URL",
   ])
 
   required_apis = toset([

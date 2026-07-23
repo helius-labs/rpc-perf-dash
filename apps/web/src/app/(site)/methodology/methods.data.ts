@@ -95,7 +95,7 @@ export interface MethodSpec {
   dormant?: boolean;
 }
 
-const PANEL = "4 voters · Helius, Triton, Alchemy, QuickNode";
+const PANEL = "5 voters · Helius, Triton, Alchemy, QuickNode, Chainstack";
 
 export const METHODS: readonly MethodSpec[] = [
   // ---- Byte-equal hash --------------------------------------------------
@@ -263,9 +263,11 @@ export const METHODS: readonly MethodSpec[] = [
     },
     match:
       "Fast path byte-equal; else Jaccard ≥ 0.75 over the holder-address set, which tolerates ~2–3 rank-boundary swaps on the 20-element list.",
-    voters: PANEL,
+    voters:
+      "4 voters · Helius, Triton, Alchemy, QuickNode (Chainstack returns \"only available on dedicated nodes\" for getTokenLargestAccounts → tier_method_unsupported)",
     notes: [
       "The spec returns the 20 largest holders, but some providers (QuickNode) return up to 100; the projection caps to the top-20 by amount before comparison, so a longer list is not a false mismatch.",
+      "Chainstack's shared/free tier restricts this to dedicated nodes only (confirmed live, -32601); dropped from the panel as unsupported, not penalized.",
     ],
   },
 
@@ -740,9 +742,9 @@ export const METHODS: readonly MethodSpec[] = [
     },
     projection: { keeps: "{ summary, perTx:[{ err, unitsConsumed }] }", drops: "logs, per-account snapshots" },
     match: "Byte-equal. Deterministic for the constant Memo bundle.",
-    voters: "3 voters · Helius, Triton, Alchemy (QuickNode does not serve simulateBundle → tier_method_unsupported)",
+    voters: "3 voters · Helius, Triton, Alchemy (QuickNode and Chainstack do not serve simulateBundle → tier_method_unsupported)",
     notes: [
-      "Jito extension; QuickNode returns -32601 and is dropped from the panel (declared unsupported, not penalized).",
+      "Jito extension; QuickNode and Chainstack both return -32601 and are dropped from the panel (declared unsupported, not penalized).",
       "Config-flag handling is provider-sensitive, so validate live before relying on the correctness number.",
     ],
   },
@@ -809,9 +811,10 @@ export const METHODS: readonly MethodSpec[] = [
     projection: { keeps: "{ value } (lamports)", drops: "context.slot" },
     match: "Byte-equal. A protocol-fixed network constant, identical across the serving providers.",
     voters:
-      "3 voters · Helius, Triton, QuickNode (Alchemy returns \"unsupported method\" for getStakeMinimumDelegation → tier_method_unsupported)",
+      "4 voters · Helius, Triton, QuickNode, Chainstack (Alchemy returns \"unsupported method\" for getStakeMinimumDelegation → tier_method_unsupported)",
     notes: [
-      "3-voter panel: Alchemy is dropped as unsupported (not penalized), so the remaining three decide by 2-1 strict majority (minGroup lowered to 2). All three must answer usably or the challenge is thrown out.",
+      "Alchemy is dropped as unsupported (not penalized); the remaining four decide by strict majority.",
+      "Standard JSON-RPC method — confirmed live against a Chainstack mainnet endpoint.",
     ],
   },
   {
@@ -857,7 +860,7 @@ export const METHODS: readonly MethodSpec[] = [
       "Well-formedness, byte-equal (committed family). A Jaccard-over-pubkeys path is authored but rarely reaches a 3-voter majority — the ~4576-node payload only succeeds ~50% under fanout, so ≥3 voters rarely co-occur. Dormant pending re-validation from a deployed worker.",
     voters: PANEL,
     dormant: true,
-    notes: ["Dormant: all four providers serve it, but the large payload doesn't reliably reach the 3-voter consensus floor from the dry-run client. Re-enable + re-test from a deployed worker."],
+    notes: ["Dormant: all five providers serve it, but the large payload doesn't reliably reach the 3-voter consensus floor from the dry-run client. Re-enable + re-test from a deployed worker."],
   },
   {
     name: "getLargestAccounts",
@@ -867,10 +870,10 @@ export const METHODS: readonly MethodSpec[] = [
     input: { draws: "Nothing", from: "the request itself (network-wide top accounts)", buckets: "1: default", commitment: "finalized" },
     projection: { keeps: "the account address set (the RPC natively returns ≤20; no cap is applied)", drops: "all lamports balances (only addresses are kept)" },
     match:
-      "Jaccard ≥ 0.75 over the address set when served. NOT benchmarkable on the current panel: only QuickNode serves it (Helius 500s, Triton rate-limits, Alchemy blocks the method), so it can never reach 3 voters.",
+      "Jaccard ≥ 0.75 over the address set when served. NOT benchmarkable on the current panel: only QuickNode confirmed serves it (Helius 500s, Triton rate-limits, Alchemy blocks the method); Chainstack returns \"only available on dedicated nodes\" (confirmed live, same restriction as getTokenLargestAccounts). Can never reach 3 voters regardless.",
     voters: PANEL,
     dormant: true,
-    notes: ["Dormant: only 1 of 4 panel providers serves getLargestAccounts (expensive full-account scan), so consensus is structurally impossible. Re-enable if the panel changes."],
+    notes: ["Dormant: only 1 of 5 panel providers serves getLargestAccounts (QuickNode; Chainstack confirmed dedicated-nodes-only; expensive full-account scan), so consensus is structurally impossible. Re-enable if the panel changes."],
   },
   {
     name: "getFeeForMessage",
@@ -912,10 +915,11 @@ export const METHODS: readonly MethodSpec[] = [
     match:
       "Byte-equal. \"The newest ≤limit txs at or before the pin\" is an immutable answer: the finalized-semantics tip drift that forces getSignaturesForAddress into a Jaccard tolerance lives at the tip, which the pin excludes. Yields a 3-provider byte-match across signatures-mode and full-mode probes.",
     voters:
-      "3 voters · Helius, Triton, Alchemy (QuickNode serves a non-comparable variant of getTransactionsForAddress → tier_method_unsupported)",
+      "3 voters · Helius, Triton, Alchemy (QuickNode serves a non-comparable variant; Chainstack doesn't serve the method at all → both tier_method_unsupported)",
     notes: [
       "Custom indexer-backed method (not in the standard Solana JSON-RPC set). Params stick to the cross-provider common subset: no Helius-only tokenTransfer filter, no processed commitment, full-mode limit under Alchemy's cap.",
       "QuickNode's variant returns a bare array (no {data, paginationToken} envelope), always-full details, and ignores the slot filter — non-comparable by construction, so it's a non-voter rather than penalized.",
+      "Chainstack returns -32601 Method not found (confirmed live) — it's a standard Solana core RPC node, and this is a proprietary indexer API, not part of the standard method set.",
       "3-voter panels decide by 2-1 strict majority (the usual ≥3-group floor would demand unanimity): a lone deviator — e.g. Triton's intermittent empty responses — is scored incorrect. All three must answer usably or the challenge is thrown out.",
       "The non-high-activity address filter is load-bearing: vote-authority addresses diverge massively across providers' indexers (vote-tx indexing differs), and filtering them is what makes byte-equal consensus possible.",
     ],
@@ -933,7 +937,7 @@ export interface MethodParamSummary {
   techniqueDetail: string;
   /** "What kind of answer is this", e.g. "Immutable block (read at confirmed)". */
   shape: string;
-  /** Voter-panel line, e.g. "4 voters · Helius, Triton, Alchemy, QuickNode". */
+  /** Voter-panel line, e.g. "5 voters · Helius, Triton, Alchemy, QuickNode, Chainstack". */
   voters: string;
 }
 

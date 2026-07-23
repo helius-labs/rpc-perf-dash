@@ -67,6 +67,7 @@ pnpm --filter cli start -- \
   --provider triton=https://your-triton-url \
   --provider alchemy=https://solana-mainnet.g.alchemy.com/v2/XXX \
   --provider quicknode=https://your-quicknode-url \
+  --provider chainstack=https://solana-mainnet.core.chainstack.com/YOUR_KEY \
   --challenges 50
 ```
 
@@ -109,7 +110,7 @@ Fill in `.env.local`:
 - `NEON_DATABASE_URL_POOLED` / `NEON_DATABASE_URL_DIRECT` — your Postgres
   connection strings. The `NEON_` prefix is just a naming convention; any
   Postgres works.
-- `HELIUS_URL`, `TRITON_URL`, `ALCHEMY_URL`, `QUICKNODE_URL`, etc. —
+- `HELIUS_URL`, `TRITON_URL`, `ALCHEMY_URL`, `QUICKNODE_URL`, `CHAINSTACK_URL`, etc. —
   your provider endpoints. Any provider whose env is unset is skipped, so you
   can benchmark a subset. Correctness scoring needs at least **3** configured
   providers to form a consensus panel (see the minimal-eval note below).
@@ -187,7 +188,7 @@ NEON_DATABASE_URL_POOLED=postgresql://localhost/rpcbench
 NEON_DATABASE_URL_DIRECT=postgresql://localhost/rpcbench
 
 # At least one BENCHMARKED provider — any of HELIUS_URL, TRITON_URL,
-# ALCHEMY_URL, QUICKNODE_URL.
+# ALCHEMY_URL, QUICKNODE_URL, CHAINSTACK_URL.
 HELIUS_URL=https://mainnet.helius-rpc.com/?api-key=your-key-here
 
 # The utility endpoint (challenge derivation + honeypot seeding). It can reuse a
