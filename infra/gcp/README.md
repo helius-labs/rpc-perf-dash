@@ -20,7 +20,7 @@ Project-wide (shared by all regions):
 - `rpc-bench-worker` service account
 - Artifact Registry repo `rpc-bench` (Docker)
 - Secret Manager secrets for `NEON_DATABASE_URL_*`, `HELIUS_*`, `TRITON_URL`,
-  `ALCHEMY_URL`, `QUICKNODE_URL` (auto-replicated globally)
+  `ALCHEMY_URL`, `QUICKNODE_URL`, `CHAINSTACK_URL` (auto-replicated globally)
 
 ## Prerequisites
 

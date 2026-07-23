@@ -34,6 +34,7 @@ import {
   byteEqualHash,
   decideConsensus,
   describeVotes,
+  structuralPanelSize,
   type CanonicalProjection,
   type ConsensusOutcome,
   type Correctness,
@@ -233,13 +234,24 @@ function decideForMode(
 
   // Structural panel size for this method: benchmarked providers whose tier
   // serves it. On a 3-voter panel (e.g. simulateBundle /
-  // getTransactionsForAddress, where QuickNode is declared unsupported) a 2-1
-  // split decides — requiring the default ≥3 group there means unanimity,
-  // which can never attribute a deviation to the lone dissenter. Two byte-equal
-  // agreements out of three independent providers is treated as decisive.
-  const methodPanelSize = BENCHMARKED_PROVIDERS.filter(
-    (p) => !(p.unsupported_methods?.includes(method) ?? false),
-  ).length;
+  // getTransactionsForAddress, where QuickNode and Chainstack are both
+  // declared unsupported) a 2-1 split decides — requiring the default ≥3
+  // group there means unanimity, which can never attribute a deviation to the
+  // lone dissenter. Two byte-equal agreements out of three independent
+  // providers is treated as decisive.
+  //
+  // structuralPanelSize() is deliberately keyed off the full static registry,
+  // not CONFIGURED_BENCHMARKED(): this same function backs both the
+  // worker/generator path (env-configured, registry ids) and the CLI
+  // (`apps/cli/src/index.ts`), whose providers get synthetic `byo-N` ids and
+  // typically never populate the registry's env vars at all —
+  // CONFIGURED_BENCHMARKED() would collapse to empty for nearly every real
+  // CLI run, silently disabling this relaxation. Known trade-off: a
+  // worker/generator reproducer who deliberately configures fewer than all
+  // registered providers (README explicitly allows this) gets this threshold
+  // computed against the full registry, not their actual subset — see
+  // docs/methodology.md.
+  const methodPanelSize = structuralPanelSize(method);
   const consensus = decideConsensus(
     voters,
     match,

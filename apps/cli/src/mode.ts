@@ -8,33 +8,33 @@
  *    `buildSampleRows` scores every provider directly against it. This is the
  *    only way to get correctness with 1–2 endpoints — for a normal
  *    (non-honeypot) challenge, `buildSampleRows` ignores the passed reference
- *    and derives correctness purely from panel consensus (record.ts:297,332).
+ *    and derives correctness purely from panel consensus (record.ts's
+ *    `buildRowsForMode`, gated on `!input.is_honeypot`).
  *
  *  - **consensus** (default, ≥3 endpoints): normal challenges, correctness by
  *    majority vote among the user's endpoints. `minGroup` is method-derived from
- *    the global benchmarked roster (record.ts:239-245): 3 for most methods, 2
- *    for the three methods one roster provider declares unsupported. So at
- *    exactly 3 endpoints, minGroup=3 methods need unanimity (a 2-1 dissent is
- *    dropped as no_consensus, not attributed) while minGroup=2 methods attribute
- *    the dissenter. Uniform dissent detection arrives at ≥5 endpoints.
+ *    the global benchmarked roster via the shared `structuralPanelSize()`
+ *    (also used by record.ts's `decideForMode`): 3 for most methods, 2 for
+ *    the two methods whose full roster panel is structurally 3 voters (two
+ *    roster providers declare them unsupported). So at exactly 3 endpoints,
+ *    minGroup=3 methods need unanimity (a 2-1 dissent is dropped as
+ *    no_consensus, not attributed) while minGroup=2 methods attribute the
+ *    dissenter. Uniform dissent detection arrives at ≥5 endpoints.
  *
  * With <3 endpoints and no reference, correctness simply can't form → n/a; only
  * latency / reliability / freshness are reported.
  */
 
-import { BENCHMARKED_PROVIDERS, MIN_CONSENSUS_VOTERS, type Method } from "@rpcbench/shared";
+import { MIN_CONSENSUS_VOTERS, structuralPanelSize, type Method } from "@rpcbench/shared";
 import type { CliConfig } from "./config.js";
 
 /**
- * Replicates the roster-derived `minGroup` `buildSampleRows` will use for a
- * method (record.ts:239-245): panel = benchmarked roster providers that serve
- * the method; a 3-provider panel relaxes minGroup to 2.
+ * Replicates the `minGroup` `buildSampleRows` (record.ts's `decideForMode`)
+ * will derive for a method, via the same shared `structuralPanelSize()`: a
+ * 3-provider structural panel relaxes minGroup to 2.
  */
 export function minGroupForMethod(method: Method): 2 | 3 {
-  const panelSize = BENCHMARKED_PROVIDERS.filter(
-    (p) => !(p.unsupported_methods?.includes(method) ?? false),
-  ).length;
-  return panelSize === 3 ? 2 : 3;
+  return structuralPanelSize(method) === 3 ? 2 : 3;
 }
 
 export type CorrectnessMode = "vs-reference" | "consensus" | "n/a";
@@ -79,8 +79,8 @@ export function determineRegime(config: CliConfig, referenceLabel: string): Regi
     detail = `minGroup=${[...minGroups][0]} across selected methods`;
   } else {
     detail =
-      `minGroup 2–3, varies by method: simulateBundle / getTransactionsForAddress / ` +
-      `getStakeMinimumDelegation use 2, the rest 3`;
+      `minGroup 2–3, varies by method: simulateBundle / getTransactionsForAddress ` +
+      `use 2, the rest 3`;
   }
 
   let caveat = "";
