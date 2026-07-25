@@ -176,7 +176,7 @@ const ENDPOINTS: EndpointSpec[] = [
     method: "GET",
     path: "/api/providers/[id]",
     blurb:
-      "Single-provider deep dive: overall rank, composite score, per-geo sub-score breakdown, blended percentiles, win-rate, call totals, and failure breakdown, from the same Overall board /api/leaderboard returns. [id] accepts the slug or the raw provider_id; unknown ids 404.",
+      "Single-provider deep dive from the same Overall board /api/leaderboard returns, so the shape mirrors that board's row: the DEFAULT (no method=) is a preset row — composite score + L/W/R/C/F sub-scores, coverage, per-geo scores, and a per-method p50/p95 drill-down (no single blended percentile, since a preset spans methods). An explicit method= forces the single-method board, whose row instead carries geo-blended p50_blend/p95_blend/p99_blend. [id] accepts the slug or the raw provider_id; unknown ids 404.",
     params: [
       {
         name: "preset",
@@ -204,12 +204,14 @@ const ENDPOINTS: EndpointSpec[] = [
     "eligible_count": 4,
     "generated_at": "2026-06-18T12:00:00.000Z"
   },
-  "row": {                     // null if the provider isn't on the board
+  "row": {                     // null if not on the board. DEFAULT = preset row, shown here
     "provider_id": "helius",
     "provider_name": "Helius",
     "rank": 1,                 // null if ineligible in every region
-    "total": 92.4,
-    "p50_blend": 41, "p95_blend": 110, "p99_blend": 180,
+    "total": 92.4,             // composite preset score, 0-100
+    "latency_sub": 95.1, "win_sub": 88.0, "reliability_sub": 99.2,
+    "correctness_sub": 100, "freshness_sub": 90.3,
+    "coverage_pct": 1.0, "coverage_ok": true, "exclusion_reason": null,
     "total_wins": 812, "total_calls": 41280, "total_failed": 96,
     "total_challenges_with_winner": 1024,
     "win_rate": 0.79,          // 0-1, region+method-weighted (tracks the rank), not a pooled average
@@ -218,7 +220,11 @@ const ENDPOINTS: EndpointSpec[] = [
     "per_geo": { "na-east": { "total": 93.1, "latency_sub": 96.0,
                  "win_sub": 89.0, "reliability_sub": 99.4,
                  "correctness_sub": 100, "freshness_sub": 91.0 } },
+    "per_method": { "getTransaction": { "total": 94.0, "p50": 41, "p95": 110 } },
     "caveat_flags": [], "caveat_explanation": ""
+    // With an explicit method= the row is the single-method board instead:
+    // drops latency_sub..freshness_sub / coverage_* / per_method, and adds
+    // "p50_blend": 41, "p95_blend": 110, "p99_blend": 180 (geo-blended percentiles).
   }
 }`,
   },

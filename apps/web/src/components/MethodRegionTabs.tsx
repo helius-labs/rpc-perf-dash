@@ -314,6 +314,7 @@ export function MethodRegionTabs({
   infraOptions,
   selectedMethod,
   embed = false,
+  defaultProviderIds,
 }: {
   providers: ProviderCol[];
   /** Pre-built table data per infra; the Infra dropdown picks one client-side. */
@@ -326,6 +327,11 @@ export function MethodRegionTabs({
   /** Embed mode: hides the export control (all filters stay interactive). Set by
    *  the /embed/latency-table route; omitted everywhere else. */
   embed?: boolean;
+  /** Initial visible RPC provider ids (subset of `providers`). Omitted = all
+   *  providers shown. Set by the embed route's `?providers=` param; the
+   *  /performance page never passes it. Providers not listed stay toggleable
+   *  via the RPC dropdown. */
+  defaultProviderIds?: string[] | undefined;
 }) {
   const [tab, setTab] = useState<"method" | "region">("method");
   const [percentile, setPercentile] = useState<"p50" | "p95">("p95");
@@ -341,9 +347,14 @@ export function MethodRegionTabs({
   // RPC column show/hide — the set of currently-visible provider ids (all shown
   // by default). Toggling never empties (the last column stays). Initialized
   // lazily from props (the benchmarked provider set is stable).
-  const [visibleProviders, setVisibleProviders] = useState<Set<string>>(
-    () => new Set(providers.map((p) => p.id)),
-  );
+  const [visibleProviders, setVisibleProviders] = useState<Set<string>>(() => {
+    if (defaultProviderIds?.length) {
+      const allowed = new Set(defaultProviderIds);
+      const seed = providers.filter((p) => allowed.has(p.id)).map((p) => p.id);
+      if (seed.length) return new Set(seed);
+    }
+    return new Set(providers.map((p) => p.id));
+  });
   // By-method tab's method multi-select — mirrors the chart's method dropdown.
   // All methods selected by default; toggling never empties (last one is a
   // no-op). Seeded lazily from the initial active infra's method set (every
@@ -552,7 +563,7 @@ export function MethodRegionTabs({
   const firstCol = tab === "method" ? "RPC method" : "Region";
 
   return (
-    <section className="pt-10">
+    <section className={embed ? "" : "pt-10"}>
       <div className="flex justify-between items-end gap-3 mb-4 flex-wrap">
         <div>
           <h2 className="text-[20px] md:text-[26px] font-medium tracking-[-0.022em] mt-2 mb-0">

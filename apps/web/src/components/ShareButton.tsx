@@ -16,7 +16,7 @@
  * building is shared with the route + metadata via lib/share.ts.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { apiPath } from "@/lib/basePath";
 import { buildShareParams, type ShareFilters } from "@/lib/share";
@@ -33,15 +33,29 @@ export function ShareButton({
   const [show, setShow] = useState(false); // drives the enter/exit transition
   const [status, setStatus] = useState<null | "working" | "copied" | "error">(null);
   const [previewLoaded, setPreviewLoaded] = useState(false);
+  // Which card the dropdown selected: the composite score board, or a latency
+  // board at p50/p95. Latency needs a single method (see the menu below).
+  const [metric, setMetric] = useState<"score" | "latency">("score");
+  const [stat, setStat] = useState<"p50" | "p95">("p50");
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
 
-  const params = buildShareParams(filters).toString();
+  const singleMethod = filters.methods.length === 1;
+  // The card the modal previews/downloads = the selected metric + stat layered
+  // onto the page's filters. buildShareParams omits score/p50 defaults, so a
+  // score selection yields the same URL as before this control existed.
+  const effFilters: ShareFilters = { ...filters, metric, stat };
+  const params = buildShareParams(effFilters).toString();
   // apiPath prefixes the /benchmarks basePath — this path is used by client
   // fetch() and an <img src> below, neither of which Next auto-prefixes, so a
   // bare "/og/…" would hit the apex domain (the wrong app) under the proxy.
   const ogPath = apiPath(`/og/leaderboard${params ? `?${params}` : ""}`);
   // A single method names itself; a blend uses the preset label.
-  const shareLabel = filters.methods.length === 1 ? filters.methods[0]! : filters.presetId;
-  const fileName = `rpc-benchmark-${shareLabel}-${filters.windowHours}h.png`;
+  const shareLabel = singleMethod ? filters.methods[0]! : filters.presetId;
+  const fileName =
+    metric === "latency"
+      ? `rpc-latency-${shareLabel}-${stat}-${filters.mode}-${filters.windowHours}h.png`
+      : `rpc-benchmark-${shareLabel}-${filters.windowHours}h.png`;
 
   // Enter animation: mount, then flip `show` on the next frame so the transition
   // has a start state. Exit: clear `show`, unmount after the transition.
@@ -56,6 +70,31 @@ export function ShareButton({
   function close() {
     setShow(false);
     setTimeout(() => setOpen(false), 180);
+  }
+
+  // Close the card-picker dropdown on outside-click / Escape (mirrors ExportButtons).
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [menuOpen]);
+
+  // Pick a card from the dropdown → set metric/stat, then open the preview modal.
+  function pick(m: "score" | "latency", s: "p50" | "p95") {
+    setMetric(m);
+    setStat(s);
+    setMenuOpen(false);
+    setOpen(true);
   }
 
   // Lock body scroll + close on Escape while the modal is open.
@@ -125,27 +164,59 @@ export function ShareButton({
     "clipboard" in navigator &&
     typeof ClipboardItem !== "undefined";
 
+  const menuItem =
+    "block w-full text-left px-3 py-1.5 text-[12px] font-geistmono text-fg2 hover:text-fg hover:bg-fg/[0.05] transition-colors cursor-pointer";
+
   return (
     <>
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        aria-label="Share"
-        className="inline-flex items-center gap-0 sm:gap-1.5 rounded-full border border-line2 px-2.5 sm:px-3.5 py-[7px] text-[12px] font-medium text-fg2 transition-colors hover:text-fg hover:border-fg2 cursor-pointer"
-      >
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <path
-            d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7M16 6l-4-4-4 4M12 2v13"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
-        <span className="hidden sm:inline">Share</span>
-      </button>
+      <div ref={menuRef} className="relative inline-flex">
+        <button
+          type="button"
+          onClick={() => setMenuOpen((o) => !o)}
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          aria-label="Share"
+          className="inline-flex items-center gap-0 sm:gap-1.5 rounded-full border border-line2 px-2.5 sm:px-3.5 py-[7px] text-[12px] font-medium text-fg2 transition-colors hover:text-fg hover:border-fg2 cursor-pointer"
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path
+              d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7M16 6l-4-4-4 4M12 2v13"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+          <span className="hidden sm:inline">Share</span>
+        </button>
+        {menuOpen && (
+          <div
+            role="menu"
+            className="absolute right-0 top-full mt-1 z-50 min-w-[170px] rounded-lg border border-line bg-surface py-1 shadow-xl shadow-black/40"
+          >
+            <button role="menuitem" type="button" className={menuItem} onClick={() => pick("score", "p50")}>
+              Score card
+            </button>
+            <div className="my-1 h-px bg-line" />
+            {singleMethod ? (
+              <>
+                <button role="menuitem" type="button" className={menuItem} onClick={() => pick("latency", "p50")}>
+                  Latency · p50
+                </button>
+                <button role="menuitem" type="button" className={menuItem} onClick={() => pick("latency", "p95")}>
+                  Latency · p95
+                </button>
+              </>
+            ) : (
+              <div className="px-3 py-1.5 text-[11px] font-geistmono leading-snug text-muted">
+                Latency card —
+                <br />
+                select a single method
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
       {open &&
         typeof document !== "undefined" &&
