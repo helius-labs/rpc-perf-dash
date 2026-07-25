@@ -1,6 +1,6 @@
 {
   "name": "rpc-perf-dash",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "description": "Continuous, regional, non-gameable RPC benchmark dashboard for Solana",
   "license": "Apache-2.0",

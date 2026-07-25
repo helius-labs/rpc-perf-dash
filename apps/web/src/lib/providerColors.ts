@@ -12,6 +12,7 @@ const FIXED_COLORS: Record<string, string> = {
   triton: "#a78bfa",            // purple
   quicknode: "#4ade80",         // green
   alchemy: "#3aa3ff",           // blue
+  chainstack: "#ffc200",        // yellow, from Chainstack's secondary palette (distinct from alchemy's blue on chart; official brand color is blue, see BRAND_COLORS below)
 };
 
 // Official brand colors, used to tint the #1 provider's name/rank on the
@@ -21,6 +22,7 @@ const BRAND_COLORS: Record<string, string> = {
   helius: "#E84125",
   alchemy: "#363FF9",
   triton: "#A12CFF",
+  chainstack: "#007BFF",
 };
 
 /** Brand color for a provider, or null if it has no defined brand color. */
@@ -37,6 +39,7 @@ const LOGOS: Record<string, string> = {
   quicknode: "/logos/quicknode.svg",
   alchemy: "/logos/alchemy.svg",
   triton: "/logos/triton.svg",
+  chainstack: "/logos/chainstack.svg",
 };
 
 /** Path to a provider's logo mark, or null if none. */

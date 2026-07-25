@@ -69,25 +69,54 @@ separately:
 | No clear majority (e.g. a 2–2 tie) | Skipped — too close to call |
 | A clear majority agrees | That group is **correct**; anyone who disagrees is **wrong** |
 
-**Who votes.** The panel is **Helius, Triton, Alchemy, and QuickNode**, four
-providers on most methods. If a provider's plan doesn't offer a method, it isn't
-counted for or against on that method.
+**Who votes.** The panel is **Helius, Triton, Alchemy, QuickNode, and
+Chainstack**, five providers on most methods. If a provider's plan doesn't offer
+a method, it isn't counted for or against on that method.
 
-Three methods have only three voters, because one panel provider either doesn't
-offer the method or returns it in a format we can't compare against the others:
+Some methods have fewer voters, because a panel provider either doesn't offer
+the method or returns it in a format we can't compare against the others:
 
-- `simulateBundle` — QuickNode doesn't serve it
-- `getTransactionsForAddress` — QuickNode doesn't serve it
-- `getStakeMinimumDelegation` — Alchemy returns "unsupported method"
+- `simulateBundle` — three voters (Helius, Triton, Alchemy). Neither QuickNode
+  nor Chainstack serve it: it's a Jito bundle-simulation extension, and neither
+  runs Jito-enabled infra on this tier.
+- `getTransactionsForAddress` — three voters (Helius, Triton, Alchemy). It's a
+  custom indexer-backed method, not standard Solana JSON-RPC: QuickNode serves
+  a non-comparable variant, and Chainstack (a standard core RPC node) doesn't
+  serve it at all.
+- `getStakeMinimumDelegation` — four voters (Helius, Triton, QuickNode,
+  Chainstack). Alchemy returns "unsupported method"; it's a standard method
+  everyone else on the panel serves.
+- `getTokenLargestAccounts` — four voters (Helius, Triton, Alchemy,
+  QuickNode). Chainstack's shared tier restricts it to dedicated nodes only.
 
-On these three-voter methods, two providers agreeing is enough to settle the
+On the two three-voter methods, two providers agreeing is enough to settle the
 answer (the third is then the odd one out and scored wrong). We still need all
 three to answer for the test to count.
 
 On the three-voter methods a 2–1 split is settled by the two that agree, with no
 external tie-breaker, so two independent providers agreeing is the entire
-correctness signal there. (Honeypots — spot-check tests where we already know the
-correct answer, described under Anti-gaming below — don't cover these methods;
+correctness signal there. The two four-voter methods need the usual strict
+majority (3 of 4) instead.
+
+These voter counts describe the **full published panel** and are fixed
+regardless of which subset a given deployment actually configures. A
+reproducer who runs the full generator/worker/DB stack (this repo's "Option
+B") but deliberately configures fewer than all five provider env vars — fully
+supported, see the README — still gets these fixed thresholds, not ones
+recomputed from their smaller subset. Concretely: a reproducer running only
+Helius+Triton+QuickNode for `getStakeMinimumDelegation` (omitting Chainstack)
+only ever gets 3 actual votes, but the threshold is still derived from the
+full 4-voter structural panel, so the relaxed 2-of-3 rule never kicks in —
+those 3 votes must agree unanimously, and a 2-1 split among them is rejected
+as `no_consensus` rather than being decided in the majority's favor. Under the
+pre-Chainstack four-provider panel that same subset (then the *entire* panel
+for this method) would have gotten the two-of-three relaxation instead. This
+is a known, accepted trade-off, not a bug — the alternative (deriving
+thresholds from each run's actual configuration) would make the CLI's own
+quickstart reporting unreliable, since CLI-mode providers never populate
+these env vars in the first place. (Honeypots — spot-check tests where we already know the
+correct answer, described under Anti-gaming below — don't cover these
+methods;
 they apply only to `getBlock`, `getTransaction`, and `getSignaturesForAddress`.)
 
 ## Scoring

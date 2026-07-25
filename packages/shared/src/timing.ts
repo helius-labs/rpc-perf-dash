@@ -26,7 +26,7 @@ import type { TLSSocket } from "node:tls";
  * projection, eligibility, or consensus semantics change (see
  * docs/operations.md § Methodology versioning).
  */
-export const METHODOLOGY_VERSION = 3 as const;
+export const METHODOLOGY_VERSION = 4 as const;
 
 export interface TimedResponse {
   latency_ms: number;

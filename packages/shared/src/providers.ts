@@ -63,8 +63,8 @@ export interface ProviderRow {
    * In the consensus model, a benchmarked provider listing a method here is
    * treated as a non-voter for that method (its response is a reliability
    * failure, not a correctness vote against the rest of the panel). E.g.
-   * QuickNode doesn't serve simulateBundle → 3 voters instead of 4 on that
-   * method, and QuickNode's sample is scored on reliability only.
+   * QuickNode and Chainstack don't serve simulateBundle → 3 voters instead of
+   * 5 on that method, and their samples are scored on reliability only.
    *
    * Use sparingly — only when the failure is a tier-level "method not
    * available" (HTTP 403 / explicit JSON-RPC method-disabled), not a
@@ -150,10 +150,10 @@ export const PROVIDERS: readonly ProviderRow[] = [
     anti_gaming_flags: [],
     website: "https://www.alchemy.com",
     // Alchemy returns -32600 "Unsupported method: getStakeMinimumDelegation on
-    // SOLANA_MAINNET"; the other three serve it and agree
+    // SOLANA_MAINNET"; the other four serve it and agree
     // on value:1. Declaring it unsupported drops Alchemy from that method's
-    // panel (3 voters: Helius, Triton, QuickNode) instead of scoring its error
-    // body as `incorrect`.
+    // panel (4 voters: Helius, Triton, QuickNode, Chainstack) instead of
+    // scoring its error body as `incorrect`.
     unsupported_methods: ["getStakeMinimumDelegation"],
   },
   {
@@ -185,10 +185,39 @@ export const PROVIDERS: readonly ProviderRow[] = [
     website: "https://www.quicknode.com",
     notes: "QuickNode endpoint URL embeds the key.",
   },
+  {
+    id: "chainstack",
+    name: "Chainstack",
+    benchmarked: true,
+    utility: false,
+    tier_name: "chainstack_free",
+    retention_slots: "full",
+    monthly_cap: null, // confirm cap/tier once benchmarked account is provisioned
+    endpoints: [{ url: "env:CHAINSTACK_URL" }],
+    data_centers: [{ locations: "undisclosed" }],
+    pricing: { monthly_cost_usd: 0 },
+    anti_gaming_flags: [],
+    // Verified live against a Chainstack mainnet endpoint (all ~45 emitted
+    // methods probed): simulateBundle and getTransactionsForAddress both
+    // return -32601 "Method not found" (standard Solana core RPC, no Jito
+    // extension, no custom indexer). getTokenLargestAccounts returns -32601
+    // "only available on dedicated nodes" — a shared/free-tier restriction,
+    // same shape as the other two. Every other emitted method (including
+    // getStakeMinimumDelegation) returned a valid or recognized-method
+    // response. getLargestAccounts (dormant, not emitted) has the same
+    // dedicated-nodes restriction as getTokenLargestAccounts.
+    unsupported_methods: [
+      "simulateBundle",
+      "getTransactionsForAddress",
+      "getTokenLargestAccounts",
+    ],
+    website: "https://chainstack.com",
+    notes: "Chainstack Global Nodes Solana mainnet endpoint.",
+  },
   // Flux removed from the benchmarked panel: it was a near-zero correctness
   // outlier across every method (e.g. getTransaction 0%, getBlock ~2.6%),
   // served stale/divergent data, and disabled getProgramAccounts. The panel is
-  // now 4 benchmarked providers.
+  // now 5 benchmarked providers.
 
   // ────────────────────────────────────────────────────────────
   // Utility endpoint (generator chain observation)
@@ -219,6 +248,22 @@ export const PROVIDERS: readonly ProviderRow[] = [
 
 export const BENCHMARKED_PROVIDERS = PROVIDERS.filter((p) => p.benchmarked);
 export const UTILITY_PROVIDER = PROVIDERS.find((p) => p.utility);
+
+/**
+ * Structural voter-panel size for a method: how many of the full benchmarked
+ * roster (BENCHMARKED_PROVIDERS, not a per-run configured subset) serve it,
+ * i.e. don't declare it in `unsupported_methods`. Single source of truth for
+ * the "is this method's structural panel exactly 3 voters" check — both
+ * packages/runner/src/record.ts's `decideForMode` (deciding the actual
+ * `minGroup` override) and apps/cli/src/mode.ts's `minGroupForMethod`
+ * (mirroring that decision for the CLI's report label) call this instead of
+ * each re-implementing the same filter, so the two can no longer drift apart.
+ */
+export function structuralPanelSize(method: Method): number {
+  return BENCHMARKED_PROVIDERS.filter(
+    (p) => !(p.unsupported_methods?.includes(method) ?? false),
+  ).length;
+}
 
 /** Public dashboard-route slug for a provider (its id). */
 export function providerSlug(p: ProviderRow): string {

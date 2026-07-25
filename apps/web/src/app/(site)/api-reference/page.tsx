@@ -320,8 +320,8 @@ const ENDPOINTS: EndpointSpec[] = [
     "generated_at": "2026-06-18T11:59:30.000Z",
     "params": { "...": "method-specific challenge params" },
     "is_honeypot": false,
-    "total": 4,                // responses graded for this challenge
-    "correct": 4, "ambiguous": 0, "incorrect": 0
+    "total": 5,                // responses graded for this challenge
+    "correct": 5, "ambiguous": 0, "incorrect": 0
   }
 ]`,
   },
@@ -336,7 +336,7 @@ const ENDPOINTS: EndpointSpec[] = [
   "status": "ok",             // overall fleet grade (ok | degraded | down)
   "infra": { "live": 6, "total": 6 },        // live benchmarking vantages
   "utility": { "healthy": true },            // generator chain-observation RPC
-  "benchmarked": { "healthy": 4, "total": 4 } // configured provider panel
+  "benchmarked": { "healthy": 5, "total": 5 } // configured provider panel
 }`,
   },
   {

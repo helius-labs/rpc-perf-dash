@@ -47,6 +47,7 @@ WORKER_SECRETS=(
   TRITON_URL
   ALCHEMY_URL
   QUICKNODE_URL
+  CHAINSTACK_URL
 )
 
 is_worker_secret() {

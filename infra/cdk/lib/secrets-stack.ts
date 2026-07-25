@@ -36,6 +36,7 @@ export class SecretsStack extends Stack {
           TRITON_URL: "TODO",
           ALCHEMY_URL: "TODO",
           QUICKNODE_URL: "TODO",
+          CHAINSTACK_URL: "TODO",
           // Utility endpoint — the generator's chain-observation RPC
           // (challenge derivation, slot polling, honeypot seeding).
           UTILITY_RPC_URL: "TODO",
