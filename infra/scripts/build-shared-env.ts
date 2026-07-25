@@ -82,6 +82,14 @@ writeFileSync(outPath, `${lines.join("\n")}\n`, { mode: 0o600 });
 
 const source = fromAws ? "AWS rpcbench/env" : ".env / .env.local";
 console.log(`[build-shared-env] wrote ${lines.length} key(s) -> ${outPath} (source: ${source})`);
+
+// Masked fingerprint of each endpoint URL written, so a wrong/stale provider
+// key is eyeballable before the CF/TSW/GCP fleets consume this file.
+const fp = (v: string) => (v.length <= 14 ? "***" : `${v.slice(0, 34)}…${v.slice(-6)}`);
+for (const key of WORKER_SECRET_KEYS) {
+  const v = values[key];
+  if (v && v.startsWith("http")) console.log(`  ${key} = ${fp(v)}`);
+}
 if (missing.length > 0) {
   console.warn(
     `[build-shared-env] WARN: ${missing.length} unset key(s) skipped: ${missing.join(", ")} — ` +

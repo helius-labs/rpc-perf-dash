@@ -80,17 +80,54 @@ The AWS worker binding (`util.ts` `PANEL_SECRET_KEYS`) and the CF Worker→Conta
 proxy (`infra/cloudflare/src/index.ts`) now **auto-derive** from
 `PANEL_ENV_KEYS` / `WORKER_SECRET_KEYS` — no longer hand-edited.
 
-**Then provision + deploy** — identical to a value change (see
-[Changing a provider endpoint](#changing-a-provider-endpoint-value-only)):
-`pnpm build:shared-env` → redeploy the fleets → `pnpm seed:aws` (internal mirror).
+**Then provision + deploy — order matters (a new provider adds a NEW secret key,
+which neither the quick-ref nor `deploy-all-workers.sh` create).** Unlike a
+value-only change, the key exists in *no* secret store yet, so seed BEFORE the
+worker deploys or they crashloop:
 
-**Verifier:** after a rollout, query
+1. `pnpm build:shared-env` then `pnpm seed:aws` — writes the key into
+   `rpcbench/env`. Do this **before** the AWS worker `cdk deploy`; ECS resolves
+   the secret at task start and crashloops on a missing key. The scripts now
+   print a masked fingerprint of each URL — eyeball it.
+2. **GCP is two-phase** (the secret has no version yet): `terraform apply` to
+   create the empty secret (Cloud Run fails, expected) →
+   `infra/gcp/seed-secrets.sh` to add a version → `terraform apply` again with a
+   fresh tag to roll. See the GCP gotcha above.
+3. Redeploy the fleets. `deploy-all-workers.sh` deploys code but does **not**
+   create/seed secrets — the two steps above must precede it.
+
+For a value-only fix later (rotating the key), see
+[Changing a provider endpoint](#changing-a-provider-endpoint-value-only).
+
+**Key source of truth:** `loadEnv` resolves `.env.local` over `.env` (and the
+real environment over both). Set the key in whichever file you use, but don't
+leave a *different* stale value in the other — `loadEnv` warns on a conflict,
+and a wrong value here silently seeds the whole fleet (it once shipped a bad key
+that returned `http_401` on every request).
+
+**Verifier — do NOT trust `verify:deploy`'s green alone for a value/key.**
+`pnpm verify:deploy` now includes a per-provider liveness gate (fails if a
+benchmarked provider is <50% success), but always eyeball the per-provider
+breakdown too:
 ```sql
-SELECT worker_provider, count(*) FROM samples
+SELECT worker_provider, status, http_status, count(*)
+FROM samples
 WHERE provider_id = '<new_provider>' AND started_at > now() - interval '2 min'
-GROUP BY 1;
+GROUP BY 1,2,3 ORDER BY 1;
 ```
-A cloud missing from the result means its deploy path didn't get the env var.
+A cloud missing → its deploy path didn't get the env var. All-`http_401`/`403` →
+wrong/blocked key (not the WAF). `http_403` on `getTokenLargestAccounts` alone is
+fine — that's a legitimately unsupported method, excluded from scoring.
+
+**Contributing your own provider (no fleet).** External contributors never touch
+infra — matrix rows 3–5 and everything below are maintainer-only. Two distinct
+ways to benchmark a provider locally:
+
+- **CLI (quickest)** — pass the endpoint inline; **no `ProviderRow`, no `.env`**
+  needed: `pnpm --filter cli start -- --provider yourname=<url>`.
+- **Self-host (Option B)** — run the full generator/worker/DB stack. Here you
+  add a `ProviderRow` (row 1) and set its `env:` key in `.env` (row 2); unset
+  providers are skipped, configured ones are auto-picked-up.
 
 ### Building the shared env file
 
@@ -212,6 +249,12 @@ change**. The env var already exists; you're only changing its value. `.env` (+
 ---
 
 ## Quick reference: full prod deploy after a methodology change
+
+> **If this change ALSO adds a new provider** (a new secret key), this reference
+> is not enough on its own: first do the new-key provisioning in
+> [Env var propagation matrix](#env-var-propagation-matrix) (seed `rpcbench/env`
+> before the AWS worker deploy; GCP two-phase). The steps below assume every
+> `WORKER_SECRET_KEY` already has a value in every store.
 
 **Auth prerequisites — refresh ALL THREE before a fleet deploy** (each cloud uses
 a different credential; an expired/insufficient one aborts that tier and, under

@@ -91,6 +91,16 @@ try {
 }
 
 console.log(`[seed-aws] updated ${set.length} key(s) in ${AWS_SECRET_ID}: ${set.join(", ")}`);
+
+// Masked fingerprint of every endpoint URL going out, so a wrong/stale key is
+// eyeballable BEFORE it reaches the fleet (a mis-seeded key otherwise only
+// surfaces post-deploy as http_401s). Only shows host + last 6 chars.
+const fp = (v: string) => (v.length <= 14 ? "***" : `${v.slice(0, 34)}…${v.slice(-6)}`);
+for (const k of set) {
+  const v = process.env[k];
+  if (v && v.startsWith("http")) console.log(`  ${k} = ${fp(v)}`);
+}
+
 if (skipped.length > 0) {
   console.warn(`[seed-aws] left unchanged (unset in local env): ${skipped.join(", ")}`);
 }
