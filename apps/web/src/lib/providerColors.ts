@@ -54,6 +54,7 @@ const ANIMATED_LOGOS: Record<string, string> = {
   quicknode: "/logos/animated/quicknode.html",
   alchemy: "/logos/animated/alchemy.html",
   triton: "/logos/animated/triton.html",
+  chainstack: "/logos/animated/chainstack.html",
 };
 
 /** Path to a provider's animated logo page, or null if none. */

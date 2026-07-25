@@ -15,7 +15,7 @@
  */
 
 import postgres from "postgres";
-import { loadEnv } from "@rpcbench/shared";
+import { loadEnv, BENCHMARKED_PROVIDERS } from "@rpcbench/shared";
 
 loadEnv(import.meta.url);
 
@@ -286,6 +286,49 @@ async function main() {
     ORDER BY method, p50_ms NULLS LAST
   `;
   console.table(benchRows);
+
+  // ── 7. Per-provider liveness GATE ──────────────────────────────────────
+  // A benchmarked provider that returns samples but ~none succeed is broken
+  // (bad key → http_401, WAF block → http_403, endpoint down) — the exact
+  // failure mode that a mis-seeded Chainstack key produced while every other
+  // check above still passed. This section FAILS the run so a dead provider
+  // can't slip through green. Threshold is deliberately loose (50%): a healthy
+  // provider sits ~95-100%; a provider with a handful of legitimately
+  // unsupported methods still clears it; a fully-broken one is ~0%. Honeypots
+  // are excluded (correctness traps, not a liveness signal). This is a
+  // cross-method/region aggregate, so a genuine geo defect concentrated in one
+  // provider could in theory pull it toward the floor — the loose threshold is
+  // sized for that; investigate a fail, don't assume it's always a bad key.
+  head(`Per-provider liveness (last ${SAMPLE_VOLUME_WINDOW_MIN} min)`);
+  const provRows = await sql<
+    Array<{ provider_id: string; n: number; ok: number; ok_pct: number | null }>
+  >`
+    SELECT provider_id,
+           count(*)::int                                        AS n,
+           count(*) FILTER (WHERE status = 'ok')::int           AS ok,
+           round(100.0 * count(*) FILTER (WHERE status = 'ok')
+                 / NULLIF(count(*), 0), 1)                       AS ok_pct
+    FROM samples
+    WHERE started_at > now() - make_interval(mins => ${SAMPLE_VOLUME_WINDOW_MIN})
+      AND is_honeypot = false
+    GROUP BY provider_id
+  `;
+  console.table(provRows);
+  const MIN_OK_PCT = 50;
+  const MIN_SAMPLES = 50;
+  for (const p of BENCHMARKED_PROVIDERS) {
+    const row = provRows.find((r) => r.provider_id === p.id);
+    if (!row || row.n < MIN_SAMPLES) {
+      warn(`${p.id}: only ${row?.n ?? 0} samples (<${MIN_SAMPLES}) — can't assess liveness`);
+      continue;
+    }
+    if ((row.ok_pct ?? 0) < MIN_OK_PCT) {
+      fail(`${p.id}: ${row.ok_pct}% success over ${row.n} samples — provider is DOWN/mis-seeded (check its key/URL)`);
+      failures++;
+    } else {
+      pass(`${p.id}: ${row.ok_pct}% success (${row.ok}/${row.n})`);
+    }
+  }
 
   // ── Summary ────────────────────────────────────────────────────────────
   console.log();

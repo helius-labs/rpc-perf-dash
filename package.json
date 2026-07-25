@@ -25,10 +25,12 @@
     "seed:ops": "pnpm --filter @rpcbench/db exec tsx ../../infra/scripts/seed-ops.ts",
     "sync:secrets": "pnpm seed:aws && pnpm build:shared-env",
     "verify:deploy": "pnpm --filter @rpcbench/db exec tsx ../../infra/scripts/verify-deploy.ts",
-    "bootstrap:creds": "bash infra/scripts/bootstrap.sh"
+    "bootstrap:creds": "bash infra/scripts/bootstrap.sh",
+    "gen:animated-logo": "node apps/web/scripts/gen-animated-logo.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.9.0",
+    "sharp": "^0.34.5",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
   }
