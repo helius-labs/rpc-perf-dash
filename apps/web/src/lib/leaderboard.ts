@@ -639,6 +639,74 @@ export const fetchMethodGeoLatency = unstable_cache(
   { revalidate: CACHE_TTL_S },
 );
 
+export interface RankedLatencyRow {
+  provider_id: string;
+  provider_name: string;
+  p50: number | null;
+  p95: number | null;
+}
+
+/**
+ * Providers ranked by latency for a SINGLE method + SINGLE connection mode,
+ * pooled across a region subset — the data behind the latency share card
+ * (`/og/leaderboard?metric=latency`).
+ *
+ * Same source + math as `fetchMethodLatency` (leaderboard_agg, correct-only
+ * percentiles weight-averaged by sample_count_valid), so an all-regions board
+ * matches the on-site "By method" latency table exactly. Unlike that fetcher we
+ * fix the method + mode (the card shows one of each) and add a geo filter so a
+ * region subset works — a region subset's latency is `sample_count_valid`-pooled
+ * over the selected geos (NOT DEFAULT_REGION_WEIGHTS-weighted like the score
+ * card's region blend; intentional, and only the all-regions case matches the
+ * on-site table which never region-filters).
+ *
+ * Geo subset uses the repo's escaped-literal `IN (...)` convention, NOT
+ * `= ANY(${array})`: the Neon pooler (postgres.js, prepare:false) binds an array
+ * param as a scalar and silently returns empty/wrong rows (see fetchScoreSeries).
+ * GeoRegion is a fixed enum, so inlining is safe. Regions are sorted+deduped
+ * here to stabilize the SQL/result regardless of caller order; callers should
+ * also normalize before the cache boundary so order doesn't fragment the
+ * unstable_cache key (the route does — see og/leaderboard/route.tsx).
+ */
+async function fetchRankedLatencyImpl(opts: {
+  method: string;
+  mode: "cold" | "warm";
+  regions: readonly GeoRegion[];
+  windowHours: number;
+  workerProvider?: string;
+}): Promise<RankedLatencyRow[]> {
+  const grain = leaderboardGrainForWindow(opts.windowHours);
+  const aggTable = sql.raw("leaderboard_agg");
+  const wpKey = opts.workerProvider ?? POOLED_INFRA;
+  const geos = opts.regions.length > 0 ? [...new Set(opts.regions)].sort() : [...GEO_REGIONS];
+  const geoLiteral = sql.raw(geos.map((g) => `'${g.replace(/'/g, "''")}'`).join(","));
+  const rows = await db().execute(sql`
+    SELECT
+      r.provider_id,
+      p.name AS provider_name,
+      round(sum(r.latency_p50_correct::bigint * r.sample_count_valid)::numeric
+            / NULLIF(sum(r.sample_count_valid) FILTER (WHERE r.latency_p50_correct IS NOT NULL), 0))::int AS p50,
+      round(sum(r.latency_p95_correct::bigint * r.sample_count_valid)::numeric
+            / NULLIF(sum(r.sample_count_valid) FILTER (WHERE r.latency_p95_correct IS NOT NULL), 0))::int AS p95
+    FROM ${aggTable} r
+    JOIN providers p ON p.id = r.provider_id AND p.benchmarked = true
+    WHERE r.grain = ${grain}
+      AND r.worker_provider = ${wpKey}
+      AND r.method = ${opts.method}
+      AND r.connection_mode = ${opts.mode}
+      AND r.geo IN (${geoLiteral})
+      AND r.window_start > now() - make_interval(hours => ${opts.windowHours})
+    GROUP BY r.provider_id, p.name
+  `);
+  return rows as unknown as RankedLatencyRow[];
+}
+
+export const fetchRankedLatency = unstable_cache(
+  fetchRankedLatencyImpl,
+  ["fetchRankedLatency"],
+  { revalidate: CACHE_TTL_S },
+);
+
 // ---------------------------------------------------------------------------
 // Score-over-time series (section 02 chart's "Score" metric).
 // ---------------------------------------------------------------------------

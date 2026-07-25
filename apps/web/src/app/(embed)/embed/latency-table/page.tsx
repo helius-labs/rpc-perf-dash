@@ -19,6 +19,7 @@ export const dynamic = "force-dynamic";
 interface SearchParams {
   method?: string;
   window?: string;
+  providers?: string;
 }
 
 const DEFAULT_METHOD: Method = "getTransaction";
@@ -41,6 +42,14 @@ export default async function EmbedLatencyTablePage({
     params.method && METHOD_SET.has(params.method) ? (params.method as Method) : DEFAULT_METHOD;
 
   const tableProviders = BENCHMARKED_PROVIDERS.map((p) => ({ id: p.id, name: p.name }));
+
+  // Optional `?providers=helius,alchemy` — the widget opens with only these
+  // columns visible (the rest stay toggleable in the RPC dropdown). Absent =
+  // all providers shown.
+  const benchIds = new Set(BENCHMARKED_PROVIDERS.map((p) => p.id));
+  const defaultProviderIds = params.providers
+    ? params.providers.split(",").map((s) => s.trim()).filter((s) => benchIds.has(s))
+    : undefined;
 
   let byInfra: Record<string, InfraTableData> = {};
   let infraOptions: InfraOption[] = [{ id: "all", label: "All infra" }];
@@ -76,6 +85,7 @@ export default async function EmbedLatencyTablePage({
       byInfra={byInfra}
       infraOptions={infraOptions}
       selectedMethod={selectedMethod}
+      defaultProviderIds={defaultProviderIds}
       embed
     />
   );

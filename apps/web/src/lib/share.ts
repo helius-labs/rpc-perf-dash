@@ -46,6 +46,11 @@ export interface ShareFilters {
   windowHours: number;
   /** Cloud-infra vantage (worker_provider); omitted = pooled across all. */
   infra?: string | undefined;
+  /** Which card to render: the composite score board (default) or a latency
+   *  board. Latency requires a single method (enforced by the OG route). */
+  metric?: "score" | "latency";
+  /** Latency percentile for a latency card. Ignored for score cards. */
+  stat?: "p50" | "p95";
 }
 
 const BALANCED = presetById(DEFAULT_PRESET_ID);
@@ -122,6 +127,12 @@ export function buildShareParams(filters: ShareFilters): URLSearchParams {
   if (filters.windowHours !== DEFAULT_SHARE_FILTERS.windowHours)
     p.set("window", String(filters.windowHours));
   if (filters.infra) p.set("infra", filters.infra);
+  // Card metric/stat — emitted only when non-default so score URLs stay
+  // byte-identical to before this field existed.
+  if (filters.metric === "latency") {
+    p.set("metric", "latency");
+    if (filters.stat === "p95") p.set("stat", "p95");
+  }
   return p;
 }
 
@@ -212,5 +223,8 @@ export function parseShareParams(
 
   const infra = getParam(src, "infra") || undefined;
 
-  return { presetId, methods, methodWeights, regions, weights, mode, windowHours, infra };
+  const metric: "score" | "latency" = getParam(src, "metric") === "latency" ? "latency" : "score";
+  const stat: "p50" | "p95" = getParam(src, "stat") === "p95" ? "p95" : "p50";
+
+  return { presetId, methods, methodWeights, regions, weights, mode, windowHours, infra, metric, stat };
 }
