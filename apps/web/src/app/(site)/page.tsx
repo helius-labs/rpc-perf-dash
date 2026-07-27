@@ -31,14 +31,15 @@ export async function generateMetadata({
   const preset = presetById(filters.presetId);
   const windowLabel =
     WINDOWS.find((w) => w.value === filters.windowHours)?.label ?? `${filters.windowHours}h`;
-  const title = `Solana RPC Benchmark — ${preset.label} leaderboard`;
+  const title = "Solana RPC Benchmarks - Compare Providers";
+  const shareTitle = `Solana RPC Benchmark — ${preset.label} leaderboard`;
   const description = `Live, regional, non-gameable Solana RPC rankings for the ${preset.label} workload (last ${windowLabel}).`;
   const image = ogImagePath(filters);
   return {
     title,
     description,
-    openGraph: { title, description, images: [image] },
-    twitter: { card: "summary_large_image", title, description, images: [image] },
+    openGraph: { title: shareTitle, description, images: [image] },
+    twitter: { card: "summary_large_image", title: shareTitle, description, images: [image] },
   };
 }
 
