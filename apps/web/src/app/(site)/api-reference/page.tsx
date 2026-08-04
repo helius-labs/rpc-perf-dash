@@ -26,6 +26,7 @@ import { ALL_METHODS } from "@/lib/methods";
 import { WINDOWS } from "@/lib/windows";
 import { SCORE_PRESETS } from "@/lib/workloadPresets";
 import { siteUrl } from "@/lib/siteUrl";
+import { BASE_PATH } from "@/lib/basePath";
 import MethodologyToc from "../methodology/MethodologyToc";
 import ApiEndpointCard, { type ApiEndpoint, CodeBlock } from "./ApiEndpointCard";
 import EmbedWidgetCard, { type EmbedWidget } from "./EmbedWidgetCard";
@@ -371,7 +372,7 @@ const WIDGETS: WidgetSpec[] = [
     id: "chart",
     title: "Comparison chart",
     blurb:
-      "The full interactive latency-over-time chart — every filter the /performance chart has: Region, Infra, Window, Connection, Method, the RPC provider multi-select, plus the metric (Latency / Score / Distribution), percentile, binning and outlier toggles. All work live inside the frame. The URL params below just set the INITIAL view; providers= seeds the RPC multi-select to a head-to-head (e.g. Helius vs one competitor), still toggleable.",
+      "The full interactive latency-over-time chart — every filter the /performance chart has: Region, Infra, Window, Connection, Method, the RPC provider multi-select, plus the metric (Latency / Score / Distribution), percentile, binning and outlier toggles. All work live inside the frame. The URL params below just set the INITIAL view; providers= seeds the RPC multi-select to a head-to-head (e.g. Helius vs one competitor), still toggleable. The binning and outlier toggles have no param — they are display preferences that always start at their defaults.",
     params: [
       {
         name: "providers",
@@ -384,6 +385,13 @@ const WIDGETS: WidgetSpec[] = [
       { name: "method", values: "comma-separated methods; a single method also enables the distribution metric", def: "getTransaction" },
       { name: "mode", values: "cold | warm", def: "cold" },
       { name: "window", values: WINDOWS.map((w) => w.value).join(" | ") + " (hours)", def: "24" },
+      {
+        name: "metric",
+        values:
+          "latency | score | distribution — distribution needs exactly one method and is ignored otherwise",
+        def: "latency",
+      },
+      { name: "pct", values: "p50 | p95 (latency percentile)", def: "p95" },
     ],
     exampleQuery: "providers=helius," + (BENCHMARKED_PROVIDERS.find((p) => p.id !== "helius")?.id ?? "alchemy"),
   },
@@ -395,6 +403,16 @@ const WIDGETS: WidgetSpec[] = [
     params: [
       { name: "window", values: WINDOWS.map((w) => w.value).join(" | ") + " (hours)", def: "24" },
       { name: "method", values: "any method (see /api/meta) — sets the initial By-region method", def: "getTransaction" },
+      {
+        name: "providers",
+        values:
+          "comma-separated provider ids (" + BENCHMARKED_PROVIDERS.map((p) => p.id).join(", ") + ") — the columns shown on open; the rest stay toggleable",
+        def: "all providers shown",
+      },
+      { name: "tab", values: "method | region (By method / By region)", def: "method" },
+      { name: "mode", values: "cold | warm", def: "cold" },
+      { name: "pct", values: "p50 | p95", def: "p95" },
+      { name: "infra", values: Object.keys(WORKER_PROVIDER_LABELS).join(" | ") + " (infra vantage); unknown or inactive values fall back to pooled", def: "all (pooled)" },
     ],
     exampleQuery: "",
   },
@@ -465,7 +483,12 @@ function ValueList({ title, items }: { title: string; items: readonly string[] }
 }
 
 export default function ApiReferencePage() {
-  const origin = siteUrl();
+  // siteUrl() is a BARE origin — the app is mounted under basePath, so every
+  // printed URL (curl examples, embed iframes) needs the /benchmarks prefix or
+  // it 404s. NEXT_PUBLIC_SITE_URL may or may not already carry it depending on
+  // how the deployment set it, so append only when it's missing.
+  const base = siteUrl();
+  const origin = base.endsWith(BASE_PATH) ? base : base + BASE_PATH;
 
   return (
     <div className="pt-1">

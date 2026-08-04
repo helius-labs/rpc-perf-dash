@@ -49,8 +49,22 @@ interface Combo {
 }
 
 export async function GET(req: Request) {
+  // Fail CLOSED in production. This route is maxDuration=300 and deliberately
+  // walks a wide set of query combos against the DB, so leaving it open when the
+  // secret is missing hands out an expensive unauthenticated endpoint. Local dev
+  // stays open (no secret needed to warm your own machine).
   const secret = process.env.CRON_SECRET;
-  if (secret) {
+  if (!secret) {
+    if (process.env.VERCEL_ENV === "production") {
+      // Loud: a missing secret means the every-minute warmer is now dark, which
+      // shows up later as cold-cache latency rather than as an obvious failure.
+      console.error(
+        "[/api/prewarm] CRON_SECRET is not set in production — refusing to run. " +
+          "The cache warmer is DARK until it is configured.",
+      );
+      return NextResponse.json({ error: "prewarm not configured" }, { status: 503 });
+    }
+  } else {
     const auth = req.headers.get("authorization");
     if (auth !== `Bearer ${secret}`) {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });

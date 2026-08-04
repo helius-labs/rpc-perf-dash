@@ -10,6 +10,7 @@ import {
 import { type MethodWeights } from "@rpcbench/shared/scoring";
 import { ALL_METHODS } from "@/lib/methods";
 import { WINDOWS } from "@/lib/windows";
+import { parseInfraOrPooled } from "@/lib/apiParams";
 import { ogImagePath, parseShareParams } from "@/lib/share";
 import {
   MethodRegionTabs,
@@ -55,8 +56,9 @@ function parsePerformanceFilters(params: SearchParams) {
     ? parseInt(params.window!, 10)
     : 24;
   const connectionMode = (params.mode ?? "cold") as "cold" | "warm";
-  const wpRaw = params.wp ?? "all";
-  const selectedProvider: string | null = wpRaw === "all" ? null : wpRaw;
+  // Unknown infra coerces to pooled rather than reaching an unstable_cache key
+  // (a junk `?wp=` would otherwise be a guaranteed miss on the heavy fetchers).
+  const selectedProvider: string | null = parseInfraOrPooled(params.wp) ?? null;
   const selectedBenchmarkedSet = new Set<string>(
     (params.bp ?? "").split(",").map((s) => s.trim()).filter((s) => s.length > 0 && s !== "all"),
   );
@@ -254,6 +256,7 @@ async function LatencyTablePanel({
       byInfra={byInfra}
       infraOptions={infraOptions}
       selectedMethod={selectedMethod}
+      windowHours={windowHours}
     />
   );
 }

@@ -20,6 +20,7 @@
 import { GEO_REGIONS, type GeoRegion, type Method } from "@rpcbench/shared";
 import { ALL_METHODS } from "@/lib/methods";
 import { WINDOWS } from "@/lib/windows";
+import { ParamError, badRequest, parseInfraLoose } from "@/lib/apiParams";
 import { fetchLatencyDistribution } from "@/lib/distribution";
 import { DB_ERROR_MESSAGE } from "@/lib/db";
 
@@ -41,8 +42,16 @@ export async function GET(req: Request) {
     ? (regionRaw as GeoRegion)
     : null;
 
-  const wpRaw = sp.get("wp") ?? "all";
-  const workerProvider = wpRaw === "all" || wpRaw === "" ? undefined : wpRaw;
+  // "all"/absent → pooled. Anything else must be a real worker_provider — the
+  // value reaches an unstable_cache key, so an unchecked string is a free miss.
+  let workerProvider: string | undefined;
+  try {
+    const wpRaw = sp.get("wp");
+    workerProvider = parseInfraLoose(wpRaw === "all" ? null : wpRaw);
+  } catch (e) {
+    if (e instanceof ParamError) return badRequest(e.message);
+    throw e;
+  }
 
   try {
     const result = await fetchLatencyDistribution({

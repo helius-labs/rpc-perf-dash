@@ -3,23 +3,67 @@
 /**
  * Export control — an icon button that opens a small dropdown with CSV / JSON
  * download options. Data is built lazily (on click) via the supplied callbacks.
+ *
+ * Optionally also offers "Embed URL" / "Embed iframe" items that copy a link to
+ * the matching /embed/* widget, pre-filled with the caller's current filters —
+ * so the view on screen is one click away from being embeddable elsewhere.
  */
 
 import { useEffect, useRef, useState } from "react";
 import { triggerDownload } from "@/lib/exportData";
+import {
+  buildEmbedUrl,
+  clientEmbedOrigin,
+  embedIframeSnippet,
+  type EmbedWidget,
+} from "@/lib/embedUrl";
+
+/** Label for one embed item: idle text, or its own transient copy feedback. */
+function embedLabel(
+  copied: { kind: "url" | "iframe"; ok: boolean } | null,
+  kind: "url" | "iframe",
+  idle: string,
+): string {
+  if (copied?.kind !== kind) return idle;
+  return copied.ok ? "Copied ✓" : "Copy failed";
+}
+
+/** Describes the /embed/* widget that mirrors this export's current view. */
+export interface EmbedTarget {
+  widget: EmbedWidget;
+  /** Current filters as embed-route params; empty values are dropped. */
+  params: Record<string, string | undefined>;
+  /** Human title for the iframe's `title` attribute. */
+  title: string;
+}
 
 export function ExportButtons({
   filename,
   buildCsv,
   buildJson,
+  embed,
 }: {
   /** Base name without extension, e.g. "rpc-leaderboard". */
   filename: string;
   buildCsv: () => string;
   buildJson: () => unknown;
+  /** Omitted = no embed items, menu is CSV/JSON only (the default). */
+  embed?: EmbedTarget | undefined;
 }) {
   const [open, setOpen] = useState(false);
+  // Transient label swap on the embed items: which one was clicked, and whether
+  // the copy succeeded. Null = idle. Tracking the kind keeps the feedback on the
+  // clicked item only.
+  const [copied, setCopied] = useState<{ kind: "url" | "iframe"; ok: boolean } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(
+    () => () => {
+      if (copyTimer.current) clearTimeout(copyTimer.current);
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -44,6 +88,27 @@ export function ExportButtons({
       triggerDownload(`${filename}.json`, JSON.stringify(buildJson(), null, 2), "application/json");
     }
     setOpen(false);
+  };
+
+  // Copy an embed string. The origin is resolved HERE (in the handler) rather
+  // than during render — `window` is guaranteed and nothing is hydrating, so the
+  // link always matches the origin the user is actually on. writeText rejects on
+  // a non-secure origin (plain-http LAN dev), hence the catch.
+  const copyEmbed = async (kind: "url" | "iframe") => {
+    if (!embed) return;
+    const url = buildEmbedUrl(clientEmbedOrigin(), embed.widget, embed.params);
+    const text = kind === "url" ? url : embedIframeSnippet(url, embed.title);
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied({ kind, ok: true });
+    } catch {
+      setCopied({ kind, ok: false });
+    }
+    if (copyTimer.current) clearTimeout(copyTimer.current);
+    copyTimer.current = setTimeout(() => {
+      setCopied(null);
+      setOpen(false);
+    }, 1200);
   };
 
   const item =
@@ -87,6 +152,27 @@ export function ExportButtons({
           <button role="menuitem" type="button" className={item} onClick={() => download("json")}>
             JSON
           </button>
+          {embed && (
+            <>
+              <div className="my-1 border-t border-line" role="separator" />
+              <button
+                role="menuitem"
+                type="button"
+                className={item}
+                onClick={() => void copyEmbed("url")}
+              >
+                {embedLabel(copied, "url", "Embed URL")}
+              </button>
+              <button
+                role="menuitem"
+                type="button"
+                className={item}
+                onClick={() => void copyEmbed("iframe")}
+              >
+                {embedLabel(copied, "iframe", "Embed iframe")}
+              </button>
+            </>
+          )}
         </div>
       )}
     </div>

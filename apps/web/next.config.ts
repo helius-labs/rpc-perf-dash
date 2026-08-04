@@ -51,21 +51,31 @@ const config: NextConfig = {
     // /changelog) reuse their cached payload for 3 min.
     staleTimes: { dynamic: 0, static: 180 },
   },
-  // Allow the /embed/* widget routes to be framed on the helius.dev site (the
-  // landing pages are same-origin under this basePath, so 'self' covers them;
-  // the explicit helius.dev entries future-proof any subdomain host). Next
+  // The /embed/* widget routes are framed on ARBITRARY third-party sites — the
+  // chart and latency-table export menus hand out a copy-paste embed link, so
+  // the allowlist has to be open or those links render a blank frame. Next
   // auto-prepends basePath to header `source`, so this matches /benchmarks/embed/*.
-  // No X-Frame-Options — frame-ancestors supersedes it and expresses the allowlist.
+  // No X-Frame-Options — frame-ancestors supersedes it. Safe to open: the embeds
+  // are read-only public benchmark data, carry no credentials, and are noindex
+  // (see app/(embed)/layout.tsx).
+  //
+  // CDN caching for those widgets is the counterweight to the open allowlist,
+  // and is NOT optional: the pages are `force-dynamic`, so uncached, every
+  // iframe impression on a popular host page is a function invocation straight
+  // through to the DB fetchers. 60s is well inside the fetchers' own 120s
+  // CACHE_TTL_S, so it costs no freshness.
+  //
+  // It is NOT set here: Next stamps its own `no-store` on a dynamic render and
+  // that wins over a headers() entry (verified — this route returned
+  // `no-store, must-revalidate` with the equivalent entry in place). It lives in
+  // vercel.json instead, applied at the edge. Keep the two in sync; note that
+  // file's `source` spells out /benchmarks because only next.config prepends
+  // the basePath.
   async headers() {
     return [
       {
         source: "/embed/:path*",
-        headers: [
-          {
-            key: "Content-Security-Policy",
-            value: "frame-ancestors 'self' https://helius.dev https://*.helius.dev",
-          },
-        ],
+        headers: [{ key: "Content-Security-Policy", value: "frame-ancestors *" }],
       },
     ];
   },

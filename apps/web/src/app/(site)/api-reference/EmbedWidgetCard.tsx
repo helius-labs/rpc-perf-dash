@@ -9,6 +9,7 @@
 
 import { useState } from "react";
 import { CodeBlock, TabButton } from "./ApiEndpointCard";
+import { buildEmbedUrl, embedIframeSnippet, type EmbedWidget as EmbedWidgetId } from "@/lib/embedUrl";
 
 export interface EmbedParam {
   name: string;
@@ -18,25 +19,13 @@ export interface EmbedParam {
 
 export interface EmbedWidget {
   /** URL segment under /embed (e.g. "chart"). */
-  id: string;
+  id: EmbedWidgetId;
   slug: string;
   title: string;
   blurb: string;
   params: EmbedParam[];
   /** Query string appended to the example (no leading `?`), or "". */
   exampleQuery: string;
-}
-
-/** Build the ready-to-paste iframe snippet for a widget + example query. */
-function iframeSnippet(origin: string, id: string, query: string, title: string): string {
-  const src = `${origin}/embed/${id}${query ? `?${query}` : ""}`;
-  return `<iframe
-  src="${src}"
-  title="${title}"
-  style="width:100%;border:0"
-  scrolling="no"
-  loading="lazy"
-></iframe>`;
 }
 
 export default function EmbedWidgetCard({
@@ -52,8 +41,11 @@ export default function EmbedWidgetCard({
   const [tab, setTab] = useState<"embed" | "url">("embed");
   const { id, slug, title, blurb, params, exampleQuery } = widget;
 
-  const url = `${origin}/embed/${id}${exampleQuery ? `?${exampleQuery}` : ""}`;
-  const snippet = iframeSnippet(origin, id, exampleQuery, `Solana RPC Benchmark — ${title}`);
+  // `origin` arrives from the server (see api-reference/page.tsx) so the printed
+  // string is identical on both renders — a window lookup here would hydrate-
+  // mismatch on the very URL this card exists to show.
+  const url = buildEmbedUrl(origin, id, Object.fromEntries(new URLSearchParams(exampleQuery)));
+  const snippet = embedIframeSnippet(url, `Solana RPC Benchmark — ${title}`);
 
   return (
     <div className="border-t border-line">
