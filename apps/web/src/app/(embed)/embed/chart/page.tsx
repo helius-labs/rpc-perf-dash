@@ -6,6 +6,7 @@ import {
 } from "@rpcbench/shared";
 import { ALL_METHODS } from "@/lib/methods";
 import { WINDOWS } from "@/lib/windows";
+import { parseInfraOrPooled } from "@/lib/apiParams";
 import { PerfExplorer } from "@/components/PerfExplorer";
 import { buildPerfSlice, type PerfSlice } from "@/lib/perfSlice";
 import {
@@ -28,6 +29,10 @@ interface SearchParams {
   mode?: string;
   wp?: string;
   method?: string;
+  /** Initial chart metric. `distribution` needs a single method (see below). */
+  metric?: string;
+  /** Initial latency percentile (p50 | p95). */
+  pct?: string;
 }
 
 const DEFAULT_METHOD: Method = "getTransaction";
@@ -60,13 +65,31 @@ export default async function EmbedChartPage({
     ? parseInt(params.window!, 10)
     : 24;
   const connectionMode: "cold" | "warm" = params.mode === "warm" ? "warm" : "cold";
-  const selectedProvider = params.wp && params.wp !== "all" ? params.wp : null;
+  // Unknown infra coerces to pooled — a widget shouldn't hard-fail on a junk
+  // param, and the raw value would otherwise fragment the unstable_cache key.
+  const selectedProvider = parseInfraOrPooled(params.wp) ?? null;
 
   const selectedMethods: Method[] = (params.method ?? "")
     .split(",")
     .map((s) => s.trim())
     .filter((s): s is Method => METHOD_SET.has(s));
   if (selectedMethods.length === 0) selectedMethods.push(DEFAULT_METHOD);
+
+  // The Distribution metric is only offered for a single method (the chart's
+  // `canDistribution` gate), so a multi-method `metric=distribution` link would
+  // silently render Latency. Drop it here instead, so the URL and the view can't
+  // disagree — score/latency are valid at any method count.
+  const metricRaw = params.metric;
+  const initialMetric: "latency" | "score" | "distribution" | undefined =
+    metricRaw === "score"
+      ? "score"
+      : metricRaw === "distribution" && selectedMethods.length === 1
+        ? "distribution"
+        : metricRaw === "latency"
+          ? "latency"
+          : undefined;
+  const initialPercentile: "p50" | "p95" | undefined =
+    params.pct === "p50" ? "p50" : params.pct === "p95" ? "p95" : undefined;
 
   // `providers=` (or the app's `bp=`) → the RPC multi-select seed. Empty = show all.
   const initialBenchmarked = (params.providers ?? params.bp ?? "")
@@ -129,6 +152,8 @@ export default async function EmbedChartPage({
       mwOverrides={{}}
       shareRegions={selectedGeos.length > 0 ? selectedGeos : activeGeos}
       initialBenchmarked={initialBenchmarked}
+      initialMetric={initialMetric}
+      initialPercentile={initialPercentile}
     />
   );
 }

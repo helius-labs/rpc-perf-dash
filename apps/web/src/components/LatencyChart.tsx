@@ -19,7 +19,7 @@ import { apiPath } from "@/lib/basePath";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { FilterGroup } from "./FilterGroup";
 import { MobileFilterDisclosure } from "./MobileFilterDisclosure";
-import { ExportButtons } from "./ExportButtons";
+import { ExportButtons, type EmbedTarget } from "./ExportButtons";
 import { toCSV } from "@/lib/exportData";
 import { binOptionsForWindow, binLabel } from "@/lib/chartBins";
 import {
@@ -80,6 +80,14 @@ interface Props {
   /** Embed mode: hides the export/share controls (all filters stay interactive).
    *  Set by the /embed/* widget routes; omitted everywhere else. */
   embed?: boolean;
+  /** Page-level filters for the export menu's "Embed" items, in /embed/chart's
+   *  param names. Present = the menu offers embed links (the chart merges in its
+   *  own `providers` / `metric` / `pct`); omitted = CSV/JSON only, which is what
+   *  the sends board and the provider deep-dive want. */
+  embedParams?: Record<string, string | undefined> | undefined;
+  /** Initial metric / percentile, seeded from the embed route's `metric`+`pct`. */
+  initialMetric?: "latency" | "score" | "distribution" | undefined;
+  initialPercentile?: "p50" | "p95" | undefined;
 }
 
 type Metric = "latency" | "score" | "distribution";
@@ -150,6 +158,9 @@ export function LatencyChart({
   workerProvider,
   loading = false,
   embed = false,
+  embedParams,
+  initialMetric,
+  initialPercentile,
 }: Props) {
   // The distribution fetch is single-region scoped: pass a region only when
   // exactly one geo is selected; any other count pools across clouds.
@@ -205,7 +216,7 @@ export function LatencyChart({
     }
   };
 
-  const [metric, setMetric] = useState<Metric>("latency");
+  const [metric, setMetric] = useState<Metric>(initialMetric ?? "latency");
   const isScore = hasScore && metric === "score";
   // "Latency distribution" — CDF / histogram / box, offered when a single
   // method is in context. Fetched lazily from /api/distribution only while this
@@ -297,7 +308,7 @@ export function LatencyChart({
   // `p95_ms` field (a historical name) regardless of what it holds — we feed it
   // the selected percentile, or the composite 0-100 score in score mode, so
   // nothing downstream has to branch.
-  const [percentile, setPercentile] = useState<"p50" | "p95">("p95");
+  const [percentile, setPercentile] = useState<"p50" | "p95">(initialPercentile ?? "p95");
 
   // Normalize Date — Next.js may hand us strings across the SC→CC boundary in
   // some serialization paths.
@@ -403,11 +414,33 @@ export function LatencyChart({
     [distData, selectedBenchmarked],
   );
 
+  // Embed target for the export menu, layering the chart's own state onto the
+  // page filters the caller supplied. `metric` is passed per call site below —
+  // each ExportButtons instance already corresponds to one active metric, so an
+  // unrenderable `metric=distribution` (which needs a single method) can never
+  // be emitted from the score/latency branches. Defaults are omitted so a
+  // default view copies a bare URL.
+  const embedTarget = (m: "latency" | "score" | "distribution"): EmbedTarget | undefined =>
+    embedParams
+      ? {
+          widget: "chart",
+          title: "Solana RPC Benchmark — Comparison chart",
+          params: {
+            ...embedParams,
+            providers:
+              selectedBenchmarked.size > 0 ? [...selectedBenchmarked].join(",") : undefined,
+            metric: m === "latency" ? undefined : m,
+            pct: percentile === "p95" ? undefined : percentile,
+          },
+        }
+      : undefined;
+
   // Export (CSV/JSON) control, shape depends on the active metric. Hoisted so it
   // renders once as a value: on desktop at the end of the bar (in place), on
   // mobile in the Filters-bar header beside the Connection toggle.
   const exportButtons = embed ? null : isDist ? (
     <ExportButtons
+      embed={embedTarget("distribution")}
       filename={`rpc-latency-distribution-${windowHours}h`}
       buildCsv={() =>
         toCSV(
@@ -442,6 +475,7 @@ export function LatencyChart({
     />
   ) : isScore ? (
     <ExportButtons
+      embed={embedTarget("score")}
       filename={`rpc-score-${windowHours}h`}
       buildCsv={() =>
         toCSV(
@@ -467,6 +501,7 @@ export function LatencyChart({
     />
   ) : (
     <ExportButtons
+      embed={embedTarget("latency")}
       filename={`rpc-latency-${windowHours}h`}
       buildCsv={() =>
         toCSV(

@@ -20,6 +20,11 @@ interface SearchParams {
   method?: string;
   window?: string;
   providers?: string;
+  /** Initial view: By method / By region tab, cold-warm, percentile, infra. */
+  tab?: string;
+  mode?: string;
+  pct?: string;
+  infra?: string;
 }
 
 const DEFAULT_METHOD: Method = "getTransaction";
@@ -51,6 +56,13 @@ export default async function EmbedLatencyTablePage({
     ? params.providers.split(",").map((s) => s.trim()).filter((s) => benchIds.has(s))
     : undefined;
 
+  // Initial view. Each is validated against its own closed set and falls back to
+  // the component's default — a widget never hard-fails on a junk param.
+  // `infra` is checked against the LIVE infra list further down, once fetched.
+  const initialTab = params.tab === "region" ? ("region" as const) : undefined;
+  const initialMode = params.mode === "warm" ? ("warm" as const) : undefined;
+  const initialPercentile = params.pct === "p50" ? ("p50" as const) : undefined;
+
   let byInfra: Record<string, InfraTableData> = {};
   let infraOptions: InfraOption[] = [{ id: "all", label: "All infra" }];
   let error: string | null = null;
@@ -79,13 +91,25 @@ export default async function EmbedLatencyTablePage({
     );
   }
 
+  // Only accept an infra that actually has data in this render — otherwise the
+  // dropdown would open on a value with no rows behind it.
+  const initialInfra =
+    params.infra && params.infra !== "all" && infraOptions.some((o) => o.id === params.infra)
+      ? params.infra
+      : undefined;
+
   return (
     <MethodRegionTabs
       providers={tableProviders}
       byInfra={byInfra}
       infraOptions={infraOptions}
       selectedMethod={selectedMethod}
+      windowHours={filters.windowHours}
       defaultProviderIds={defaultProviderIds}
+      initialTab={initialTab}
+      initialMode={initialMode}
+      initialPercentile={initialPercentile}
+      initialInfra={initialInfra}
       embed
     />
   );

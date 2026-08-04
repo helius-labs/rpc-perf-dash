@@ -74,12 +74,15 @@ export async function buildPerfSlice(opts: PerfSliceOpts): Promise<PerfSlice> {
   const { infra, mode, activeGeos, selectedGeos, methods, windowHours } = opts;
   const wp = infra ?? undefined;
   const sortedMethods = [...new Set(methods)].sort();
+  // Deliberately the RAW list: "the first method the user selected" drives the
+  // single-method breakdown/region tables below. Using sortedMethods here would
+  // silently redefine that as "alphabetically first".
   const selectedMethod = methods[0]!;
 
   const [series, scoreSeries] = await Promise.all([
     fetchLatencySeries({
       cloudPairs: chartCloudPairs(selectedGeos, infra),
-      methods,
+      methods: sortedMethods,
       windowHours,
       connectionMode: mode,
     }),
@@ -94,15 +97,18 @@ export async function buildPerfSlice(opts: PerfSliceOpts): Promise<PerfSlice> {
       : Promise.resolve([] as ScoreSeries[]),
   ]);
 
+  // Branch on the DEDUPED count: `?methods=getBlock,getBlock` is one method, and
+  // must not escalate a cheap single-method request into the per-geo cube
+  // fan-out (one leaderboard_agg query per geo) on a fresh cache key.
   let scoreboard: PerfSlice["scoreboard"];
-  if (methods.length > 1) {
+  if (sortedMethods.length > 1) {
     const targets = selectedGeos.length > 0 ? selectedGeos : activeGeos;
     const built: MethodGeoRows[] = [];
     await Promise.all(
       targets.map(async (geo) => {
         const byMethod = await fetchAggregatesForGeoByMethod({
           geoRegion: geo,
-          methods,
+          methods: sortedMethods,
           windowHours,
           connectionMode: mode,
           ...(wp ? { workerProvider: wp } : {}),

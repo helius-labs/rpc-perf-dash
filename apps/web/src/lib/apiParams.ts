@@ -74,10 +74,32 @@ export function parseRegion(raw: string | null): GeoRegion | "overall" {
 }
 
 /**
- * Cloud-infra (worker_provider) selector. Undefined = pooled (`__all__`).
- * Validated against WORKER_PROVIDER_LABELS so any configured infra (incl.
- * hetzner / future additions) is accepted without a code edit here. Rejected
- * when `region` is "overall", since the blend is always pooled.
+ * Cloud-infra (worker_provider) selector WITHOUT the region coupling. Undefined
+ * = pooled (`__all__`). Validated against WORKER_PROVIDER_LABELS so any
+ * configured infra (incl. hetzner / future additions) is accepted without a
+ * code edit here.
+ *
+ * Validation isn't cosmetic: the value lands in an `unstable_cache` key, so an
+ * unchecked string is a guaranteed cache miss on the heavy leaderboard_agg
+ * fetchers — i.e. `?wp=<random>` would be a free way to hammer the DB.
+ *
+ * Use this (not `parseInfra`) anywhere an infra can legitimately arrive without
+ * a region — the /performance chart, its lazy slice/distribution fetches, and
+ * the /embed/chart widget all send an infra while pooling every geo.
+ */
+export function parseInfraLoose(raw: string | null | undefined): string | undefined {
+  if (raw == null || raw === "") return undefined;
+  if (!Object.prototype.hasOwnProperty.call(WORKER_PROVIDER_LABELS, raw)) {
+    throw new ParamError(
+      `invalid infra '${raw}': expected one of ${Object.keys(WORKER_PROVIDER_LABELS).join(", ")}`,
+    );
+  }
+  return raw;
+}
+
+/**
+ * `parseInfraLoose` plus the read-API's extra rule: an infra is meaningless on
+ * the "overall" board, which is always pooled across clouds.
  */
 export function parseInfra(
   raw: string | null,
@@ -89,12 +111,22 @@ export function parseInfra(
       "infra is only valid with a concrete region; the overall blend is always pooled",
     );
   }
-  if (!Object.prototype.hasOwnProperty.call(WORKER_PROVIDER_LABELS, raw)) {
-    throw new ParamError(
-      `invalid infra '${raw}': expected one of ${Object.keys(WORKER_PROVIDER_LABELS).join(", ")}`,
-    );
+  return parseInfraLoose(raw);
+}
+
+/**
+ * Non-throwing form, and the place the "all" pooled sentinel is understood (the
+ * chart's Infra pill and the page URLs emit `wp=all`). An unknown infra coerces
+ * to pooled rather than throwing — a junk query param shouldn't blank a whole
+ * page — while still keeping it out of the cache key.
+ */
+export function parseInfraOrPooled(raw: string | null | undefined): string | undefined {
+  if (raw === "all") return undefined;
+  try {
+    return parseInfraLoose(raw);
+  } catch {
+    return undefined;
   }
-  return raw;
 }
 
 /** Truthy flag parser ("1" / "true" → true; absent / anything else → false). */

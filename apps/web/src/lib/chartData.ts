@@ -142,11 +142,32 @@ async function fetchLatencySeriesImpl(opts: ChartQuery): Promise<ChartSeries[]> 
   }));
 }
 
-export const fetchLatencySeries = unstable_cache(
+const fetchLatencySeriesCached = unstable_cache(
   fetchLatencySeriesImpl,
   ["fetchLatencySeries"],
   { revalidate: CACHE_TTL_S },
 );
+
+/**
+ * Normalizing wrapper around the cached fetcher. `unstable_cache` hashes its
+ * ARGUMENTS before the impl runs, so a list arriving in caller order fragments
+ * the key: `?method=a,b` and `?method=b,a` compile to identical SQL but would
+ * occupy two entries, and duplicates would add unboundedly many more. Since
+ * both params come straight off a public query string, that's a free way to
+ * miss the cache on the heaviest rollup scan — so canonicalize here, where no
+ * caller can forget to. Result-neutral: the impl groups by provider and the
+ * SQL `IN` lists are order-independent.
+ */
+export function fetchLatencySeries(opts: ChartQuery): Promise<ChartSeries[]> {
+  return fetchLatencySeriesCached({
+    ...opts,
+    methods: [...new Set(opts.methods)].sort(),
+    cloudPairs: [...opts.cloudPairs].sort(
+      (a, b) =>
+        a.worker_provider.localeCompare(b.worker_provider) || a.region.localeCompare(b.region),
+    ),
+  });
+}
 
 function escapeLit(s: string): string {
   return `'${s.replace(/'/g, "''")}'`;

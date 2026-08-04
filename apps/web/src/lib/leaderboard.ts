@@ -305,8 +305,9 @@ async function fetchAggregatesForGeoByMethodImpl(
   // Returns an ARRAY (not a Map): unstable_cache JSON-serializes its result, and
   // a Map doesn't survive that round-trip. Callers reconstruct as needed.
   const out = new Map<Method, RowAgg[]>();
-  // Sorted + deduped so the cache key is order-independent and the literal list
-  // is deterministic.
+  // Sorted + deduped so the escaped literal list is deterministic. NOTE this does
+  // NOT stabilize the cache key — unstable_cache hashes the args before calling
+  // this — which is why the exported wrapper below normalizes too.
   const methods = [...new Set(opts.methods)].sort();
   if (methods.length === 0) return [];
 
@@ -424,11 +425,26 @@ async function fetchAggregatesForGeoByMethodImpl(
   return [...out.entries()].map(([method, rows]) => ({ method, rows }));
 }
 
-export const fetchAggregatesForGeoByMethod = unstable_cache(
+const fetchAggregatesForGeoByMethodCached = unstable_cache(
   fetchAggregatesForGeoByMethodImpl,
   ["fetchAggregatesForGeoByMethod"],
   { revalidate: CACHE_TTL_S },
 );
+
+/**
+ * Normalizing wrapper — see the note in chartData.ts. The impl's own sort runs
+ * AFTER `unstable_cache` has hashed the args, so it can't stabilize the key;
+ * only this can. Matters most for `fetchRankedPreset` below, which is reached
+ * from /og/leaderboard with a `methods` list straight off the share-link query
+ * string (parseShareParams doesn't normalize it).
+ */
+export const fetchAggregatesForGeoByMethod = (
+  opts: AggregateByMethodOpts,
+): Promise<Array<{ method: Method; rows: RowAgg[] }>> =>
+  fetchAggregatesForGeoByMethodCached({
+    ...opts,
+    methods: [...new Set(opts.methods)].sort(),
+  });
 
 /**
  * Legacy SINGLE-METHOD overall leaderboard (region-blend of one method). The
@@ -894,8 +910,19 @@ async function fetchScoreSeriesImpl(opts: ScoreQuery): Promise<ScoreSeries[]> {
   }));
 }
 
-export const fetchScoreSeries = unstable_cache(
+const fetchScoreSeriesCached = unstable_cache(
   fetchScoreSeriesImpl,
   ["fetchScoreSeries"],
   { revalidate: CACHE_TTL_S },
 );
+
+/** Normalizing wrapper — see the note in chartData.ts. Both list args come off
+ *  a public query string, and the impl's own sort runs too late to stabilize
+ *  the cache key. */
+export function fetchScoreSeries(opts: ScoreQuery): Promise<ScoreSeries[]> {
+  return fetchScoreSeriesCached({
+    ...opts,
+    methods: [...new Set(opts.methods)].sort(),
+    selectedGeos: [...new Set(opts.selectedGeos)].sort(),
+  });
+}

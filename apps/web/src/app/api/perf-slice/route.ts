@@ -9,6 +9,7 @@ import { NextResponse } from "next/server";
 import { GEO_REGIONS, type GeoRegion, type Method } from "@rpcbench/shared";
 import { ALL_METHODS } from "@/lib/methods";
 import { WINDOWS } from "@/lib/windows";
+import { ParamError, badRequest, parseInfraLoose } from "@/lib/apiParams";
 import { fetchActiveGeos } from "@/lib/leaderboard";
 import { buildPerfSlice } from "@/lib/perfSlice";
 import { DB_ERROR_MESSAGE } from "@/lib/db";
@@ -34,9 +35,16 @@ export async function GET(req: Request) {
   const w = parseInt(sp.get("window") ?? "", 10);
   const windowHours = WINDOWS.some((x) => x.value === w) ? w : 24;
 
-  // `infra` absent or "all" → pooled.
-  const infraRaw = sp.get("infra");
-  const infra = !infraRaw || infraRaw === "all" ? null : infraRaw;
+  // `infra` absent or "all" → pooled. Anything else must be a real
+  // worker_provider: the value reaches an unstable_cache key, so an unchecked
+  // string would be a guaranteed miss on the heavy fetchers below.
+  let infra: string | null;
+  try {
+    infra = parseInfraLoose(sp.get("infra") === "all" ? null : sp.get("infra")) ?? null;
+  } catch (e) {
+    if (e instanceof ParamError) return badRequest(e.message);
+    throw e;
+  }
 
   try {
     const activeGeos = await fetchActiveGeos();

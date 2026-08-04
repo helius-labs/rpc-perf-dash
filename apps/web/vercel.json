@@ -4,6 +4,17 @@
   "buildCommand": "cd ../.. && pnpm --filter web build",
   "installCommand": "cd ../.. && pnpm install --frozen-lockfile",
   "outputDirectory": ".next",
+  "headers": [
+    {
+      "source": "/benchmarks/embed/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, s-maxage=60, stale-while-revalidate=300"
+        }
+      ]
+    }
+  ],
   "git": {
     "deploymentEnabled": {
       "main": true

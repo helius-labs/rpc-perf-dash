@@ -20,6 +20,7 @@ import {
   type ScoringWeights,
 } from "@rpcbench/shared/scoring";
 import { ALL_METHODS } from "./methods";
+import { parseInfraOrPooled } from "./apiParams";
 import { siteUrl } from "./siteUrl";
 import { WINDOW_VALUES } from "./windows";
 import {
@@ -221,7 +222,10 @@ export function parseShareParams(
   const windowRaw = parseInt(getParam(src, "window") ?? "", 10);
   const windowHours = WINDOW_VALUES.has(windowRaw) ? windowRaw : DEFAULT_SHARE_FILTERS.windowHours;
 
-  const infra = getParam(src, "infra") || undefined;
+  // Coerced, not trusted: this flows into fetchRankedPreset → the cached
+  // per-geo aggregate fetchers, so an arbitrary string would fragment their
+  // cache keys straight off a public share link.
+  const infra = parseInfraOrPooled(getParam(src, "infra"));
 
   const metric: "score" | "latency" = getParam(src, "metric") === "latency" ? "latency" : "score";
   const stat: "p50" | "p95" = getParam(src, "stat") === "p95" ? "p95" : "p50";

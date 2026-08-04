@@ -313,8 +313,13 @@ export function MethodRegionTabs({
   byInfra,
   infraOptions,
   selectedMethod,
+  windowHours,
   embed = false,
   defaultProviderIds,
+  initialTab,
+  initialMode,
+  initialPercentile,
+  initialInfra,
 }: {
   providers: ProviderCol[];
   /** Pre-built table data per infra; the Infra dropdown picks one client-side. */
@@ -324,6 +329,9 @@ export function MethodRegionTabs({
   /** The page's first selected method — used to derive the By-region rows from
    *  the active infra's cube (so they track the table's own Infra filter). */
   selectedMethod: string;
+  /** The window `byInfra` was built for — carried into the embed link so a
+   *  copied table reproduces the same window. Display-only otherwise. */
+  windowHours: number;
   /** Embed mode: hides the export control (all filters stay interactive). Set by
    *  the /embed/latency-table route; omitted everywhere else. */
   embed?: boolean;
@@ -332,13 +340,22 @@ export function MethodRegionTabs({
    *  /performance page never passes it. Providers not listed stay toggleable
    *  via the RPC dropdown. */
   defaultProviderIds?: string[] | undefined;
+  /** Initial view, seeded from the embed route's `tab` / `mode` / `pct` /
+   *  `infra`. All four stay fully interactive afterwards; the /performance page
+   *  passes none and gets the historical defaults. */
+  initialTab?: "method" | "region" | undefined;
+  initialMode?: "cold" | "warm" | undefined;
+  initialPercentile?: "p50" | "p95" | undefined;
+  initialInfra?: string | undefined;
 }) {
-  const [tab, setTab] = useState<"method" | "region">("method");
-  const [percentile, setPercentile] = useState<"p50" | "p95">("p95");
-  const [mode, setMode] = useState<"cold" | "warm">("cold");
+  const [tab, setTab] = useState<"method" | "region">(initialTab ?? "method");
+  const [percentile, setPercentile] = useState<"p50" | "p95">(initialPercentile ?? "p95");
+  const [mode, setMode] = useState<"cold" | "warm">(initialMode ?? "cold");
   const [open, setOpen] = useState<Set<string>>(() => new Set());
   // Table-local Infra filter — independent of the chart's `wp` filter.
-  const [tableInfra, setTableInfra] = useState<string>(() => infraOptions[0]?.id ?? "all");
+  const [tableInfra, setTableInfra] = useState<string>(
+    () => initialInfra ?? infraOptions[0]?.id ?? "all",
+  );
   // By-region tab's own method selector. Seeds from the page's method, then is
   // fully client-side and independent (the chart's method no longer navigates,
   // so the table doesn't follow it). The table already holds every method's cube
@@ -630,6 +647,24 @@ export function MethodRegionTabs({
             </button>
           </div>
           {!embed && <ExportButtons
+            embed={{
+              widget: "latency-table",
+              title: "Solana RPC Benchmark — Method / region latency table",
+              params: {
+                // `method` seeds the By-region tab's method selector, which is
+                // what `regionMethod` holds. Route defaults are omitted.
+                method: regionMethod,
+                window: windowHours !== 24 ? String(windowHours) : undefined,
+                providers:
+                  shownProviders.length < providers.length
+                    ? shownProviders.map((p) => p.id).join(",")
+                    : undefined,
+                tab: tab === "method" ? undefined : tab,
+                mode: mode === "cold" ? undefined : mode,
+                pct: percentile === "p95" ? undefined : percentile,
+                infra: tableInfra === "all" ? undefined : tableInfra,
+              },
+            }}
             filename={`rpc-by-${tab}-${mode}-${percentile}`}
             buildCsv={() =>
               toCSV(

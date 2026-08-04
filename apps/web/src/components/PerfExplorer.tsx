@@ -121,6 +121,8 @@ export function PerfExplorer({
   mwOverrides,
   shareRegions,
   initialBenchmarked,
+  initialMetric,
+  initialPercentile,
   embed = false,
   pagePath = "/performance",
 }: {
@@ -140,6 +142,10 @@ export function PerfExplorer({
   mwOverrides: MethodWeights;
   shareRegions: GeoRegion[];
   initialBenchmarked: string[];
+  /** Initial chart metric / percentile, from the embed route's `metric` + `pct`.
+   *  Forwarded verbatim to LatencyChart; omitted everywhere else. */
+  initialMetric?: "latency" | "score" | "distribution" | undefined;
+  initialPercentile?: "p50" | "p95" | undefined;
   /** Chart-only embed mode: hides the page header + scoreboard column and the
    *  section heading, keeps the full filter bar + chart, and hides the chart's
    *  export/share controls. Set by the /embed/chart widget route. */
@@ -302,6 +308,23 @@ export function PerfExplorer({
   };
   const href = (override: Record<string, string | null>): string =>
     buildPageUrl(pagePath, liveParams, override);
+
+  // Filters for the /embed/chart copy items, in the route's own param names (see
+  // app/(embed)/embed/chart/page.tsx). Route defaults are omitted so a default
+  // view copies a bare URL; LatencyChart adds `providers`, `metric` and `pct`
+  // from its own state. Undefined inside an embed — the widget doesn't offer to
+  // re-embed itself.
+  const embedParams: Record<string, string | undefined> | undefined = embed
+    ? undefined
+    : {
+        regions: selectedGeos.length > 0 ? [...selectedGeos].join(",") : undefined,
+        window: windowHours !== 24 ? String(windowHours) : undefined,
+        mode: mode === "warm" ? "warm" : undefined,
+        wp: infra ?? undefined,
+        // The full live list — LatencyChart's own `method` prop is undefined
+        // whenever more than one is selected, so it can't be the source here.
+        method: methods.length > 0 ? methods.join(",") : undefined,
+      };
 
   const selectedGeoSet = new Set(selectedGeos);
   const regionDisabled = (g: GeoRegion): boolean =>
@@ -504,6 +527,9 @@ export function PerfExplorer({
               selectedGeos={selectedGeos}
               workerProvider={infra ?? undefined}
               embed={embed}
+              embedParams={embedParams}
+              initialMetric={initialMetric}
+              initialPercentile={initialPercentile}
             />
           </>
         ) : isErrored ? (
