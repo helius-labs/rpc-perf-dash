@@ -17,7 +17,7 @@
  * into their bundle.
  */
 
-import { BENCHMARKED_PROVIDERS } from "./providers.js";
+import { BENCHMARKED_PROVIDERS, sendEnvKeysFromRegistry } from "./providers.js";
 
 /**
  * Env-var names backing the benchmarked panel endpoints, derived from the
@@ -34,28 +34,47 @@ export const PANEL_ENV_KEYS: readonly string[] = Array.from(
 );
 
 /**
- * Secrets bound on every worker fleet (AWS / GCP / CF / TSW): the pooled Neon
- * URL plus the panel provider URLs. Workers open a pooled connection only, so
- * the DIRECT URL is deliberately excluded; `GENERATOR_SECRET` and
- * `UTILITY_RPC_URL` are generator-only and never bound on workers.
+ * Env-var names backing the transaction-SEND targets (the /sends board),
+ * derived from each `sends` provider's `send_endpoints` config (url/headers/
+ * queries/tip). Sends workers are the same worker fleet as reads, so these are
+ * worker secrets — they fold into WORKER_SECRET_KEYS below and fan out to every
+ * cloud via the same matrix. Public `{region}`-templated URLs (Helius Sender)
+ * carry no `env:` token and contribute nothing here.
  */
-export const WORKER_SECRET_KEYS: readonly string[] = [
-  "NEON_DATABASE_URL_POOLED",
-  ...PANEL_ENV_KEYS,
-];
+export const SEND_ENV_KEYS: readonly string[] = sendEnvKeysFromRegistry();
+
+/**
+ * Secrets bound on every worker fleet (AWS / GCP / CF / TSW): the pooled Neon
+ * URL plus the panel provider URLs plus the send-target URLs/auth. Workers open
+ * a pooled connection only, so the DIRECT URL is deliberately excluded;
+ * `GENERATOR_SECRET` / `UTILITY_RPC_URL` / `SEND_MASTER_KEYPAIR` are
+ * generator-only — none bound on workers.
+ *
+ * Deduped: a provider that reads AND sends over the SAME endpoint var (e.g.
+ * Alchemy reuses `ALCHEMY_URL` for its send path) appears in both PANEL_ENV_KEYS
+ * and SEND_ENV_KEYS — the Set collapses it to one key so the fleet binds it once
+ * and the `env-keys.test.ts` parity assertions (which are order- but not
+ * dedup-tolerant) hold against the literal infra lists.
+ */
+export const WORKER_SECRET_KEYS: readonly string[] = Array.from(
+  new Set(["NEON_DATABASE_URL_POOLED", ...PANEL_ENV_KEYS, ...SEND_ENV_KEYS]),
+);
 
 /**
  * The full key set stored in the canonical AWS Secrets Manager blob
  * (`rpcbench/env`): the worker secrets plus the generator-only keys (direct DB
- * URL, utility endpoint, commit-reveal secret). Used by the reverse
- * `.env -> AWS` seed (`seed-aws.ts`) and asserted against the CDK secret
- * template (`secretStringTemplate` keys ∪ `generateStringKey`).
+ * URL, utility endpoint, commit-reveal secret, the send benchmark master
+ * keypair). The confirm service polls via the shared `UTILITY_RPC_URL` (already
+ * in the blob). Used by the reverse `.env -> AWS` seed (`seed-aws.ts`) and
+ * asserted against the CDK secret template.
  */
 export const AWS_ENV_KEYS: readonly string[] = [
   ...WORKER_SECRET_KEYS,
   "NEON_DATABASE_URL_DIRECT",
   "UTILITY_RPC_URL",
   "GENERATOR_SECRET",
+  // Generator-only: the leader creates/funds send wallets. NOT a worker secret.
+  "SEND_MASTER_KEYPAIR",
 ];
 
 /**

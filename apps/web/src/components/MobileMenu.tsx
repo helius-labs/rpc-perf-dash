@@ -10,7 +10,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import type { Route } from "next";
 import { usePathname } from "next/navigation";
-import { NAV_ITEMS, isActive } from "./navItems";
+import { NAV_ITEMS, isActive, isGroup } from "./navItems";
 import { FLEET_DOT } from "@/lib/fleetStatus";
 import { useFleetStatus } from "./useFleetStatus";
 
@@ -89,6 +89,33 @@ export default function MobileMenu() {
 
         <nav className="flex flex-col px-2 py-3">
           {NAV_ITEMS.map((item) => {
+            // Dropdown group → a labelled section with indented child links.
+            if (isGroup(item)) {
+              return (
+                <div key={item.label} className="mb-1">
+                  <span className="block px-3 pt-2 pb-1 text-[11px] uppercase tracking-[0.12em] text-muted">
+                    {item.label}
+                  </span>
+                  {item.children.map((c) => {
+                    const active = isActive(c.href, pathname);
+                    return (
+                      <Link
+                        key={c.href}
+                        href={c.href as Route}
+                        onClick={() => setOpen(false)}
+                        aria-current={active ? "page" : undefined}
+                        className={
+                          "flex items-center px-5 py-2.5 rounded-md text-[15px] transition-colors " +
+                          (active ? "text-fg bg-surface font-medium" : "text-fg2 hover:text-fg hover:bg-surface")
+                        }
+                      >
+                        {c.label}
+                      </Link>
+                    );
+                  })}
+                </div>
+              );
+            }
             const active = isActive(item.href, pathname);
             return (
               <Link

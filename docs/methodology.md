@@ -382,3 +382,98 @@ free tier's ~1M credits/month, for instance, is far below it), so running on
 free tiers won't give the same or accurate results. This only changes what it
 costs to reproduce the benchmark, not the measurements. Anyone can run the same
 code against their own keys and recompute every score.
+
+## Transaction sends
+
+The sends board (`/sends`) is a parallel benchmark to the read board. Instead of
+scoring RPC responses by cross-provider consensus, it broadcasts **real
+transactions** through competing send paths and scores them against the **chain**.
+It is versioned independently (`SEND_METHODOLOGY_VERSION`); read scoring is
+untouched.
+
+### Targets
+The **5 benchmarked read RPC providers** — **Helius**, **Alchemy**, **Triton**,
+**QuickNode**, **Chainstack** (send-target id === provider id, each once). We send
+**plain JSON-RPC `sendTransaction`** to every provider's **standard endpoint** —
+the identical call for all five, **no tips, no relays, no premium/staked/Jito send
+paths**. The only per-tick lever is the shared adaptive **priority fee** (below),
+applied uniformly, so it's a clean apples-to-apples landing comparison of each
+provider's ordinary `sendTransaction`. (Providers may auto-route the standard call
+through their own staked/SWQoS connections server-side; that's part of what's being
+measured, and it requires nothing from us.)
+
+### Correctness model
+Ground truth is the chain (a confirmed transaction status), not consensus or
+honeypots. The generator's confirm poll queries `getSignatureStatuses` for in-flight sends —
+no Yellowstone/gRPC stream. Every send is scored **independently** — no panel
+majority vote. Four outcomes:
+
+- **landed** — confirmed on-chain, no execution error (success).
+- **reverted** — landed *with* an on-chain error (`err ≠ null`, e.g. swap
+  slippage). A **successful landing**, not a send-path miss — counted in the
+  landing-rate numerator. Because the payload is identical across targets in a
+  tick, reverts wash out across targets (published as a diagnostic).
+- **not_landed** — never confirmed by the ~80s reaper (blockhash TTL + margin). A
+  reliability miss; most are blockhash-expiry (a distinct diagnostic sub-reason).
+- **submit_error** — the target's submit endpoint rejected/failed the HTTP call.
+  A reliability miss attributable to the send path.
+
+### Latency
+- `slot_latency = slot_landed − slot_sent` — the primary metric, both ends on the
+  confirm poll's **single slot clock** (the RPC it queries). `slot_sent` is the
+  confirm head slot at the poll cycle when it **first observes** the pending send
+  (not the wire send), so it lags true wire-send by a small, uniform-across-targets
+  amount; robust to per-host clock skew, but not "clock-independent."
+- `wall_latency_ms` — confirm-observed landing time minus the worker's `sent_at`;
+  depends on NTP-synced fleet clocks.
+- `submit_latency_ms = HTTP-ack − submit` — recorded separately.
+
+`slot_latency` is **slot-granular** (~400ms), a coarse regional signal; the fine
+per-region signal is in `submit_latency_ms` / `wall_latency_ms`.
+
+Block position is **not measured**: it can only be derived from a full-block
+stream (Yellowstone), and status polling doesn't expose it. Dropped rather than
+approximated.
+
+### Scoring
+Two axes, best-normalized like the read scorer, with a `max(1, …)` zero-guard
+(`slot_latency=0`, a same-slot land, is routine):
+- **R_send** (reliability) = landing_rate·100, where
+  `landing_rate = (landed + reverted) / (landed + reverted + not_landed + submit_error)`.
+- **L_send** (latency) = p50/p95 blend on `slot_latency`.
+
+`total = 0.55·R_send + 0.45·L_send`. Reliability-dominant because landing is the
+point.
+
+### Fairness & the adaptive fee
+Every target in a tick gets the **identical** call: same `sendTransaction`, same
+recent-blockhash value, same payload + CU limit, and the same **priority fee** —
+**no tips anywhere**. They're fired together via a barrier; each signs from its
+**own per-target wallet**, so all sends are independent and can all land (a true
+landing rate) — **not** a shared-nonce race. One challenge fans to several
+vantages, so each transaction folds a small **per-vantage nonce into its
+compute-unit limit** (the tx-landing-canary technique): the per-target wallet
+makes signatures distinct across targets, and the CU nonce makes them distinct
+across vantages, giving every send a unique signature and clean attribution on
+the shared blockhash — at zero extra compute (no memo). The priority fee is
+**adaptive per tick**, tuned by a controller toward a ~50–70% aggregate landing
+band (where providers separate), so `R_send` ranks near the contention margin —
+not an absolute production landing rate. Cross-time comparisons should account for
+the in-effect fee (stamped on every row), which moves with network conditions.
+Because the call and fee are identical for all five, no provider gets special
+treatment — differences are purely in how each provider's own infrastructure
+handles the standard `sendTransaction`.
+
+### Non-gameability (weaker than reads' commit-reveal — disclosed)
+A send exposes its funded fee-payer pubkey on-chain the instant it broadcasts;
+there is no commit-reveal equivalent. Wallet rotation raises the cost of
+fingerprinting but does not close the gap. Sends are therefore a
+**disclosed-wallet benchmark, a weaker anti-gaming guarantee than reads** — stated
+outright rather than implied away.
+
+### Open data
+Published: scenario definitions, fixed CU limits (transfer 1,000 / raydium_swap
+80,000 / orca_swap 150,000, **plus a per-vantage nonce ≤4,095 folded into the
+limit** for signature uniqueness), monitored pool addresses, and
+the fact that every target is hit with the identical plain `sendTransaction` (no
+tips). Anyone can recompute every score.

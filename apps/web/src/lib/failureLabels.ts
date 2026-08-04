@@ -19,6 +19,19 @@ export interface FailureDescription {
 
 /** Friendly label + hint per failure_category. */
 export const FAILURE_LABELS: Record<string, FailureDescription> = {
+  // Send-lane outcomes (the /sends board) — the misses behind a <100% landing rate.
+  not_landed: {
+    label: "Not landed",
+    hint: "The reaper never saw it (~80s) — usually blockhash expiry or a dropped transaction.",
+  },
+  submit_error: {
+    label: "Submit error",
+    hint: "The send endpoint rejected or failed the broadcast (HTTP/RPC error).",
+  },
+  reverted: {
+    label: "Reverted",
+    hint: "Landed on-chain with an execution error — still counts as a landing, not a miss.",
+  },
   network_timeout: {
     label: "Timed out",
     hint: "No response within the client budget (5s default; 10s for archival/honeypot buckets).",

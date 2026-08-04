@@ -38,6 +38,10 @@ export interface CardRow {
   /** base64 data URI for the logo mark, or null → initial chip. */
   logo: string | null;
   eligible: boolean;
+  /** Optional pre-formatted sub-line (e.g. sends: "98% land · 2 slot"). When set
+   *  it replaces the default win/p50 line — lets the sends card reuse this card
+   *  with send-correct labels instead of RPC's "win / p50 ms". */
+  subtitle?: string;
 }
 
 export interface CardProps {
@@ -184,11 +188,13 @@ function Row({
             {row.provider_name}
           </span>
           <span style={{ display: "flex", fontFamily: MONO, fontSize: first ? 16 : 14, color: MUTED, marginTop: 6 }}>
-            {isLatency
-              ? otherLatencyLabel(row, stat)
-              : row.p50_ms == null
-                ? `${fmtPct(row.win_rate)} win`
-                : `${fmtP50(row.p50_ms)} p50 · ${fmtPct(row.win_rate)} win`}
+            {row.subtitle
+              ? row.subtitle
+              : isLatency
+                ? otherLatencyLabel(row, stat)
+                : row.p50_ms == null
+                  ? `${fmtPct(row.win_rate)} win`
+                  : `${fmtP50(row.p50_ms)} p50 · ${fmtPct(row.win_rate)} win`}
           </span>
         </div>
       </div>

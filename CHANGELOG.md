@@ -5,6 +5,36 @@ Product releases for the RPC Benchmark Dashboard, following
 DB schema, infra, and fixes. Methodology and scoring behavior is documented in
 [`docs/methodology.md`](docs/methodology.md).
 
+## 1.2.0 — 2026-07-28
+
+- Added a **transaction-sending ("sends") archetype** and a new **Sends**
+  leaderboard tab (`/sends`). Instead of consensus-scored reads, it broadcasts
+  real transactions through competing send paths and scores them against the
+  chain on two axes: landing rate (reliability) and slot latency (latency).
+  Scenarios: `transfer`, `raydium_swap`, `orca_swap`.
+- **Confirmation folded into the generator** (no separate service): a ~2s poll
+  loop reads in-flight sends and classifies them via `getSignatureStatuses`
+  (landed / reverted / not_landed / submit_error) with a single-winner write,
+  reaping unlanded sends at ~80s. No Yellowstone/gRPC dependency.
+- Migration `0002`: an `archetype` discriminator on `challenges` /
+  `challenge_assignments`; new `send_pending`, `landing_tx_results`,
+  `landing_wallet_balances`, `send_wallets`, `send_service_status` tables; and
+  `send_rollups_5m` / `send_rollups` / `send_leaderboard_agg` precompute.
+  Additive — read scoring semantics are unchanged, so no read-methodology
+  redeploy is required.
+- Send targets: the **5 benchmarked read providers** (Helius, Alchemy, Triton,
+  QuickNode, Chainstack). We measure plain JSON-RPC `sendTransaction` on each
+  provider's standard endpoint — **no tips, no relays, no premium send paths** —
+  an apples-to-apples landing comparison. Sends reuse the already-seeded read
+  URLs, so there are **no new worker secrets**.
+- New secret: generator-only `SEND_MASTER_KEYPAIR` (funds the send wallets). The
+  generator's confirm poll reuses the shared `UTILITY_RPC_URL` — no dedicated
+  confirm secret. Swap pool config in `SEND_RAYDIUM_CONFIG` / `SEND_ORCA_CONFIG` +
+  `SEND_POOL_RPC_URL` for pool reads. Gated by the `SENDS_ENABLED` kill-switch
+  (off = no send challenges, no SOL spent).
+- New **send methodology version** (`SEND_METHODOLOGY_VERSION`), versioned
+  independently of the read `METHODOLOGY_VERSION` (still 4).
+
 ## 1.1.0 — 2026-07-23
 
 - Added Chainstack to the benchmarked panel (now five providers: Helius,

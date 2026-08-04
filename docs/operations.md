@@ -151,6 +151,7 @@ get-secret-value | python3` snippet.)
 - Secrets bind in the task def. A new `secretEnv()` key needs a `cdk deploy` of the worker stack; `put-secret-value` alone won't expose it to the container.
 - `cdk deploy` builds the image from the working tree (uncommitted changes included).
 - Deploy regions serially, us-east-2 (home) first, so the generator is on new code before workers ramp. "Failed to publish asset" is usually transient — retry the failed region.
+- **Multi-region worker deploy in a SINGLE `cdk deploy` fails on the non-build regions' ECR push** — `tag does not exist` or `An image does not exist locally with the tag: …<region-ecr>…:<hash>`. The build region (us-east-2) publishes fine; eu-central-1 / ap-northeast-1 fail. CDK builds the image once and publishes it to all three regions' ECRs concurrently, but the cross-region step doesn't reliably `docker tag` the local image for the other regions before pushing. **Fix: deploy one region (A+B lanes) per `cdk deploy` command** (see the deploy quick-reference) — single-region deploys build+tag+push in isolation and always work. (The single-region generator deploy never hits this.) *Note: toggling Docker Desktop's "Use containerd for pulling and storing images" changes the exact error text but does NOT fix it — per-region is the fix, and works regardless of the image-store mode.*
 
 ### GCP (Cloud Run + Terraform + Artifact Registry)
 - Cloud Run won't recycle on an unchanged image tag. `build-image.sh` tags with the short SHA, so uncommitted changes push new layers under the same tag → no new revision → old code keeps serving. Force a unique tag: `URI=$(bash infra/gcp/build-image.sh "$(date +%s)")`.
@@ -260,10 +261,17 @@ change**. The env var already exists; you're only changing its value. `.env` (+
 a different credential; an expired/insufficient one aborts that tier and, under
 `set -e`, everything after it):
 
-> **Set `$AWS_PROFILE`** to an AWS profile with access to the account that holds
-> your worker fleet + the canonical `rpcbench/env` secret. It needs enough
-> permissions (e.g. AdministratorAccess) for all `cdk` + shared-env-rebuild steps
-> below.
+> **Export the per-cloud deploy vars first** — the commands below reference them
+> and fail unhelpfully if unset:
+> - `AWS_PROFILE` — an AWS profile with access to the fleet account + the
+>   canonical `rpcbench/env` secret (e.g. AdministratorAccess), for all `cdk` +
+>   shared-env-rebuild steps.
+> - `PROJECT_ID` — the GCP project id (the prod project; see the operator secret
+>   store, not committed here). **Required by
+>   `build-image.sh` as an env var** (not just the terraform `-var`), so export it,
+>   don't only pass it to `terraform apply`.
+> - `CLOUDFLARE_ACCOUNT_ID` — from `wrangler whoami`; `deploy-cf.sh` fails fast
+>   without it.
 
 ```bash
 aws sso login --profile "$AWS_PROFILE"   # AWS (CDK/ECS) + the shared-env rebuild path
@@ -291,12 +299,18 @@ cd infra/cdk
 cdk deploy RpcBenchGenerator --profile "$AWS_PROFILE" --exclusively --require-approval never
 cd ../..
 
-# 3. AWS workers (3 regions × A/B lanes)
+# 3. AWS workers — ONE region (A+B lanes) per cdk deploy. Deploying all three
+#    regions in a single command fails on the non-build regions' ECR push
+#    ("tag does not exist" / "An image does not exist locally"): CDK's concurrent
+#    cross-region asset publish doesn't reliably re-tag the single built image for
+#    the other regions. Per-region isolates each build+tag+push.
 cd infra/cdk
 cdk deploy RpcBenchWorkerA-us-east-2 RpcBenchWorkerB-us-east-2 \
-            RpcBenchWorkerA-eu-central-1 RpcBenchWorkerB-eu-central-1 \
-            RpcBenchWorkerA-ap-northeast-1 RpcBenchWorkerB-ap-northeast-1 \
-  --profile "$AWS_PROFILE" --exclusively --require-approval never --concurrency 1
+  --profile "$AWS_PROFILE" --exclusively --require-approval never
+cdk deploy RpcBenchWorkerA-eu-central-1 RpcBenchWorkerB-eu-central-1 \
+  --profile "$AWS_PROFILE" --exclusively --require-approval never
+cdk deploy RpcBenchWorkerA-ap-northeast-1 RpcBenchWorkerB-ap-northeast-1 \
+  --profile "$AWS_PROFILE" --exclusively --require-approval never
 cd ../..
 
 # 4. GCP (force unique tag when working tree is dirty)
@@ -360,6 +374,14 @@ All four `worker_provider` values (aws, cloudflare, gcp, teraswitch) should appe
 - One task is leader (`acquired leader lock pid=...`). The other is standby (`not leader, waiting for stale heartbeat...` looping every 15s — this is normal, not an error).
 - Failover happens via Postgres advisory lock + a 15s eviction window. If the leader's TLS connection drops, the standby promotes within ~30s.
 - **Watchdog:** the leader self-exits after 5 min of no new challenges. ECS restarts the task. If you see the same task PID restarting repeatedly, that's the watchdog — investigate the utility endpoint (it derives challenge params + the reference tip slot).
+- **Reads stalled while the leader looks "alive" (heartbeat stale for many minutes, 0 challenges + 0 samples, but workers on all clouds still heartbeating idle):** a runaway heavy query — typically the **read leaderboard-rollup CTE** (`WITH base … -- Explicit projection`) — has saturated the Neon compute (`pg_stat_activity` waits show `IPC/BufferIo`), stalling the generator's DB calls. Frequently kicks off at the **00:00 UTC partition boundary**. The 5-min watchdog may NOT fire here (its own DB write is stuck behind the wedge). **Recovery:** list long-running backends and terminate the runaway rollup —
+  ```sql
+  SELECT pid, now()-xact_start AS age, wait_event, left(query,80)
+  FROM pg_stat_activity WHERE state='active' AND xact_start < now()-interval '5 min';
+  -- then, for the rollup/leaderboard pid(s):
+  SELECT pg_terminate_backend(<pid>);
+  ```
+  Reads resume within ~30s once the compute frees up (the generator retries on its next tick — no restart needed). Neon's own `autovacuum` backends can't be terminated by the app role (`42501`) — leave them, they're `VacuumDelay`-throttled and non-blocking. If terminating doesn't free it, restart/resize the Neon compute from the console (undersized compute is the durable root cause — see the storage/percentile notes).
 
 ### `TEST_MODE=1` env var
 Loosens eligibility thresholds for fresh dashboard rendering during local dev. **NEVER set in prod** — weakens the public eligibility gate. The generator logs a startup warning when `TEST_MODE=1` is observed.
@@ -480,3 +502,60 @@ Tuning K up or down:
 Companion: `BACKPRESSURE_THRESHOLD` (currently 500 still-claimable unclaimed) skips a tick when workers fall behind. Counts only assignments still within their TTL — zombie unclaimed past TTL don't count (otherwise an accumulated zombie pile could freeze dispatch forever). Should never fire in steady state; logs `back-pressure skip` when it does.
 
 Companion: `expireStaleChallenges` + `expireStaleAssignments` crons run every minute (and once at startup), flipping `unclaimed AND past TTL` → `'expired'` on the assignments and `'ready' AND past TTL AND no samples` → `'expired'` on the parent challenges. Without these the UI says "dispatched" forever for stranded rows AND the back-pressure check is fooled by zombie pile-up. The startup run is critical: a deploy after an outage would otherwise see an enormous zombie queue and back-pressure-skip every tick.
+
+## Transaction sends (the /sends board)
+
+The send archetype (migration 0002, `packages/send`, generator send lane +
+confirm poll, worker send branch) is gated by **`SENDS_ENABLED`**. When
+unset/false: the generator emits no send challenges and runs no confirm poll, the
+worker send lane idles, and **no SOL is spent**. The read board is unaffected
+either way. **There is no separate confirm service** — confirmation is a poll
+loop folded into the generator (it's already a leader-elected singleton).
+
+### Env propagation — send keys
+**There are no send-specific worker secrets.** The /sends board == the 5
+benchmarked read providers, each with `sends: true` + a `send_endpoints` entry
+pointing at its **standard read URL** (`env:HELIUS_URL`, `ALCHEMY_URL`,
+`TRITON_URL`, `QUICKNODE_URL`, `CHAINSTACK_URL`) — we measure plain JSON-RPC
+`sendTransaction`, no tips, no relays. So `SEND_ENV_KEYS` resolves entirely to
+read-panel keys already in `WORKER_SECRET_KEYS` (deduped) — **nothing extra to
+seed on any cloud.** `env-keys.test.ts` still guards the terraform/seed-secrets/CDK
+lists.
+
+- **`SEND_MASTER_KEYPAIR`** is **generator-only** (in `AWS_ENV_KEYS`, not
+  `WORKER_SECRET_KEYS`) — only the leader creates/funds wallets. A Solana CLI
+  JSON keypair array. Keep it **distinct from any other master** — a shared
+  funder means either system can drain the other.
+- **Confirmation has no dedicated secret** — the generator's confirm poll uses
+  its existing `UTILITY_RPC_URL` for `getSignatureStatuses`. No Yellowstone/gRPC,
+  no separate service to provision.
+
+### Wallet ops
+Per-(send target × scenario) signing keys live in the **`send_wallets` DB table**
+(workers read them there — NOT Secrets Manager); the generator leader auto-creates
+them. The funding tick (every ~300s) tops up any wallet below
+`SEND_MIN_BALANCE_LAMPORTS` by `SEND_TOPUP_LAMPORTS` from `SEND_MASTER_KEYPAIR`
+(via `SEND_FUNDING_RPC_URL`), and records every balance to
+`landing_wallet_balances` for the low-balance alert. **This spends real mainnet
+SOL** — monitor the master balance and cap the top-up budget.
+
+### Confirm poll (in the generator)
+Confirmation is a poll loop **inside the generator** (`send/confirm.ts`), not a
+separate service — the generator is already the leader-elected singleton, so the
+loop rides its leadership. Every ~2s (own guarded `setInterval`, `.catch()`-wrapped
+so it never crashes the generator) it reads the in-flight `send_pending` rows and
+polls `getSignatureStatuses` (via the generator's `utility` RPC) — no gRPC, the DB
+is the registry. It classifies confirmed txs via a single-winner `DELETE …
+RETURNING`, reaps rows older than ~80s as not_landed, and heartbeats
+`send_service_status(service='confirm')`. The worker send lane **gates** on
+`ready=true` + fresh, so it won't dispatch while the generator (hence confirm) is
+down. Deploy order: **migration 0002 → generator → workers** (ordering is
+convenience; the readiness gate is the guarantee). "Confirm dark" (no landings
+stamped) → check `UTILITY_RPC_URL` reachability + that the generator holds the
+leader lock.
+
+### Partition / retention
+`landing_tx_results` is daily-partitioned by `started_at` and managed by
+`partitions.ts` (forward-create + drop): 7d retention (the board reads
+`send_rollups`). `send_pending` is unpartitioned and self-draining (rows deleted
+on classify/reap; stays <~80s of in-flight sends).

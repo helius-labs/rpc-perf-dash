@@ -12,6 +12,7 @@
     "./timing": "./src/timing.ts",
     "./canonical": "./src/canonical.ts",
     "./scoring": "./src/scoring.ts",
+    "./sendScoring": "./src/sendScoring.ts",
     "./headToHead": "./src/headToHead.ts",
     "./workloads": "./src/workloads.ts",
     "./honeypots": "./src/honeypots.ts",

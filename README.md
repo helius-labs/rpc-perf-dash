@@ -232,6 +232,12 @@ providers are skipped, so the registry can stay a superset of what you run. If
 you deploy across clouds, the same env var must reach every worker deploy path;
 `docs/operations.md` § "Env var propagation matrix" lists them all.
 
+**Send targets** (the `/sends` board) are registered differently: set
+`sends: true` and a `send_endpoints` config (URL + auth headers + tip) instead of
+`endpoints[]`, and gate the whole lane with `SENDS_ENABLED`. See
+`docs/methodology.md` § "Transaction sends" and `docs/operations.md` §
+"Transaction sends".
+
 ## Deploying to your own infrastructure
 
 ### Quick setup — `pnpm bootstrap:creds`

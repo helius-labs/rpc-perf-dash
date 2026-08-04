@@ -11,7 +11,9 @@
   "dependencies": {
     "@rpcbench/db": "workspace:*",
     "@rpcbench/runner": "workspace:*",
+    "@rpcbench/send": "workspace:*",
     "@rpcbench/shared": "workspace:*",
+    "@solana/kit": "^2.1.1",
     "drizzle-orm": "^0.45.2",
     "postgres": "^3.4.5",
     "tsx": "^4.19.2"

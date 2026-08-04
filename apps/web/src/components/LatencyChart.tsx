@@ -10,7 +10,7 @@
  */
 
 import { memo, useEffect, useMemo, useState } from "react";
-import { BENCHMARKED_PROVIDERS } from "@rpcbench/shared/providers";
+import { BENCHMARKED_PROVIDERS, PROVIDERS } from "@rpcbench/shared/providers";
 import type { GeoRegion, Method } from "@rpcbench/shared";
 import type { ChartSeries } from "@/lib/chartData";
 import type { ScoreSeries } from "@/lib/leaderboard";
@@ -141,7 +141,16 @@ function formatMonthDay(d: Date, mounted: boolean): string {
     : `${(d.getUTCMonth() + 1).toString().padStart(2, "0")}/${d.getUTCDate().toString().padStart(2, "0")}`;
 }
 function providerName(id: string): string {
-  return BENCHMARKED_PROVIDERS.find((p) => p.id === id)?.name ?? id;
+  // Look up the FULL registry (not just BENCHMARKED_PROVIDERS) so send-only
+  // relays — which are `benchmarked: false` — resolve to their proper-cased name
+  // on the Sends chart instead of falling through to a lowercase id. Title-case
+  // fallback mirrors SendsLeaderboard's labelFor for any unknown id.
+  const p = PROVIDERS.find((row) => row.id === id);
+  if (p) return p.name;
+  return id
+    .split(/[-_]/)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
 }
 
 export function LatencyChart({
@@ -483,7 +492,7 @@ export function LatencyChart({
           (visibleScoreSeries ?? []).flatMap((s) =>
             s.points.map((p) => [
               new Date(p.t).toISOString(),
-              BENCHMARKED_PROVIDERS.find((bp) => bp.id === s.provider_id)?.name ?? s.provider_id,
+              providerName(s.provider_id),
               p.score.toFixed(2),
             ]),
           ),
@@ -494,7 +503,7 @@ export function LatencyChart({
         windowHours,
         series: (visibleScoreSeries ?? []).map((s) => ({
           provider_id: s.provider_id,
-          provider: BENCHMARKED_PROVIDERS.find((bp) => bp.id === s.provider_id)?.name ?? s.provider_id,
+          provider: providerName(s.provider_id),
           points: s.points.map((p) => ({ t: new Date(p.t).toISOString(), score: p.score })),
         })),
       })}
@@ -509,7 +518,7 @@ export function LatencyChart({
           visibleSeries.flatMap((s) =>
             s.points.map((p) => [
               new Date(p.t).toISOString(),
-              BENCHMARKED_PROVIDERS.find((bp) => bp.id === s.provider_id)?.name ?? s.provider_id,
+              providerName(s.provider_id),
               p.p50_ms,
               p.p95_ms,
             ]),
@@ -521,7 +530,7 @@ export function LatencyChart({
         windowHours,
         series: visibleSeries.map((s) => ({
           provider_id: s.provider_id,
-          provider: BENCHMARKED_PROVIDERS.find((bp) => bp.id === s.provider_id)?.name ?? s.provider_id,
+          provider: providerName(s.provider_id),
           points: s.points.map((p) => ({
             t: new Date(p.t).toISOString(),
             p50_ms: p.p50_ms,

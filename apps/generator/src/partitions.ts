@@ -25,6 +25,9 @@ import type { DbClient } from "@rpcbench/db";
 const SAMPLES_RETENTION_DAYS = 7;
 // samples_archived holds only flagged + honeypot rows (tiny), kept for 30d.
 const ARCHIVE_RETENTION_DAYS = 30;
+// Send-archetype raw table (migration 0002). landing_tx_results mirrors samples
+// (the /sends board reads from send_rollups, not raw rows).
+const LANDING_RETENTION_DAYS = 7;
 // Create partitions this many days ahead so one never has to be created
 // just-in-time at the midnight-UTC boundary (a JIT create racing live inserts
 // there is what triggered the outage).
@@ -39,7 +42,11 @@ export async function ensurePartitions(db: DbClient): Promise<void> {
   // Extend partitions forward for both tables (today, tomorrow, day-after).
   // DO blocks use raw SQL — postgres-js can't infer types for integer params
   // bound inside plpgsql contexts.
-  for (const table of ["samples", "samples_archived"] as const) {
+  for (const table of [
+    "samples",
+    "samples_archived",
+    "landing_tx_results",
+  ] as const) {
     for (let i = 0; i <= PARTITION_LEAD_DAYS; i++) {
       await db.execute(
         sql.raw(`
@@ -152,4 +159,33 @@ export async function ensurePartitions(db: DbClient): Promise<void> {
     `),
   );
 
+  // Prune the send-archetype raw partitions past their retention. Append-only
+  // (no archive step), partitioned by started_at with `<table>_YYYYMMDD` naming,
+  // so a plain drop reclaims space immediately.
+  for (const [table, retentionDays] of [
+    ["landing_tx_results", LANDING_RETENTION_DAYS],
+  ] as const) {
+    const prefixLen = `${table}_`.length + 1; // 1-indexed substring start of YYYYMMDD
+    await db.execute(
+      sql.raw(`
+        DO $do$
+        DECLARE
+          r record;
+          cutoff date := current_date - ${retentionDays};
+        BEGIN
+          FOR r IN
+            SELECT child.relname AS pname
+            FROM pg_inherits
+            JOIN pg_class parent ON parent.oid = pg_inherits.inhparent
+            JOIN pg_class child  ON child.oid  = pg_inherits.inhrelid
+            WHERE parent.relname = '${table}'
+              AND child.relname ~ '^${table}_[0-9]{8}$'
+              AND to_date(substring(child.relname FROM ${prefixLen} FOR 8), 'YYYYMMDD') < cutoff
+          LOOP
+            EXECUTE format('DROP TABLE IF EXISTS %I', r.pname);
+          END LOOP;
+        END $do$;
+      `),
+    );
+  }
 }

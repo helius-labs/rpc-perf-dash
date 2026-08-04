@@ -1,0 +1,35 @@
+{
+  "name": "@rpcbench/send",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./tx": "./src/tx.ts",
+    "./nonce": "./src/nonce.ts",
+    "./wallets": "./src/wallets.ts",
+    "./dispatch": "./src/dispatch.ts",
+    "./scenarios": "./src/scenarios/index.ts",
+    "./targets": "./src/targets/index.ts",
+    "./region": "./src/region.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test src/*.test.ts"
+  },
+  "dependencies": {
+    "@rpcbench/db": "workspace:*",
+    "@rpcbench/shared": "workspace:*",
+    "drizzle-orm": "^0.45.2",
+    "@solana/kit": "^2.1.1",
+    "@solana-program/compute-budget": "^0.7.0",
+    "@solana-program/memo": "^0.7.0",
+    "@solana-program/system": "^0.7.0",
+    "@solana-program/token": "^0.5.1"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2"
+  }
+}

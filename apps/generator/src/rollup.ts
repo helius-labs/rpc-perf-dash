@@ -257,7 +257,7 @@ function sqlLit(s: string): string {
  * constant on every query. Returns a
  * `(VALUES …) AS grm(worker_provider, region, geo)` fragment for `sql.raw`.
  */
-function geoRegionValuesSql(): string {
+export function geoRegionValuesSql(): string {
   const values: string[] = [];
   for (const [workerProvider, regions] of Object.entries(GEO_REGION_MAP)) {
     for (const [region, geo] of Object.entries(regions)) {

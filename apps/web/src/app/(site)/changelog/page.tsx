@@ -24,6 +24,18 @@ const TAG_COLORS = {
 
 const ENTRIES: Entry[] = [
   {
+    date: "2026-07-28",
+    tag: "release",
+    title: "1.2.0 — transaction-sending benchmark",
+    body: "New Sends leaderboard (/sends): real transactions broadcast through each provider's standard endpoint and scored against the chain — landing rate and slot latency. Measures plain JSON-RPC sendTransaction across the 5 benchmarked providers (Helius, Alchemy, Triton, QuickNode, Chainstack) — no tips, no relays, apples-to-apples. Confirmation is a poll loop folded into the generator (getSignatureStatuses) — no separate service. Adds migration 0002 and a SENDS_ENABLED kill-switch. Additive: read scoring is unchanged. Versioned independently via SEND_METHODOLOGY_VERSION.",
+  },
+  {
+    date: "2026-07-23",
+    tag: "providers",
+    title: "1.1.0 — Chainstack added",
+    body: "Chainstack joins the benchmarked panel (now five: Helius, Triton, Alchemy, QuickNode, Chainstack). METHODOLOGY_VERSION bumped to 4 — adding a fifth voter changes getStakeMinimumDelegation's consensus rule from a relaxed 2-of-3 to the default 3-of-4 strict majority, so pre/post results are scored under different semantics and not blended.",
+  },
+  {
     date: "2026-07-17",
     tag: "release",
     title: "1.0.0 — first public release",

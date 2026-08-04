@@ -18,6 +18,9 @@ import {
   type InfraTableData,
 } from "@/components/MethodRegionTabs";
 import { PerfExplorer } from "@/components/PerfExplorer";
+import { LatencyChart } from "@/components/LatencyChart";
+import { SendMethodRegionTabs } from "@/components/SendMethodRegionTabs";
+import { fetchSendChart, fetchSendTableData } from "@/lib/sends";
 import { buildPerfSlice, type PerfSlice } from "@/lib/perfSlice";
 import {
   fetchActiveGeos,
@@ -261,12 +264,55 @@ async function LatencyTablePanel({
   );
 }
 
+/**
+ * Sends performance view: the SAME LatencyChart (send data) + a scenario ×
+ * region × target breakdown table that mirrors the RPC latency table
+ * (<SendMethodRegionTabs>), with a metric selector (landing / slot / wall /
+ * block / cost) in place of the RPC cold/warm toggle.
+ */
+async function SendsPerfHero() {
+  let chart: Awaited<ReturnType<typeof fetchSendChart>>;
+  let table: Awaited<ReturnType<typeof fetchSendTableData>>;
+  try {
+    [chart, table] = await Promise.all([fetchSendChart("1h", 48), fetchSendTableData("1d")]);
+  } catch (err) {
+    console.error("[SendsPerfHero]", err);
+    return (
+      <div className="badge bad" style={{ display: "block", padding: 12, margin: "16px 0" }} role="alert">
+        Sends performance unavailable: {DB_ERROR_MESSAGE}
+      </div>
+    );
+  }
+  return (
+    <div className="pt-1">
+      <header className="max-w-[820px] mb-6">
+        <h1 className="mb-0 text-[clamp(26px,4.5vw,40px)] font-semibold tracking-[-0.03em] leading-[1.05] text-fg">
+          Sends performance
+        </h1>
+        <p className="mt-3 text-[15px] leading-[1.6] text-fg2 max-w-[64ch]">
+          Landing latency and landing rate over time per send target. Same chart as the RPC
+          view — Latency plots wall-latency (ms), Score plots landing rate (%).
+        </p>
+      </header>
+      <LatencyChart series={chart.series} scoreSeries={chart.scoreSeries} windowHours={48} connectionMode="warm" />
+      {table.targets.length > 0 && (
+        <SendMethodRegionTabs
+          targets={table.targets}
+          byInfra={table.byInfra}
+          infraOptions={table.infraOptions}
+        />
+      )}
+    </div>
+  );
+}
+
 export default async function PerformancePage({
   searchParams,
 }: {
   searchParams: Promise<SearchParams>;
 }) {
   const params = await searchParams;
+  const board: "rpcs" | "sends" = (params as { board?: string }).board === "sends" ? "sends" : "rpcs";
   const parsed = parsePerformanceFilters(params);
 
   // Only the cheap "shell" data is awaited here (active geos / infra / providers
@@ -315,28 +361,36 @@ export default async function PerformancePage({
         </div>
       )}
 
-      <Suspense fallback={<PerfHeroSkeleton />}>
-        <PerfHero
-          parsed={parsed}
-          params={params}
-          activeGeos={activeGeos}
-          activeProviders={activeProviders}
-          geosByInfra={geosByInfra}
-          infraByGeo={infraByGeo}
-        />
-      </Suspense>
+      {board === "sends" ? (
+        <Suspense fallback={<PerfHeroSkeleton />}>
+          <SendsPerfHero />
+        </Suspense>
+      ) : (
+        <>
+          <Suspense fallback={<PerfHeroSkeleton />}>
+            <PerfHero
+              parsed={parsed}
+              params={params}
+              activeGeos={activeGeos}
+              activeProviders={activeProviders}
+              geosByInfra={geosByInfra}
+              infraByGeo={infraByGeo}
+            />
+          </Suspense>
 
-      {/* Per-method & per-region latency breakdown — heaviest fan-out, streams
-          in its own boundary so a slow per-infra query never blocks the chart. */}
-      <Suspense fallback={<TableSkeleton />}>
-        <LatencyTablePanel
-          infraKeys={infraKeys}
-          windowHours={parsed.windowHours}
-          tableProviders={tableProviders}
-          infraOptions={infraOptions}
-          selectedMethod={parsed.selectedMethod}
-        />
-      </Suspense>
+          {/* Per-method & per-region latency breakdown — heaviest fan-out, streams
+              in its own boundary so a slow per-infra query never blocks the chart. */}
+          <Suspense fallback={<TableSkeleton />}>
+            <LatencyTablePanel
+              infraKeys={infraKeys}
+              windowHours={parsed.windowHours}
+              tableProviders={tableProviders}
+              infraOptions={infraOptions}
+              selectedMethod={parsed.selectedMethod}
+            />
+          </Suspense>
+        </>
+      )}
     </div>
   );
 }
