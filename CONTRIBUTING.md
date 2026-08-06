@@ -15,6 +15,7 @@
 5. `pnpm db:migrate` to apply the schema.
 6. `pnpm --filter generator seed-honeypots --method <getBlock|getTransaction|getSignaturesForAddress> --count 100` to seed the anti-gaming honeypot pool (re-run monthly; the generator warns at startup if the pool is empty).
 7. `pnpm dev:generator` to start producing challenges; `pnpm dev:worker` to start hitting providers.
+8. (Optional) Transaction-send benchmark (`/sends`): set `SENDS_ENABLED=true` plus the relay `*_URL`/`*_AUTH` keys, `SEND_MASTER_KEYPAIR` (a funded mainnet keypair — real SOL), and `YELLOWSTONE_GRPC_URL`/`YELLOWSTONE_X_TOKEN` for `apps/confirm`. Send targets use `sends: true` + `send_endpoints` in `providers.ts` (not `endpoints[]`). See `docs/methodology.md` and `docs/operations.md` § "Transaction sends".
 
 Deploying to real cloud fleets? `.env` / `.env.local` is the single source of
 truth — `pnpm build:shared-env` generates the worker env file from it (no AWS

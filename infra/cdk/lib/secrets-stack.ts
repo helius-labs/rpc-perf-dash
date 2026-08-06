@@ -40,6 +40,13 @@ export class SecretsStack extends Stack {
           // Utility endpoint — the generator's chain-observation RPC
           // (challenge derivation, slot polling, honeypot seeding).
           UTILITY_RPC_URL: "TODO",
+          // Sends (the /sends board) reuse the read URLs above (plain
+          // sendTransaction) — no dedicated send secrets.
+          // Generator-only: the send benchmark master keypair (creates/funds
+          // send wallets). NOT bound on workers. The confirm service polls
+          // signature statuses via the shared UTILITY_RPC_URL (already in this
+          // blob) — no dedicated confirm secrets.
+          SEND_MASTER_KEYPAIR: "TODO",
         }),
         generateStringKey: "GENERATOR_SECRET",
         excludePunctuation: true,

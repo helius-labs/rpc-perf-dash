@@ -29,6 +29,8 @@ export interface NewChallenge {
   is_honeypot: boolean;
   /** Optional benchmark-run UUID. Set by the one-shot CLI; null for continuous mode. */
   run_id?: string | null;
+  /** Archetype (migration 0002). Defaults to 'read'; send challenges set 'send'. */
+  archetype?: "read" | "send";
 }
 
 export interface Vantage {
@@ -74,6 +76,7 @@ export async function createReadyChallenge(
         status: "ready",
         is_honeypot: c.is_honeypot,
         run_id: c.run_id ?? null,
+        archetype: c.archetype ?? "read",
         reference_response: reference.response,
         reference_hash: reference.hash,
         reference_tip_slot: reference.tip_slot,
@@ -88,6 +91,7 @@ export async function createReadyChallenge(
         region: v.region,
         egress_path: v.egress_path,
         status: "unclaimed",
+        archetype: c.archetype ?? "read",
       }));
       await tx.insert(challenge_assignments).values(assignments as never);
     }

@@ -22,6 +22,23 @@ export const STATUS_OPTIONS = [
 export type StatusFilter = (typeof STATUS_OPTIONS)[number]["value"];
 export const ALL_STATUSES = STATUS_OPTIONS.map((s) => s.value) as readonly StatusFilter[];
 
+/**
+ * Board toggle — the /challenges page shows RPC read challenges (default) or the
+ * transaction-send txns (from landing_tx_results). Not a separate page/nav; a
+ * toggle next to the Method filter swaps the table + the relevant filters.
+ */
+export type ChallengeBoard = "rpcs" | "sends";
+
+/** Send-txn outcome vocabulary — the Sends board's analogue of STATUS_OPTIONS. */
+export const SEND_OUTCOME_OPTIONS = [
+  { value: "landed", label: "landed" },
+  { value: "reverted", label: "reverted" },
+  { value: "not_landed", label: "not landed" },
+  { value: "submit_error", label: "submit error" },
+] as const;
+export type SendOutcomeFilter = (typeof SEND_OUTCOME_OPTIONS)[number]["value"];
+export const ALL_SEND_OUTCOMES = SEND_OUTCOME_OPTIONS.map((o) => o.value) as readonly SendOutcomeFilter[];
+
 export const PAGE_SIZE = 50;
 export const MAX_TARGET_LEN = 128;
 
@@ -41,9 +58,15 @@ export interface ChallengeRow {
 
 /** Validated, serializable filter set — the cache key for one challenges view. */
 export interface ChallengesFilters {
+  /** Which board's data the page shows. RPC read challenges vs send txns. */
+  board: ChallengeBoard;
   method: Method | null;
   bucket: string | null;
   status: string | null;
+  /** Sends board only: scenario (transfer / raydium_swap / orca_swap). */
+  scenario: string | null;
+  /** Sends board only: landing outcome (landed / reverted / not_landed / submit_error). */
+  outcome: SendOutcomeFilter | null;
   window: number;
   target: string;
   offset: number;
@@ -59,11 +82,23 @@ export type ChallengesFiltersNoOffset = Omit<ChallengesFilters, "offset">;
  */
 export function parseChallengesFilters(
   params: Partial<
-    Record<"method" | "bucket" | "status" | "window" | "target" | "offset", string | undefined>
+    Record<
+      "board" | "method" | "bucket" | "status" | "scenario" | "outcome" | "window" | "target" | "offset",
+      string | undefined
+    >
   >,
 ): ChallengesFilters {
+  const board: ChallengeBoard = params.board === "sends" ? "sends" : "rpcs";
   const method = (ALL_METHODS as readonly string[]).includes(params.method ?? "")
     ? (params.method as Method)
+    : null;
+  // Scenario is validated against what exists in the DB downstream (like bucket).
+  const scenario =
+    params.scenario && params.scenario.length > 0 && params.scenario !== "all"
+      ? params.scenario
+      : null;
+  const outcome = (ALL_SEND_OUTCOMES as readonly string[]).includes(params.outcome ?? "")
+    ? (params.outcome as SendOutcomeFilter)
     : null;
   // Bucket is validated against what actually exists in the DB downstream, so
   // we accept the value here and let the filter no-op if nothing matches.
@@ -85,5 +120,5 @@ export function parseChallengesFilters(
   // skipped rows — its cost is just an index scan over the skipped challenge
   // rows. That scan is still O(offset), so a (generous) cap stays to bound it.
   const offset = Math.min(5000, Math.max(0, Number.parseInt(params.offset ?? "0", 10) || 0));
-  return { method, bucket, status, window, target, offset };
+  return { board, method, bucket, status, scenario, outcome, window, target, offset };
 }

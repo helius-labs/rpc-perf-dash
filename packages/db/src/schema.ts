@@ -58,6 +58,9 @@ export const challenges = pgTable(
     status: text("status").notNull(),
     is_honeypot: boolean("is_honeypot").notNull().default(false),
     run_id: uuid("run_id"),
+    // Archetype discriminator (migration 0002): 'read' | 'send'. Send challenges
+    // ride this table via sentinels; the worker branches on it, not `method`.
+    archetype: text("archetype").notNull().default("read"),
     // Denormalized: set true when the first sample for this challenge is written
     // (see insertSamples). Lets the stale-expiry job skip sampled challenges with
     // a cheap flag check instead of a NOT EXISTS scan over the ~40M-row samples
@@ -93,6 +96,7 @@ export const challenge_assignments = pgTable(
     completed_at: timestamp("completed_at", { withTimezone: true }),
     status: text("status").notNull().default("unclaimed"),
     worker_id: text("worker_id"),
+    archetype: text("archetype").notNull().default("read"),
   },
   (t) => ({
     pk: primaryKey({ columns: [t.challenge_id, t.worker_provider, t.region, t.egress_path] }),

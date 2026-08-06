@@ -1,4 +1,4 @@
-import type { Method } from "./types.js";
+import type { Method, SendTargetConfig, SendTargetId } from "./types.js";
 
 /**
  * Anti-gaming compliance reasons. Surfaced on the leaderboard row when a tier
@@ -82,6 +82,22 @@ export interface ProviderRow {
    * these are competitor sites.
    */
   website?: string;
+
+  /**
+   * True if this row is a TRANSACTION-SEND target (appears on the /sends board),
+   * as opposed to (or in addition to) the read `benchmarked` panel. The send
+   * board selects `PROVIDERS.filter(p => p.sends)`; the read panel is unaffected.
+   */
+  sends?: boolean;
+
+  /**
+   * Send-path config(s) for a `sends` target. MUST live here, NOT in
+   * `endpoints[]` — `PANEL_ENV_KEYS` flat-maps `endpoints[]` into the read
+   * worker secret set, so a send URL there would bind onto read workers and
+   * skew `isProviderConfigured`/`CONFIGURED_BENCHMARKED`. `SEND_ENV_KEYS`
+   * derives from this field instead.
+   */
+  send_endpoints?: readonly SendTargetConfig[];
 }
 
 /**
@@ -121,6 +137,10 @@ export const PROVIDERS: readonly ProviderRow[] = [
     anti_gaming_flags: [],
     website: "https://www.helius.dev",
     notes: "Helius beta endpoint (https://beta.helius-rpc.com).",
+    // Send path: plain JSON-RPC sendTransaction on the standard read endpoint —
+    // same call for every provider, no tip. See docs/methodology.md § Transaction sends.
+    sends: true,
+    send_endpoints: [{ name: "helius", url: "env:HELIUS_URL", protocol: "jsonrpc" }],
   },
   {
     id: "triton",
@@ -135,6 +155,9 @@ export const PROVIDERS: readonly ProviderRow[] = [
     pricing: { monthly_cost_usd: 0 },
     anti_gaming_flags: [],
     website: "https://triton.one",
+    // Send path: plain JSON-RPC sendTransaction on the standard read endpoint, no tip.
+    sends: true,
+    send_endpoints: [{ name: "triton", url: "env:TRITON_URL", protocol: "jsonrpc" }],
   },
   {
     id: "alchemy",
@@ -155,6 +178,9 @@ export const PROVIDERS: readonly ProviderRow[] = [
     // panel (4 voters: Helius, Triton, QuickNode, Chainstack) instead of
     // scoring its error body as `incorrect`.
     unsupported_methods: ["getStakeMinimumDelegation"],
+    // Send path: plain JSON-RPC sendTransaction on the standard read endpoint, no tip.
+    sends: true,
+    send_endpoints: [{ name: "alchemy", url: "env:ALCHEMY_URL", protocol: "jsonrpc" }],
   },
   {
     id: "quicknode",
@@ -184,6 +210,10 @@ export const PROVIDERS: readonly ProviderRow[] = [
     unsupported_methods: ["simulateBundle", "getTransactionsForAddress"],
     website: "https://www.quicknode.com",
     notes: "QuickNode endpoint URL embeds the key.",
+    // Send path: plain JSON-RPC sendTransaction on the standard read endpoint
+    // (URL embeds the key), no tip — same call as every other provider.
+    sends: true,
+    send_endpoints: [{ name: "quicknode", url: "env:QUICKNODE_URL", protocol: "jsonrpc" }],
   },
   {
     id: "chainstack",
@@ -213,7 +243,16 @@ export const PROVIDERS: readonly ProviderRow[] = [
     ],
     website: "https://chainstack.com",
     notes: "Chainstack Global Nodes Solana mainnet endpoint.",
+    // Send path: plain JSON-RPC sendTransaction on the standard read endpoint, no tip.
+    sends: true,
+    send_endpoints: [{ name: "chainstack", url: "env:CHAINSTACK_URL", protocol: "jsonrpc" }],
   },
+
+  // The /sends board == the 5 benchmarked read providers above (each has
+  // `sends: true` + a `send_endpoints` entry pointing at its standard read URL).
+  // We measure plain JSON-RPC sendTransaction — no tips, no relays, no premium
+  // send paths — so `PROVIDERS.filter(p => p.sends)` is exactly those 5.
+
   // Flux removed from the benchmarked panel: it was a near-zero correctness
   // outlier across every method (e.g. getTransaction 0%, getBlock ~2.6%),
   // served stale/divergent data, and disabled getProgramAccounts. The panel is
@@ -350,4 +389,57 @@ export function isProviderConfigured(p: ProviderRow): boolean {
 
 export const CONFIGURED_BENCHMARKED = (): ProviderRow[] =>
   BENCHMARKED_PROVIDERS.filter(isProviderConfigured);
+
+// ════════════════════════════════════════════════════════════════════════
+// Send targets (the /sends board)
+// ════════════════════════════════════════════════════════════════════════
+
+/** All rows flagged as transaction-send targets. */
+export const SEND_PROVIDERS = PROVIDERS.filter((p) => p.sends);
+
+/** Flat list of every send-path config across the send roster. */
+export const SEND_TARGET_CONFIGS: readonly SendTargetConfig[] = SEND_PROVIDERS.flatMap(
+  (p) => p.send_endpoints ?? [],
+);
+
+/** Look up a send-path config by its target id. */
+export function sendTargetConfig(id: SendTargetId): SendTargetConfig | undefined {
+  return SEND_TARGET_CONFIGS.find((c) => c.name === id);
+}
+
+/**
+ * Every `env:VAR` name referenced by the send roster's `send_endpoints`
+ * (across `url`, `headers`, `queries`, and `tip.account`). This is the single
+ * source of truth for SEND_ENV_KEYS (env-keys.ts) — worker secrets that must
+ * fan out to every cloud. Deduped. NOTE: `{region}`-templated public URLs with
+ * no `env:` token (e.g. Helius Sender) contribute no key.
+ */
+export function sendEnvKeysFromRegistry(): string[] {
+  const keys = new Set<string>();
+  const scan = (v: string | undefined) => {
+    if (v && v.startsWith("env:")) keys.add(v.slice(4));
+  };
+  for (const cfg of SEND_TARGET_CONFIGS) {
+    scan(cfg.url);
+    for (const h of Object.values(cfg.headers ?? {})) scan(h);
+    for (const q of Object.values(cfg.queries ?? {})) scan(q);
+    scan(cfg.tip?.account);
+  }
+  return Array.from(keys).sort();
+}
+
+/**
+ * True if every `env:VAR` a send target's config references is resolvable in
+ * the current env — i.e. the target is fully wired on this deployment.
+ */
+export function isSendTargetConfigured(cfg: SendTargetConfig): boolean {
+  const resolvable = (v: string | undefined): boolean =>
+    !v || !v.startsWith("env:") || !!process.env[v.slice(4)];
+  return (
+    resolvable(cfg.url) &&
+    Object.values(cfg.headers ?? {}).every(resolvable) &&
+    Object.values(cfg.queries ?? {}).every(resolvable) &&
+    resolvable(cfg.tip?.account)
+  );
+}
 

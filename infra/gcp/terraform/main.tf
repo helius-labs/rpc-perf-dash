@@ -20,6 +20,8 @@ locals {
   # provider registry); HCL can't import it, so packages/shared/src/env-keys.test.ts
   # asserts this list matches — CI fails on drift. Workers open a pooled
   # connection only, so the direct (unpooled) Neon URL is intentionally absent.
+  # Worker secrets (== WORKER_SECRET_KEYS in packages/shared/src/env-keys.ts;
+  # env-keys.test.ts asserts parity). Read-panel URLs + send-relay URL/AUTH keys.
   secret_keys = toset([
     "NEON_DATABASE_URL_POOLED",
     "HELIUS_URL",
@@ -27,6 +29,7 @@ locals {
     "ALCHEMY_URL",
     "QUICKNODE_URL",
     "CHAINSTACK_URL",
+    # Sends reuse these same read URLs (plain sendTransaction) — no extra keys.
   ])
 
   required_apis = toset([

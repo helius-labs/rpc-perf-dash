@@ -11,6 +11,8 @@ import { createDb, insertConsensusLog, insertSamples } from "@rpcbench/db";
 import { loadEnv, type Method } from "@rpcbench/shared";
 import { fanout, fanoutTimeoutForBucket, buildSampleRows, shouldArchive } from "@rpcbench/runner";
 import { claimNext, markDone } from "./claim.js";
+import { handleSendChallenge } from "./send.js";
+import type { SendChallengeParams } from "@rpcbench/shared";
 import { withTimeout, shouldSelfHeal } from "./watchdog.js";
 import { hostname } from "node:os";
 
@@ -106,6 +108,24 @@ async function processOne(db: ReturnType<typeof createDb>): Promise<boolean> {
     // Expired before we got here; mark and skip.
     await markDone(db, claimed.challenge_id, WORKER_PROVIDER, REGION, EGRESS_PATH);
     trace("expired_skip", `id=${claimed.challenge_id}`);
+    return true;
+  }
+
+  // Send archetype: broadcast real transactions through the relay roster instead
+  // of the read fan-out. The confirm service classifies landings out-of-band.
+  if (claimed.archetype === "send") {
+    try {
+      await handleSendChallenge({
+        db,
+        challengeId: claimed.challenge_id,
+        params: claimed.params as SendChallengeParams,
+        vantage: { worker_provider: WORKER_PROVIDER, region: REGION, egress_path: EGRESS_PATH },
+      });
+    } catch (err) {
+      trace("send_error", `id=${claimed.challenge_id} err=${String(err)}`);
+    }
+    await markDone(db, claimed.challenge_id, WORKER_PROVIDER, REGION, EGRESS_PATH);
+    trace("send_done", `id=${claimed.challenge_id}`);
     return true;
   }
 

@@ -27,6 +27,16 @@ import {
 } from "./heartbeat.js";
 import { ensurePartitions } from "./partitions.js";
 import { runMaintenance } from "./maintenance.js";
+import { runSendTick } from "./send/tick.js";
+import { runConfirmPoll, heartbeatConfirm } from "./send/confirm.js";
+import { runSendRollup5m, runSendHeavyRollups, runSendLeaderboard } from "./send-rollup.js";
+import {
+  KeyRegistry,
+  loadMasterFromEnv,
+  runFundingTick,
+  createSolanaRpc,
+} from "@rpcbench/send";
+import { SEND_TARGET_CONFIGS, type Scenario } from "@rpcbench/shared";
 import { ensureProvidersSeeded } from "./seed-providers.js";
 import {
   ROLLUP_INTERVAL_MS,
@@ -899,6 +909,102 @@ async function main() {
   };
   setInterval(runMaintenanceJob, MAINTENANCE_INTERVAL_MS);
   runMaintenanceJob();
+
+  // ────────────────────────────────────────────────────────────
+  // Send archetype (the /sends board). Gated by SENDS_ENABLED so it spends no
+  // SOL and emits no send challenges when off. Runs on its OWN intervals —
+  // never chained onto the read rollup tail (CLAUDE.md).
+  // ────────────────────────────────────────────────────────────
+  if (process.env.SENDS_ENABLED === "true") {
+    const sendScenarios = (process.env.SEND_SCENARIOS ?? "transfer")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean) as Scenario[];
+    // Send tick is DECOUPLED from the 30s read cadence: every send pays real
+    // relay tips, so frequency drives SOL burn. Default 5min (was 30s); tune via
+    // SEND_TICK_INTERVAL_MS. (Observatory reference: 1800s.)
+    const sendTickMs = Math.max(30_000, Number(process.env.SEND_TICK_INTERVAL_MS ?? 300_000));
+    console.log(`[send] enabled; scenarios=${sendScenarios.join(",")} tick=${sendTickMs}ms`);
+
+    // Wallet funding (leader-only). Creates + tops up per-(target × scenario)
+    // wallets from SEND_MASTER_KEYPAIR; records balances for the low-balance
+    // alert. Best-effort; never crashes the generator.
+    let fundingInFlight = false;
+    const runFunding = async (): Promise<void> => {
+      if (fundingInFlight) return;
+      fundingInFlight = true;
+      try {
+        const master = await loadMasterFromEnv();
+        const rpc = createSolanaRpc(
+          process.env.SEND_FUNDING_RPC_URL ?? process.env.UTILITY_RPC_URL ?? "",
+        );
+        const registry = new KeyRegistry(db);
+        const wallets: { name: string; signer: Awaited<ReturnType<KeyRegistry["loadOrCreate"]>> }[] = [];
+        for (const cfg of SEND_TARGET_CONFIGS) {
+          for (const scenario of sendScenarios) {
+            const name = `${cfg.name}:${scenario}`;
+            wallets.push({
+              name,
+              signer: await registry.loadOrCreate(name, "payer", { scenario, sendTarget: cfg.name }),
+            });
+          }
+        }
+        await runFundingTick(db, rpc, master, wallets, {
+          minBalanceLamports: BigInt(process.env.SEND_MIN_BALANCE_LAMPORTS ?? "10000000"),
+          topupLamports: BigInt(process.env.SEND_TOPUP_LAMPORTS ?? "20000000"),
+          region: process.env.WORKER_REGION ?? "generator",
+        });
+      } catch (err) {
+        console.error("[send/funding]", (err as Error).message);
+      } finally {
+        fundingInFlight = false;
+      }
+    };
+    setInterval(() => void runFunding(), 300_000);
+    void runFunding();
+
+    // Send challenge tick — one challenge per scenario, K-sampled to vantages.
+    setInterval(() => {
+      runSendTick({
+        db,
+        utility,
+        sampleVantages: () => sampleK(_activeVantages, VANTAGE_SAMPLE_SIZE),
+        scenarios: sendScenarios,
+      }).catch((err) => console.error("[send/tick]", (err as Error).message));
+    }, sendTickMs);
+
+    // Confirmation — folded in from the former apps/confirm service. Own guarded
+    // interval; reuses `db` + `utility`. Heartbeats send_service_status('confirm')
+    // so the worker send lane's readiness gate is satisfied by this generator.
+    let confirmInFlight = false;
+    const confirmPollMs = Math.max(1_000, Number(process.env.CONFIRM_POLL_MS ?? 2_000));
+    console.log(`[send] confirm poll every ${confirmPollMs}ms`);
+    setInterval(() => {
+      if (confirmInFlight) return; // in-flight guard: never stack polls
+      confirmInFlight = true;
+      runConfirmPoll(db, utility)
+        .catch((err) => {
+          console.error("[send/confirm]", (err as Error).message);
+          // Stop heartbeating ready on error so the worker gate closes.
+          void heartbeatConfirm(db, false).catch(() => {});
+        })
+        .finally(() => {
+          confirmInFlight = false;
+        });
+    }, confirmPollMs);
+
+    // Send rollups — separate intervals (never chained onto the read tail).
+    setInterval(() => {
+      runSendRollup5m(db).catch((err) => console.error("[send/rollup5m]", (err as Error).message));
+    }, ROLLUP_INTERVAL_MS);
+    setInterval(() => {
+      runSendHeavyRollups(db)
+        .then(() => runSendLeaderboard(db))
+        .catch((err) => console.error("[send/rollup-heavy]", (err as Error).message));
+    }, ROLLUP_INTERVAL_MS);
+  } else {
+    console.log("[send] disabled (set SENDS_ENABLED=true to enable)");
+  }
 
   // Park forever; the setInterval timers above keep the process alive, and the
   // SIGTERM/SIGINT handlers drive shutdown.

@@ -435,3 +435,173 @@ export interface CanonicalProjection {
   hash: Uint8Array;
   shape: unknown;
 }
+
+// ════════════════════════════════════════════════════════════════════════
+// Transaction-sending ("sends") archetype
+//
+// A parallel benchmark to the read path: instead of scoring RPC responses by
+// cross-provider consensus, we broadcast real transactions through competing
+// send paths and score them against the chain (landed / reverted / not-landed /
+// submit-error). See docs/methodology.md § Transaction sends.
+// ════════════════════════════════════════════════════════════════════════
+
+/**
+ * Top-level discriminator carried on `challenges` / `challenge_assignments`.
+ * `read` = the consensus-scored RPC benchmark; `send` = the landing benchmark.
+ * The fan-out / claim / vantage machinery is archetype-agnostic; the worker
+ * branches on this, not on `method`.
+ */
+export type Archetype = "read" | "send";
+
+/** The transaction shapes we send each tick. */
+export type Scenario = "transfer" | "raydium_swap" | "orca_swap";
+export const SCENARIOS: readonly Scenario[] = ["transfer", "raydium_swap", "orca_swap"];
+
+/** Swap direction, flipped each tick to conserve token inventory. */
+export type SwapDirection = "forward" | "reverse";
+
+/**
+ * Send targets == the benchmarked read RPC providers. A send-target id EQUALS
+ * its provider id: each read `ProviderRow` also carries `sends: true` +
+ * `send_endpoints`. We measure plain JSON-RPC `sendTransaction` across every
+ * provider's standard endpoint (no tips, no relays, no premium send paths) — an
+ * apples-to-apples landing comparison.
+ */
+export type SendTargetId = "helius" | "alchemy" | "triton" | "quicknode" | "chainstack";
+
+export const SEND_TARGET_IDS: readonly SendTargetId[] = [
+  "helius",
+  "alchemy",
+  "triton",
+  "quicknode",
+  "chainstack",
+];
+
+/**
+ * Chain-truth outcome for a single send, decided by the confirmation service.
+ *   landed       — confirmed on-chain, no execution error (success).
+ *   reverted     — landed WITH an on-chain error (meta.err != null); still a
+ *                  successful landing for reliability, published as a diagnostic.
+ *   not_landed   — never seen by the reaper (~80s); reliability miss.
+ *   submit_error — the target's submit endpoint rejected/failed the HTTP call.
+ */
+export type SendOutcome = "landed" | "reverted" | "not_landed" | "submit_error";
+export const SEND_OUTCOMES: readonly SendOutcome[] = [
+  "landed",
+  "reverted",
+  "not_landed",
+  "submit_error",
+];
+
+/** Wire protocol of a send path. We only measure plain JSON-RPC sendTransaction. */
+export type SendProtocol = "jsonrpc";
+
+/** A tip transfer appended to the tx, directed to a path-specific account. */
+export interface SendTip {
+  /** Base58 tip account (per-target). */
+  account: string;
+  lamports: number;
+}
+
+/**
+ * Full send-path config (port of the observatory `SendTargetConfig`). A bare
+ * URL is insufficient — relays need per-target auth headers/queries and a tip
+ * account. `url`/`headers`/`queries` values may contain `env:VAR` placeholders
+ * (resolved by resolveEndpointUrl) and `{region}`-style templates filled from
+ * the worker's WORKER_REGION via a per-vendor region→POP map.
+ */
+export interface SendTargetConfig {
+  /** Stable target id, also the `send_target` column value. */
+  name: SendTargetId;
+  /** Endpoint URL (may hold `env:VAR` + `{region}` template tokens). */
+  url: string;
+  /** Extra HTTP headers (auth etc.); values may be `env:VAR`. */
+  headers?: Record<string, string>;
+  /** Query params appended to the URL; values may be `env:VAR`. */
+  queries?: Record<string, string>;
+  /** Per-target tip account + lamports; omitted for tip-less relays. */
+  tip?: SendTip;
+  protocol: SendProtocol;
+}
+
+/**
+ * Params for a send challenge (analogous to a read challenge's `params`). All
+ * targets in a tick share these — same blockhash value, CU limit, priority fee,
+ * payload — but each signs from its own wallet, so all can land independently.
+ */
+export interface SendChallengeParams {
+  scenario: Scenario;
+  /** Shared recent-blockhash value for the tick (fairness, not a nonce race). */
+  recent_blockhash: string;
+  /** Last valid block height for the shared blockhash (tx lifetime). */
+  last_valid_block_height: number;
+  compute_unit_limit: number;
+  /** In-effect adaptive priority fee (µlamports/CU); uniform across targets. */
+  priority_fee: number;
+  swap_direction?: SwapDirection | undefined;
+  /**
+   * Set ONLY for the optional shared-nonce win-rate axis; null on the scored
+   * reliability path. Groups racers that share one durable nonce.
+   */
+  nonce_race_id?: string | null;
+}
+
+/**
+ * In-flight send registry row (`send_pending`, PK=signature). `slot_sent` is
+ * deliberately absent — the confirm service assigns it on its own slot clock.
+ */
+export interface SendPendingRow {
+  signature: string;
+  challenge_id: string;
+  scenario: Scenario;
+  send_target: SendTargetId;
+  worker_provider: string;
+  region: string;
+  egress_path: string;
+  sent_at: Date;
+  submit_latency_ms: number | null;
+  nonce_race_id: string | null;
+  priority_fee: number;
+  tip_amount: number;
+  cu_requested: number;
+  pool_address: string | null;
+  swap_direction: SwapDirection | null;
+}
+
+/** Final classified send row (`landing_tx_results`, append-only). */
+export interface LandingTxResultRow {
+  challenge_id: string;
+  scenario: Scenario;
+  send_target: SendTargetId;
+  worker_provider: string;
+  region: string;
+  egress_path: string;
+  signature: string;
+  outcome: SendOutcome;
+  landed: boolean;
+  failed: boolean;
+  submit_error: string | null;
+  started_at: Date;
+  sent_at: Date;
+  submit_latency_ms: number | null;
+  wall_latency_ms: number | null;
+  slot_sent: bigint | null;
+  slot_landed: bigint | null;
+  slot_latency: bigint | null;
+  nonce_race_id: string | null;
+  priority_fee: number;
+  tip_amount: number;
+  cu_requested: number;
+  cu_used: bigint | null;
+  pool_address: string | null;
+  swap_direction: SwapDirection | null;
+  methodology_version: number;
+}
+
+/** Low-balance alert feed (`landing_wallet_balances`). */
+export interface LandingWalletBalanceRow {
+  started_at: Date;
+  region: string;
+  target_name: string;
+  balance_lamports: bigint;
+}

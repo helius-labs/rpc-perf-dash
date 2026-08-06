@@ -41,6 +41,8 @@ PROJECT_ID="${PROJECT_ID:?PROJECT_ID not set — export your GCP project id}"
 # Workers open a pooled connection only, so the direct (unpooled) Neon URL is
 # not seeded here. Kept as a filter so this script can be pointed at an
 # over-broad env file without pushing non-worker keys into Secret Manager.
+# Must match WORKER_SECRET_KEYS in packages/shared/src/env-keys.ts
+# (env-keys.test.ts asserts parity). Read-panel URLs + send-relay URL/AUTH keys.
 WORKER_SECRETS=(
   NEON_DATABASE_URL_POOLED
   HELIUS_URL

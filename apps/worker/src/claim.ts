@@ -11,6 +11,8 @@ export interface ClaimedAssignment {
   reference_tip_slot: bigint;
   is_honeypot: boolean;
   expires_at: Date;
+  /** 'read' | 'send' — the worker branches on this (migration 0002). */
+  archetype: string;
 }
 
 /**
@@ -63,12 +65,13 @@ export async function claimNext(
     reference_response: unknown;
     reference_tip_slot: string | number | bigint | null;
     is_honeypot: boolean;
+    archetype: string;
   }>(
     db,
     sql`
     SELECT
       c.id AS challenge_id,
-      v.method, v.params, v.bucket, v.expires_at,
+      v.method, v.params, v.bucket, v.expires_at, v.archetype,
       c.reference_hash, c.reference_response, c.reference_tip_slot, c.is_honeypot
     FROM challenges c
     JOIN challenges_worker_view v ON v.id = c.id
@@ -96,6 +99,7 @@ export async function claimNext(
           ? raw.reference_tip_slot
           : BigInt(raw.reference_tip_slot),
     is_honeypot: raw.is_honeypot,
+    archetype: raw.archetype ?? "read",
   };
 }
 

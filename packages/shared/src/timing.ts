@@ -28,6 +28,15 @@ import type { TLSSocket } from "node:tls";
  */
 export const METHODOLOGY_VERSION = 4 as const;
 
+/**
+ * Send-archetype methodology version — versioned INDEPENDENTLY of the read
+ * `METHODOLOGY_VERSION` above. Stamped into `landing_tx_results.methodology_version`.
+ * Bumping the read version would needlessly re-segment read results; the send
+ * pipeline (landing/latency/block-position scoring) has its own semantics, so it
+ * carries its own version. See docs/methodology.md § Transaction sends.
+ */
+export const SEND_METHODOLOGY_VERSION = 1 as const;
+
 export interface TimedResponse {
   latency_ms: number;
   http_status: number;

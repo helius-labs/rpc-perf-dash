@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import type { Metadata } from "next";
+import type { Metadata, Route } from "next";
 import { unstable_cache } from "next/cache";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
@@ -17,6 +17,7 @@ import { DEFAULT_WEIGHTS } from "@rpcbench/shared/scoring";
 import { db, DB_ERROR_MESSAGE } from "@/lib/db";
 import { fetchLatencySeries } from "@/lib/chartData";
 import { fetchRankedPreset } from "@/lib/leaderboard";
+import { fetchSendSummary, type SendBoardRow } from "@/lib/sends";
 import {
   FailureBreakdownList,
   ScoreFormula,
@@ -177,6 +178,9 @@ export default async function ProviderPage({ params }: { params: Promise<{ id: s
   const id = provider.id;
 
   const allMethods: Method[] = ["getBlock", "getTransaction", "getSignaturesForAddress"];
+
+  // Transaction-send performance for this provider (null if it has no send data).
+  const sendSummary: SendBoardRow | null = await fetchSendSummary(id).catch(() => null);
 
   let breakdown: MethodRow[] = [];
   let failures: FailureBreakdownRow[] = [];
@@ -514,6 +518,49 @@ export default async function ProviderPage({ params }: { params: Promise<{ id: s
           </div>
         )}
       </div>
+
+      {/* 06 — Transaction sends (only if this provider is on the sends board) */}
+      {sendSummary && (
+        <div className="prov-section">
+          <div className="prov-section-head">
+            <span className="section-kicker">06 · Transaction sends · 24h</span>
+            <span className="prov-section-count">landing benchmark</span>
+          </div>
+          <div className="prov-stat-strip" style={{ marginTop: 14 }}>
+            <div className="idx-stat">
+              <b>{sendSummary.total.toFixed(1)}</b>
+              <i>send score /100</i>
+            </div>
+            <div className="idx-stat">
+              <b>{(sendSummary.landing_rate * 100).toFixed(1)}%</b>
+              <i>landing rate</i>
+            </div>
+            <div className="idx-stat">
+              <b>
+                {sendSummary.slot_latency_p50 == null ? "—" : Math.round(sendSummary.slot_latency_p50)}
+                {" / "}
+                {sendSummary.slot_latency_p95 == null ? "—" : Math.round(sendSummary.slot_latency_p95)}
+              </b>
+              <i>slot latency p50 / p95</i>
+            </div>
+            <div className="idx-stat">
+              <b>{sendSummary.cost_lamports == null ? "—" : sendSummary.cost_lamports.toLocaleString()}</b>
+              <i>cost lamports/tx</i>
+            </div>
+          </div>
+          <p className="prov-context" style={{ marginTop: 12 }}>
+            How {provider.name} performs at landing real transactions on-chain. See the full{" "}
+            <Link href="/sends" className="underline">
+              sends leaderboard
+            </Link>{" "}
+            and{" "}
+            <Link href={"/performance?board=sends" as Route} className="underline">
+              sends performance
+            </Link>
+            .
+          </p>
+        </div>
+      )}
     </section>
   );
 }
@@ -521,4 +568,3 @@ export default async function ProviderPage({ params }: { params: Promise<{ id: s
 function totalOf(failures: FailureBreakdownRow[]): number {
   return failures.reduce((s, f) => s + f.n, 0);
 }
-
