@@ -43,6 +43,7 @@ import {
   readI32LE,
   readPubkey,
   WSOL_MINT,
+  REVERSE_FANOUT_SPLIT,
   type PoolRpc,
 } from "./swapCommon.js";
 
@@ -133,7 +134,7 @@ export class OrcaSwapBuilder implements ScenarioBuilder {
     return [this.poolAddr];
   }
 
-  async build(ctx: BuildContext): Promise<BuiltTransaction> {
+  async build(ctx: BuildContext): Promise<BuiltTransaction | null> {
     const data = await this.rpc.getAccountData(this.poolAddr);
     if (data.length < WHIRLPOOL_MIN_SIZE) {
       throw new Error(`whirlpool account too short: ${data.length} bytes`);
@@ -149,12 +150,18 @@ export class OrcaSwapBuilder implements ScenarioBuilder {
     const ataB = await ata(ctx.payer.address, this.tokenB);
     const [sourceAta, sourceMint] = aToB ? [ataA, this.tokenA] : [ataB, this.tokenB];
 
-    // Native-SOL source swaps the fixed lamport amount (freshly wrapped below);
-    // a token source swaps its full balance (dump accumulated inventory).
+    // Native-SOL source swaps the fixed lamport amount (freshly wrapped below).
+    // A token source (reverse) swaps only balance / REVERSE_FANOUT_SPLIT, NOT the
+    // full balance: several vantages share this wallet, so a full-balance dump
+    // lets the first drain it and the rest revert with ZeroTradableAmount. The
+    // fractional slice keeps concurrent reverses independent + inventory bounded.
     const amount =
       sourceMint === WSOL_MINT
         ? BigInt(this.swapAmountLamports)
-        : await this.rpc.getTokenBalance(sourceAta);
+        : (await this.rpc.getTokenBalance(sourceAta)) / REVERSE_FANOUT_SPLIT;
+    // Integer division truncates: a drained/empty (or <SPLIT) counter-token
+    // balance yields 0 → skip rather than send a ZeroTradableAmount revert.
+    if (amount === 0n) return null;
 
     const oracle = await derivePda(this.program, [
       "oracle",

@@ -477,3 +477,22 @@ Published: scenario definitions, fixed CU limits (transfer 1,000 / raydium_swap
 limit** for signature uniqueness), monitored pool addresses, and
 the fact that every target is hit with the identical plain `sendTransaction` (no
 tips). Anyone can recompute every score.
+
+**Swap trade size.** Forward swaps trade a fixed **0.0002 SOL / equivalent**
+(`swapAmountLamports`). Reverse swaps trade **balance ÷ (2 × K)** of the
+accumulated counter-token (K = the vantage fan-out `VANTAGE_SAMPLE_SIZE` = 3, so
+÷6) — **not** the full balance: several vantages share one per-target wallet, so a
+full-balance dump lets the first vantage drain it and the rest revert
+(ZeroTradableAmount). The fractional slice keeps concurrent reverses independent
+and bounds inventory to the **~3×–6×** range of the per-swap forward output: with
+directions alternating 1:1 it oscillates between the post-reverse trough
+`X·(D − K)` ≈ 3× and the post-forward peak `X·D` ≈ 6× (`D = 6`, `K = 3`). A
+reverse whose slice rounds to 0 (drained/empty balance) is
+skipped rather than sent, so a target's forward/reverse sample mix can skew
+slightly toward forward during warmup or if its forwards are failing —
+negligible in steady state.
+
+**Cost.** The board's cost/tx = `base_fee (5,000) + priority_fee (µlamports/CU) ×
+CU_limit ÷ 1e6` lamports — Solana charges the priority fee on the compute-unit
+*limit* (`cu_requested`), not units consumed. Computed per (scenario, region)
+then averaged; no tips on the scored path, so this is the full per-tx cost.

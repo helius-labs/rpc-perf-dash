@@ -14,8 +14,8 @@ import {
   type SendTargetMetrics,
 } from "@rpcbench/shared/sendScoring";
 import { SEND_METHODOLOGY_VERSION, GEO_REGIONS, type GeoRegion } from "@rpcbench/shared";
-import { PROVIDERS, WORKER_PROVIDER_LABELS } from "@rpcbench/shared/providers";
-import { scenarioLabel } from "@/lib/sendLabels";
+import { WORKER_PROVIDER_LABELS } from "@rpcbench/shared/providers";
+import { scenarioLabel, targetLabel } from "@/lib/sendLabels";
 import { db } from "@/lib/db";
 import type { ChartSeries } from "@/lib/chartData";
 import type { ScoreSeries } from "@/lib/leaderboard";
@@ -69,7 +69,7 @@ interface AggRow {
   slot_latency_p50: number | null;
   slot_latency_p95: number | null;
   priority_fee_avg: string | null;
-  cu_used_avg: number | null;
+  cu_requested_avg: number | null;
 }
 
 /**
@@ -91,7 +91,7 @@ export const fetchSendBoard = unstable_cache(
         avg(slot_latency_p50)::float AS slot_latency_p50,
         avg(slot_latency_p95)::float AS slot_latency_p95,
         avg(priority_fee_avg)::bigint AS priority_fee_avg,
-        avg(cu_used_avg)::float AS cu_used_avg
+        avg(cu_requested_avg)::float AS cu_requested_avg
       FROM send_leaderboard_agg, latest
       WHERE grain = ${grain}
         AND methodology_version = ${SEND_METHODOLOGY_VERSION}
@@ -148,19 +148,48 @@ export const fetchSendBoard = unstable_cache(
     const metrics: SendTargetMetrics[] = [];
     const extras = new Map<string, Omit<SendBoardRow, "rank" | "total" | "reliability" | "latency">>();
     for (const [target, list] of byTarget) {
-      const n = list.length || 1;
-      const avg = (f: (r: AggRow) => number | null): number =>
-        list.reduce((s, r) => s + (f(r) ?? 0), 0) / n;
-      const landing = avg((r) => r.landing_rate);
+      // Mean over NON-NULL rows. slot_latency_p50/p95 come out NULL for any
+      // (geo, scenario) bucket where nothing landed (percentile over an empty
+      // set); counting those as 0 would score them as 0-slot latency — best
+      // possible — and that credit is anticorrelated with landing (a bucket that
+      // landed nothing would earn perfect latency). Filter, don't zero.
+      const avg = (f: (r: AggRow) => number | null): number | null => {
+        const vals = list.map(f).filter((v): v is number => v != null);
+        return vals.length ? vals.reduce((s, v) => s + v, 0) / vals.length : null;
+      };
+      // landing_rate is present whenever a row exists (0 for a no-land bucket), so
+      // its all-null case only means "no rows" → 0. slot p50/p95 stay null when
+      // nothing landed, so the scorer gives no latency credit (not 0 slots = best).
+      const landing = avg((r) => r.landing_rate) ?? 0;
       const l50 = avg((r) => r.slot_latency_p50);
       const l95 = avg((r) => r.slot_latency_p95);
-      const feeMicro = list[0]?.priority_fee_avg ? Number(list[0].priority_fee_avg) : null;
-      const cuAvg = avg((r) => r.cu_used_avg);
-      // lamports/tx = base fee + priority (µlamports/CU × CU ÷ 1e6). Tip TBD.
-      const cost =
-        feeMicro != null && cuAvg > 0
-          ? Math.round(BASE_FEE_LAMPORTS + (feeMicro * cuAvg) / 1_000_000)
+      // Cost per tx = base fee + priority (µlamports/CU × CU-limit ÷ 1e6). Compute
+      // it PER ROW then average — `list` spans scenarios with different CU limits
+      // AND different adaptive fees (the fee controller is per-scenario), so
+      // pairing one scenario's fee with the cross-scenario mean CU would
+      // misattribute the cost. Uses the CU *limit* (cu_requested — what Solana
+      // charges the priority fee on; cu_used isn't available from the polling
+      // confirm). ⚠️ Excludes tips: this is the full per-tx cost ONLY while no
+      // SEND_TARGET_CONFIGS entry sets a tip. tip_amount IS written to
+      // landing_tx_results but is NOT rolled up, so adding a tipped relay would
+      // silently understate this cost (and break "Cost has no winner") with no
+      // error — roll tip into the rollup + this formula if that changes.
+      const rowCost = (r: AggRow): number | null => {
+        const fee = r.priority_fee_avg != null ? Number(r.priority_fee_avg) : null;
+        return fee != null && r.cu_requested_avg != null && r.cu_requested_avg > 0
+          ? BASE_FEE_LAMPORTS + (fee * r.cu_requested_avg) / 1_000_000
           : null;
+      };
+      const costList = list.map(rowCost).filter((v): v is number => v != null);
+      const cost = costList.length
+        ? Math.round(costList.reduce((s, v) => s + v, 0) / costList.length)
+        : null;
+      // Display fee = mean priority fee across the target's rows, filtering nulls
+      // (avg() counts null rows as 0 and understates it — same fix as cost above).
+      const fees = list
+        .map((r) => (r.priority_fee_avg != null ? Number(r.priority_fee_avg) : null))
+        .filter((v): v is number => v != null);
+      const feeMicro = fees.length ? fees.reduce((s, v) => s + v, 0) / fees.length : null;
       metrics.push({
         send_target: target,
         landing_rate: landing,
@@ -176,10 +205,12 @@ export const fetchSendBoard = unstable_cache(
       }
       const per_geo: Record<string, SendGeoMetrics> = {};
       for (const [geo, glist] of byGeo) {
-        const gavg = (f: (r: AggRow) => number | null): number =>
-          glist.reduce((s, r) => s + (f(r) ?? 0), 0) / (glist.length || 1);
+        const gavg = (f: (r: AggRow) => number | null): number | null => {
+          const vals = glist.map(f).filter((v): v is number => v != null);
+          return vals.length ? vals.reduce((s, v) => s + v, 0) / vals.length : null;
+        };
         per_geo[geo] = {
-          landing_rate: gavg((r) => r.landing_rate),
+          landing_rate: gavg((r) => r.landing_rate) ?? 0,
           slot_latency_p50: gavg((r) => r.slot_latency_p50),
           slot_latency_p95: gavg((r) => r.slot_latency_p95),
         };
@@ -407,7 +438,7 @@ interface SendAggRawRow {
   slot_latency_p95: number | null;
   wall_latency_p50: number | null;
   wall_latency_p95: number | null;
-  cu_used_avg: number | null;
+  cu_requested_avg: number | null;
   priority_fee_avg: string | null;
 }
 
@@ -420,7 +451,7 @@ function meanOrNull(vals: (number | null)[]): number | null {
 /** Collapse a set of raw rows (over geo and/or worker_provider) into one cell. */
 function aggregateCell(rows: SendAggRawRow[]): SendCellValue {
   const feeMicro = meanOrNull(rows.map((r) => (r.priority_fee_avg != null ? Number(r.priority_fee_avg) : null)));
-  const cu = meanOrNull(rows.map((r) => r.cu_used_avg));
+  const cu = meanOrNull(rows.map((r) => r.cu_requested_avg));
   const cost =
     feeMicro != null && cu != null && cu > 0
       ? Math.round(BASE_FEE_LAMPORTS + (feeMicro * cu) / 1_000_000)
@@ -438,11 +469,6 @@ function aggregateCell(rows: SendAggRawRow[]): SendCellValue {
     cost,
     samples: rows.reduce((s, r) => s + r.sample_count_total, 0),
   };
-}
-
-/** Registry name for a send target id, else the raw id (component title-cases). */
-function targetName(id: string): string {
-  return PROVIDERS.find((p) => p.id === id)?.name ?? id;
 }
 
 
@@ -464,7 +490,7 @@ export const fetchSendTableData = unstable_cache(
              sample_count_total, landing_rate,
              slot_latency_p50, slot_latency_p95,
              wall_latency_p50, wall_latency_p95,
-             cu_used_avg, priority_fee_avg
+             cu_requested_avg, priority_fee_avg
       FROM send_leaderboard_agg, latest
       WHERE grain = ${grain}
         AND methodology_version = ${SEND_METHODOLOGY_VERSION}
@@ -516,7 +542,7 @@ export const fetchSendTableData = unstable_cache(
         ...wps.map((wp) => ({ id: wp, label: WORKER_PROVIDER_LABELS[wp] ?? wp })),
       ],
       targets: targetIds
-        .map((id) => ({ id, name: targetName(id) }))
+        .map((id) => ({ id, name: targetLabel(id) }))
         .sort((a, b) => a.name.localeCompare(b.name)),
     };
   },

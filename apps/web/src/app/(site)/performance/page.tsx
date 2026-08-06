@@ -20,7 +20,12 @@ import {
 import { PerfExplorer } from "@/components/PerfExplorer";
 import { LatencyChart } from "@/components/LatencyChart";
 import { SendMethodRegionTabs } from "@/components/SendMethodRegionTabs";
-import { fetchSendChart, fetchSendTableData } from "@/lib/sends";
+import { ScoreStrip } from "@/components/ScoreStrip";
+import { SendsShareButton } from "@/components/SendsShareButton";
+import type { MiniScoreRow } from "@/components/leaderboardShared";
+import { DEFAULT_SEND_WEIGHTS } from "@rpcbench/shared/sendScoring";
+import { targetLabel } from "@/lib/sendLabels";
+import { fetchSendChart, fetchSendTableData, fetchSendBoard } from "@/lib/sends";
 import { buildPerfSlice, type PerfSlice } from "@/lib/perfSlice";
 import {
   fetchActiveGeos,
@@ -270,11 +275,28 @@ async function LatencyTablePanel({
  * (<SendMethodRegionTabs>), with a metric selector (landing / slot / wall /
  * block / cost) in place of the RPC cold/warm toggle.
  */
+// 2-axis weight caption for the sends mini leaderboard (analogue of the RPC
+// ScoreStrip's 5-axis WEIGHT_SUMMARY).
+const SEND_WEIGHT_SUMMARY = `Reliability ${Math.round(DEFAULT_SEND_WEIGHTS.reliability * 100)}% · Latency ${Math.round(DEFAULT_SEND_WEIGHTS.latency * 100)}%`;
+
+/** Board rows (already scored + ranked server-side) → ScoreStrip mini rows. */
+function sendMiniRows(board: Awaited<ReturnType<typeof fetchSendBoard>>): MiniScoreRow[] {
+  return board
+    .slice()
+    .sort((a, b) => a.rank - b.rank)
+    .map((r) => ({ provider_id: r.send_target, provider_name: targetLabel(r.send_target), total: r.total }));
+}
+
 async function SendsPerfHero() {
   let chart: Awaited<ReturnType<typeof fetchSendChart>>;
   let table: Awaited<ReturnType<typeof fetchSendTableData>>;
+  let board: Awaited<ReturnType<typeof fetchSendBoard>>;
   try {
-    [chart, table] = await Promise.all([fetchSendChart("1h", 48), fetchSendTableData("1d")]);
+    [chart, table, board] = await Promise.all([
+      fetchSendChart("1h", 48),
+      fetchSendTableData("1d"),
+      fetchSendBoard("1d"),
+    ]);
   } catch (err) {
     console.error("[SendsPerfHero]", err);
     return (
@@ -285,14 +307,26 @@ async function SendsPerfHero() {
   }
   return (
     <div className="pt-1">
-      <header className="max-w-[820px] mb-6">
-        <h1 className="mb-0 text-[clamp(26px,4.5vw,40px)] font-semibold tracking-[-0.03em] leading-[1.05] text-fg">
-          Sends performance
-        </h1>
-        <p className="mt-3 text-[15px] leading-[1.6] text-fg2 max-w-[64ch]">
-          Landing latency and landing rate over time per send target. Same chart as the RPC
-          view — Latency plots wall-latency (ms), Score plots landing rate (%).
-        </p>
+      {/* Two-column header identical to the RPC perf page (PerfExplorer): title +
+          description on the left, the ranked send-target mini leaderboard
+          (ScoreStrip + Share, analogue of the RPC PerfScoreboard) in a fixed
+          right column — NOT full-width. */}
+      <header className="pt-1 flex flex-col lg:flex-row lg:items-start lg:justify-between gap-x-12 gap-y-6 mb-6">
+        <div className="max-w-[560px]">
+          <h1 className="text-[clamp(26px,4vw,38px)] font-semibold tracking-[-0.025em] leading-[1.08] mt-2 mb-0 text-fg">
+            Sends performance
+          </h1>
+          <p className="mt-3 text-[14.5px] leading-[1.6] text-fg2">
+            Landing latency and landing rate over time per send target. The chart&apos;s
+            Latency series plots wall-latency (ms); Score plots landing rate (%).
+          </p>
+        </div>
+        <div className="w-full lg:w-[360px] shrink-0 lg:pt-3">
+          <ScoreStrip rows={sendMiniRows(board)} ranked={board.length > 0} weightSummary={SEND_WEIGHT_SUMMARY} />
+          <div className="flex justify-end items-center gap-3 mt-3">
+            <SendsShareButton weights={DEFAULT_SEND_WEIGHTS} />
+          </div>
+        </div>
       </header>
       <LatencyChart series={chart.series} scoreSeries={chart.scoreSeries} windowHours={48} connectionMode="warm" />
       {table.targets.length > 0 && (

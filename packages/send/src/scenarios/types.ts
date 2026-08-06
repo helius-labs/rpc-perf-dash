@@ -30,7 +30,11 @@ export interface ScenarioBuilder {
   poolAddress(): string | null;
   /** Accounts whose contention this scenario cares about (pool address). */
   writeLockAccounts(): readonly string[];
-  build(ctx: BuildContext): Promise<BuiltTransaction>;
+  /** Build the tx, or `null` to skip this target for this tick — e.g. a reverse
+   *  swap whose input amount rounds to 0 (drained/empty counter-token balance),
+   *  which would otherwise revert with ZeroTradableAmount. The dispatcher drops
+   *  null builds before signing/sending. */
+  build(ctx: BuildContext): Promise<BuiltTransaction | null>;
 }
 
 /** Fixed CU base limits per scenario (a per-vantage nonce ≤4095 is added for

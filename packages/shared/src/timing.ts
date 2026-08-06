@@ -37,6 +37,16 @@ export const METHODOLOGY_VERSION = 4 as const;
  */
 export const SEND_METHODOLOGY_VERSION = 1 as const;
 
+/**
+ * K-sampling fan-out: how many vantages each challenge is assigned to. Lives here
+ * (not just in the generator) because the send swap builders derive their
+ * reverse-swap safety divisor (REVERSE_FANOUT_SPLIT) from it — that many vantages
+ * hit the SAME shared wallet concurrently, so the reverse trade size must divide
+ * the balance into more than this many independent slices. See
+ * docs/operations.md § K-sampling and packages/send swapCommon.ts.
+ */
+export const VANTAGE_SAMPLE_SIZE = 3 as const;
+
 export interface TimedResponse {
   latency_ms: number;
   http_status: number;

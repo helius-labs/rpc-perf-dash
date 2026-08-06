@@ -10,7 +10,8 @@
  */
 
 import { memo, useEffect, useMemo, useState } from "react";
-import { BENCHMARKED_PROVIDERS, PROVIDERS } from "@rpcbench/shared/providers";
+import { BENCHMARKED_PROVIDERS } from "@rpcbench/shared/providers";
+import { targetLabel } from "@/lib/sendLabels";
 import type { GeoRegion, Method } from "@rpcbench/shared";
 import type { ChartSeries } from "@/lib/chartData";
 import type { ScoreSeries } from "@/lib/leaderboard";
@@ -139,18 +140,6 @@ function formatMonthDay(d: Date, mounted: boolean): string {
   return mounted
     ? new Intl.DateTimeFormat([], { month: "2-digit", day: "2-digit" }).format(d)
     : `${(d.getUTCMonth() + 1).toString().padStart(2, "0")}/${d.getUTCDate().toString().padStart(2, "0")}`;
-}
-function providerName(id: string): string {
-  // Look up the FULL registry (not just BENCHMARKED_PROVIDERS) so send-only
-  // relays — which are `benchmarked: false` — resolve to their proper-cased name
-  // on the Sends chart instead of falling through to a lowercase id. Title-case
-  // fallback mirrors SendsLeaderboard's labelFor for any unknown id.
-  const p = PROVIDERS.find((row) => row.id === id);
-  if (p) return p.name;
-  return id
-    .split(/[-_]/)
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(" ");
 }
 
 export function LatencyChart({
@@ -492,7 +481,7 @@ export function LatencyChart({
           (visibleScoreSeries ?? []).flatMap((s) =>
             s.points.map((p) => [
               new Date(p.t).toISOString(),
-              providerName(s.provider_id),
+              targetLabel(s.provider_id),
               p.score.toFixed(2),
             ]),
           ),
@@ -503,7 +492,7 @@ export function LatencyChart({
         windowHours,
         series: (visibleScoreSeries ?? []).map((s) => ({
           provider_id: s.provider_id,
-          provider: providerName(s.provider_id),
+          provider: targetLabel(s.provider_id),
           points: s.points.map((p) => ({ t: new Date(p.t).toISOString(), score: p.score })),
         })),
       })}
@@ -518,7 +507,7 @@ export function LatencyChart({
           visibleSeries.flatMap((s) =>
             s.points.map((p) => [
               new Date(p.t).toISOString(),
-              providerName(s.provider_id),
+              targetLabel(s.provider_id),
               p.p50_ms,
               p.p95_ms,
             ]),
@@ -530,7 +519,7 @@ export function LatencyChart({
         windowHours,
         series: visibleSeries.map((s) => ({
           provider_id: s.provider_id,
-          provider: providerName(s.provider_id),
+          provider: targetLabel(s.provider_id),
           points: s.points.map((p) => ({
             t: new Date(p.t).toISOString(),
             p50_ms: p.p50_ms,
@@ -1122,7 +1111,7 @@ const LatencyChartCanvas = memo(function LatencyChartCanvas({
                   strokeWidth={2}
                 />
                 <text x={22} y={4} fill="#ddd" fontSize={11} fontFamily="system-ui, sans-serif">
-                  {providerName(s.provider_id)}
+                  {targetLabel(s.provider_id)}
                 </text>
               </g>
             ))}
@@ -1139,7 +1128,7 @@ const LatencyChartCanvas = memo(function LatencyChartCanvas({
             header={`${fmtMD(tipTime)} ${fmtHM(tipTime)}${mounted ? ` ${tzShort}` : ""}`}
             rows={hover.rows.map((r) => ({
               key: r.provider_id,
-              label: providerName(r.provider_id),
+              label: targetLabel(r.provider_id),
               value: fmtVal(r.p95_ms),
               color: colorFor(r.provider_id),
               emphasized: hover.nearestProviderId === r.provider_id,
@@ -1179,7 +1168,7 @@ const LatencyChartCanvas = memo(function LatencyChartCanvas({
                       alignSelf: "center",
                     }}
                   />
-                  <span style={{ fontSize: 11 }}>{providerName(r.provider_id)}</span>
+                  <span style={{ fontSize: 11 }}>{targetLabel(r.provider_id)}</span>
                   <span style={{ fontSize: 11, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", textAlign: "right" }}>
                     {fmtVal(r.p95_ms)}
                   </span>
@@ -1212,7 +1201,7 @@ const LatencyChartCanvas = memo(function LatencyChartCanvas({
                   borderRadius: 1,
                 }}
               />
-              {providerName(s.provider_id)}
+              {targetLabel(s.provider_id)}
             </span>
           ))}
         </div>

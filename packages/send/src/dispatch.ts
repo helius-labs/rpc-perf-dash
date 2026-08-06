@@ -80,9 +80,19 @@ export async function dispatchTick(
   // targets are distinguished by their own wallet). Distinguishes signatures
   // ACROSS vantages of the same challenge, which share a per-target wallet.
   const cuNonce = vantageCuNonce(p.vantage);
-  const prepared = await Promise.all(
+  const prepared = (await Promise.all(
     p.targets.map(async (dt) => {
       const built = await p.builder.build({ payer: dt.payer, direction: p.swapDirection });
+      // null = skip this target this tick (e.g. reverse swap with a drained/zero
+      // counter-token balance) — don't sign/send a ZeroTradableAmount revert.
+      // Log it: a persistent skip means a target's reverse never funds (warmup
+      // stuck / broken forward), which would otherwise vanish with no trace.
+      if (!built) {
+        console.warn(
+          `[send/dispatch] skip ${p.builder.name}/${p.swapDirection} → ${dt.target.name}: build returned null (drained/zero reverse balance)`,
+        );
+        return null;
+      }
       const tip = dt.target.tip;
       // The 7,500 nonce-advance overhead is NEVER added here — that's the
       // optional durable-nonce axis. cuNonce (≤4095) is folded into the limit
@@ -101,7 +111,7 @@ export async function dispatchTick(
       // Record the EFFECTIVE limit (base + nonce) so cu_requested is accurate.
       return { dt, base64, signature, tipAmount: BigInt(tip?.lamports ?? 0), cu: baseCu + cuNonce };
     }),
-  );
+  )).filter((x): x is NonNullable<typeof x> => x !== null);
 
   // 2. Register all pending rows BEFORE any send.
   await Promise.all(

@@ -486,7 +486,7 @@ Read-only against the DB. Independent of all other deploys.
 
 ## K-sampling (dispatch fan-out)
 
-Each challenge is dispatched to **K = 3** randomly-sampled active vantages (`VANTAGE_SAMPLE_SIZE` in `apps/generator/src/index.ts`), not to every active vantage. The full-fanout pattern overshoots worker claim throughput ~3x — excess assignments expire unclaimed and produce no samples.
+Each challenge is dispatched to **K = 3** randomly-sampled active vantages (`VANTAGE_SAMPLE_SIZE` in `packages/shared/src/timing.ts`), not to every active vantage. The full-fanout pattern overshoots worker claim throughput ~3x — excess assignments expire unclaimed and produce no samples. K=3 sizes the dispatch to the claim rate: **45 combos/tick × 3 = 135 assignments/tick = ~270/min against the ~450/min worker claim rate**, with headroom for slow lanes.
 
 Why this is safe operationally:
 - Per (provider × method × region × 4h): ~20-300x the eligibility floor (50 samples).

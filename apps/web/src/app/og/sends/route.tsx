@@ -20,7 +20,7 @@ import {
 import { fetchSendBoard } from "@/lib/sends";
 import { apiPath } from "@/lib/basePath";
 import { brandColorFor, colorFor, logoFor } from "@/lib/providerColors";
-import { PROVIDERS } from "@rpcbench/shared/providers";
+import { targetLabel } from "@/lib/sendLabels";
 import { siteDisplayHost } from "@/lib/siteUrl";
 import { LeaderboardCard, type CardRow } from "../og-card";
 
@@ -91,8 +91,9 @@ export async function GET(req: Request) {
   const metrics: SendTargetMetrics[] = board.map((r) => ({
     send_target: r.send_target,
     landing_rate: r.landing_rate,
-    slot_latency_p50: r.slot_latency_p50 ?? 0,
-    slot_latency_p95: r.slot_latency_p95 ?? 0,
+    // null (nothing landed) passes through — no latency credit, not 0 slots.
+    slot_latency_p50: r.slot_latency_p50,
+    slot_latency_p95: r.slot_latency_p95,
   }));
   const scored = new Map(scoreSends(metrics, weights).map((s) => [s.send_target, s]));
   const ranked = board
@@ -103,9 +104,7 @@ export async function GET(req: Request) {
   const cardRows: CardRow[] = await Promise.all(
     ranked.map(async ({ r, total }) => {
       const slot = r.slot_latency_p50 == null ? "—" : `${Math.round(r.slot_latency_p50)} slot`;
-      const name =
-        PROVIDERS.find((p) => p.id === r.send_target)?.name ??
-        r.send_target.charAt(0).toUpperCase() + r.send_target.slice(1);
+      const name = targetLabel(r.send_target);
       return {
         provider_id: r.send_target,
         provider_name: name,

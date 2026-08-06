@@ -49,6 +49,7 @@ export function ScoreStrip({
   ranked,
   methodCount = 1,
   loading = false,
+  weightSummary = WEIGHT_SUMMARY,
 }: {
   rows: MiniScoreRow[];
   ranked: boolean;
@@ -58,6 +59,9 @@ export function ScoreStrip({
    *  (row count taken from the last data, or a sensible default) — so switching
    *  filters doesn't blank the whole leaderboard. */
   loading?: boolean;
+  /** The weight-breakdown caption. Defaults to the RPC 5-axis weights; the sends
+   *  board passes its own 2-axis summary. */
+  weightSummary?: string;
 }) {
   if (loading) {
     // Skeleton over the retained rows (or a fallback on first load) using the
@@ -109,7 +113,7 @@ export function ScoreStrip({
         </ol>
         <p className="mt-2 font-geistmono text-[9px] uppercase tracking-[0.08em] text-muted leading-snug">
           {methodCount > 1 ? `Blended across ${methodCount} methods · ` : ""}
-          {WEIGHT_SUMMARY}
+          {weightSummary}
         </p>
       </div>
     );
@@ -178,7 +182,7 @@ export function ScoreStrip({
       </ol>
       <p className="mt-2 font-geistmono text-[9px] uppercase tracking-[0.08em] text-muted leading-snug">
         {methodCount > 1 ? `Blended across ${methodCount} methods · ` : ""}
-        {WEIGHT_SUMMARY}
+        {weightSummary}
       </p>
     </div>
   );

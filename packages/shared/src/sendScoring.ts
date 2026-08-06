@@ -32,8 +32,10 @@ export interface SendTargetMetrics {
   send_target: string;
   /** landed / (landed + reverted + not_landed + submit_error), 0..1. */
   landing_rate: number;
-  slot_latency_p50: number;
-  slot_latency_p95: number;
+  /** null = nothing landed in-window (no latency to measure). Scored as 0 latency
+   *  credit — NOT 0 slots, which would read as the fastest possible. */
+  slot_latency_p50: number | null;
+  slot_latency_p95: number | null;
 }
 
 export interface ScoredSendTarget {
@@ -49,17 +51,27 @@ export function scoreSends(
 ): ScoredSendTarget[] {
   if (metrics.length === 0) return [];
 
-  const best_l50 = Math.min(...metrics.map((m) => Math.max(1, m.slot_latency_p50)));
-  const best_l95 = Math.min(...metrics.map((m) => Math.max(1, m.slot_latency_p95)));
+  // `best` is over targets that actually landed something (non-null latency) —
+  // a null-latency target must NOT define the best (it would peg best to 1 and
+  // deflate everyone), nor earn latency credit.
+  const withLat = metrics.filter(
+    (m): m is SendTargetMetrics & { slot_latency_p50: number; slot_latency_p95: number } =>
+      m.slot_latency_p50 != null && m.slot_latency_p95 != null,
+  );
+  const best_l50 = withLat.length ? Math.min(...withLat.map((m) => Math.max(1, m.slot_latency_p50))) : 1;
+  const best_l95 = withLat.length ? Math.min(...withLat.map((m) => Math.max(1, m.slot_latency_p95))) : 1;
 
   const wSum = weights.reliability + weights.latency;
   const norm = wSum > 0 ? wSum : 1;
 
   return metrics.map((m) => {
     const R = clamp(m.landing_rate * 100, 0, 100);
+    // No latency data (nothing landed in-window) → 0 latency credit, not best.
     const L =
-      0.5 * clamp((best_l50 / Math.max(1, m.slot_latency_p50)) * 100, 0, 100) +
-      0.5 * clamp((best_l95 / Math.max(1, m.slot_latency_p95)) * 100, 0, 100);
+      m.slot_latency_p50 == null || m.slot_latency_p95 == null
+        ? 0
+        : 0.5 * clamp((best_l50 / Math.max(1, m.slot_latency_p50)) * 100, 0, 100) +
+          0.5 * clamp((best_l95 / Math.max(1, m.slot_latency_p95)) * 100, 0, 100);
     const total = (weights.reliability * R + weights.latency * L) / norm;
     return { send_target: m.send_target, total, reliability: R, latency: L };
   });
