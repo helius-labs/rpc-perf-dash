@@ -17,6 +17,8 @@ import { GEO_REGIONS, GEO_REGION_LABELS, type GeoRegion } from "@rpcbench/shared
 import { brandColorFor, colorFor } from "@/lib/providerColors";
 import { usePopover } from "@/lib/usePopover";
 import { scenarioLabel } from "@/lib/sendLabels";
+import { ExportButtons } from "./ExportButtons";
+import { toCSV } from "@/lib/exportData";
 import type {
   SendBreakdownRow,
   SendCellValue,
@@ -42,16 +44,24 @@ interface MetricDef {
   label: string;
   pct: boolean;
   max: boolean;
+  /** Whether a per-row winner is accented. Cost is identical across all targets
+   *  in a scenario (uniform priority fee + fixed CU limit), so it has no winner —
+   *  highlighting one would be arbitrary/misleading. */
+  winner: boolean;
   /** Pull the scalar for this metric + percentile out of a cell. */
   pick: (c: SendCellValue, p: "p50" | "p95") => number | null;
   /** Render the scalar with its unit (value already non-null). */
   fmt: (v: number) => string;
+  /** Value at DISPLAY precision, used for the winner test + bar so cells that
+   *  render identically (e.g. two "4 sl") tie together instead of splitting on
+   *  hidden sub-unit precision. */
+  cmp: (v: number) => number;
 }
 const METRICS: MetricDef[] = [
-  { id: "landing", label: "Landing rate", pct: false, max: true, pick: (c) => (c.landing == null ? null : c.landing * 100), fmt: (v) => v.toFixed(1) + "%" },
-  { id: "slot", label: "Slot latency", pct: true, max: false, pick: (c, p) => c.slot[p], fmt: (v) => Math.round(v) + " sl" },
-  { id: "wall", label: "Wall latency", pct: true, max: false, pick: (c, p) => c.wall[p], fmt: (v) => Math.round(v) + " ms" },
-  { id: "cost", label: "Cost", pct: false, max: false, pick: (c) => c.cost, fmt: (v) => Math.round(v).toLocaleString() + " lam" },
+  { id: "landing", label: "Landing rate", pct: false, max: true, winner: true, pick: (c) => (c.landing == null ? null : c.landing * 100), fmt: (v) => v.toFixed(1) + "%", cmp: (v) => Math.round(v * 10) / 10 },
+  { id: "slot", label: "Slot latency", pct: true, max: false, winner: true, pick: (c, p) => c.slot[p], fmt: (v) => Math.round(v) + " sl", cmp: (v) => Math.round(v) },
+  { id: "wall", label: "Wall latency", pct: true, max: false, winner: true, pick: (c, p) => c.wall[p], fmt: (v) => Math.round(v) + " ms", cmp: (v) => Math.round(v) },
+  { id: "cost", label: "Cost", pct: false, max: false, winner: false, pick: (c) => c.cost, fmt: (v) => Math.round(v).toLocaleString() + " lam", cmp: (v) => Math.round(v) },
 ];
 
 function dotColor(id: string): string {
@@ -225,7 +235,8 @@ function TargetDropdown({
 }
 
 /** The target `<td>`s for one row — winner accent flips by metric direction
- *  (max for landing, min for latency/cost). Bar length = value / (max·1.1)
+ *  (max for landing, min for the latencies; cost has no winner — it's uniform
+ *  across targets). Bar length = value / (max·1.1)
  *  uniformly (same as the RPC table: worst/longest for lower-is-better). */
 function RowCells({
   row,
@@ -244,15 +255,21 @@ function RowCells({
     const c = row.values[id];
     return c ? metric.pick(c, percentile) : null;
   };
-  const vals = targets.map((p) => cell(p.id)).filter((v): v is number => v != null);
+  // Winner + bar run on DISPLAY-rounded values (metric.cmp) so cells that render
+  // the same tie together (e.g. two "4 sl"), and the bar tracks what's shown.
+  const vals = targets
+    .map((p) => cell(p.id))
+    .filter((v): v is number => v != null)
+    .map(metric.cmp);
   const min = vals.length ? Math.min(...vals) : 0;
   const max = vals.length ? Math.max(...vals) : 0;
   const best = metric.max ? max : min;
   return (
     <>
       {targets.map((p) => {
-        const v = cell(p.id);
-        const isBest = v != null && v === best && vals.length > 1;
+        const raw = cell(p.id);
+        const v = raw == null ? null : metric.cmp(raw);
+        const isBest = metric.winner && v != null && v === best && vals.length > 1;
         const pct = v != null && max > 0 ? Math.max(6, (v / (max * 1.1)) * 100) : 0;
         return (
           <td
@@ -466,6 +483,33 @@ export function SendMethodRegionTabs({
               By region
             </button>
           </div>
+          {/* Export the current view — CSV / JSON, same control as the RPC table. */}
+          <ExportButtons
+            filename={`sends-by-${tab}${tab === "region" ? "-" + regionScenario : ""}-${metricId}${metric.pct ? "-" + percentile : ""}`}
+            buildCsv={() =>
+              toCSV(
+                [firstCol, ...shownTargets.map((p) => p.name)],
+                rows.map((r) => [
+                  r.label,
+                  ...shownTargets.map((p) => {
+                    const c = r.values[p.id];
+                    return c ? metric.pick(c, percentile) : null;
+                  }),
+                ]),
+              )
+            }
+            buildJson={() => ({
+              dimension: tab,
+              // By-region rows are sliced to one scenario — record it so the export
+              // is attributable (the rows themselves don't carry the scenario).
+              scenario: tab === "region" ? regionScenario : undefined,
+              metric: metricId,
+              percentile: metric.pct ? percentile : undefined,
+              infra: tableInfra,
+              targets: shownTargets.map((p) => ({ id: p.id, name: p.name })),
+              rows: rows.map((r) => ({ key: r.key, label: r.label, values: r.values })),
+            })}
+          />
         </div>
       </div>
 

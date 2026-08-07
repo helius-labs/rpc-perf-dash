@@ -5,9 +5,8 @@
  * settled record, not a streaming consensus fill like read challenges.
  */
 
-import { PROVIDERS } from "@rpcbench/shared/providers";
 import { colorFor } from "@/lib/providerColors";
-import { scenarioLabel } from "@/lib/sendLabels";
+import { scenarioLabel, targetLabel } from "@/lib/sendLabels";
 import { SEND_OUTCOME_OPTIONS } from "@/lib/challengeFilters";
 import type { SendTxnRow as Row } from "@/lib/sendTxns";
 
@@ -17,15 +16,6 @@ const OUTCOME_COLOR: Record<string, string> = {
   not_landed: "#f08080",
   submit_error: "#e0803f",
 };
-
-function targetName(id: string): string {
-  const p = PROVIDERS.find((row) => row.id === id);
-  if (p) return p.name;
-  return id
-    .split(/[-_]/)
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(" ");
-}
 
 function outcomeLabel(o: string): string {
   return SEND_OUTCOME_OPTIONS.find((x) => x.value === o)?.label ?? o;
@@ -99,7 +89,7 @@ export function SendTxnsTable({ rows, emptyText }: { rows: Row[]; emptyText: str
                     className="inline-block w-[7px] h-[7px] rounded-full shrink-0"
                     style={{ background: colorFor(r.send_target) }}
                   />
-                  <span className="text-[13px]">{targetName(r.send_target)}</span>
+                  <span className="text-[13px]">{targetLabel(r.send_target)}</span>
                 </span>
               </td>
               <td className="text-[13px] text-fg2">{scenarioLabel(r.scenario)}</td>

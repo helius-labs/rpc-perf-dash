@@ -31,14 +31,33 @@ import {
 } from "@solana-program/token";
 import { getTransferSolInstruction } from "@solana-program/system";
 import { lamports } from "@solana/kit";
+import { VANTAGE_SAMPLE_SIZE } from "@rpcbench/shared";
 
 /** Native SOL mint (wrapped SOL). */
 export const WSOL_MINT = "So11111111111111111111111111111111111111112";
 
 /**
+ * Reverse-swap fan-out divisor. Up to VANTAGE_SAMPLE_SIZE (3) vantages fan a
+ * single send challenge onto the SAME shared per-(target × scenario) wallet. A
+ * forward swap wraps its own fresh SOL, so concurrent forwards are independent
+ * and all land. A reverse swap that dumped the wallet's FULL counter-token
+ * balance, however, lets whichever vantage lands first drain it to zero — the
+ * others then revert with ZeroTradableAmount (Orca 0x1793 / Raydium). Instead
+ * each reverse swaps `balance / this`, so N concurrent slices always fit
+ * (N < this), nothing drains, and inventory oscillates 1:1 between the
+ * post-reverse trough X·(D − N) (~3× here) and the post-forward peak X·D (~6×
+ * here) — bounded, a fraction of a cent (D=this, N=fan-out, X=per-swap output).
+ * Derived as 2× the fan-out (VANTAGE_SAMPLE_SIZE) so it MUST exceed the max
+ * concurrent vantages per challenge automatically — raising K can't silently
+ * reintroduce the drain.
+ */
+export const REVERSE_FANOUT_SPLIT = 2n * BigInt(VANTAGE_SAMPLE_SIZE);
+
+/**
  * Minimal on-chain read surface the swap builders need to resolve pool state.
- * Raydium reads a token balance (full-balance reverse swaps); Orca additionally
- * reads the whirlpool account to derive price-dependent tick arrays each build.
+ * Raydium reads a token balance (reverse swaps a REVERSE_FANOUT_SPLIT fraction of
+ * it); Orca additionally reads the whirlpool account to derive price-dependent
+ * tick arrays each build.
  */
 export interface PoolRpc {
   /** Raw account data bytes (throws if the account doesn't exist). */

@@ -199,8 +199,10 @@ export function SendsBoard({ rows }: { rows: SendBoardRow[] }) {
     const metrics: SendTargetMetrics[] = blended.map((r) => ({
       send_target: r.send_target,
       landing_rate: r.landing_rate,
-      slot_latency_p50: r.slot_latency_p50 ?? 0,
-      slot_latency_p95: r.slot_latency_p95 ?? 0,
+      // Pass null (nothing landed) through — the scorer gives it no latency
+      // credit; coercing to 0 would read as the fastest possible slot.
+      slot_latency_p50: r.slot_latency_p50,
+      slot_latency_p95: r.slot_latency_p95,
     }));
     const byTarget = new Map(scoreSends(metrics, weights).map((s) => [s.send_target, s]));
     return blended

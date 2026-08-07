@@ -3,6 +3,7 @@
 import Link from "next/link";
 import type { Route } from "next";
 import { usePathname, useSearchParams } from "next/navigation";
+import { createPortal } from "react-dom";
 import { Suspense, useEffect, useRef, useState } from "react";
 import { NAV_ITEMS, isActive, isGroup, isGroupActive, type NavGroup } from "./navItems";
 
@@ -33,10 +34,11 @@ export default function NavLinks() {
       {NAV_ITEMS.filter((item) => isGroup(item) || item.href !== "/status").map((item) => {
         if (isGroup(item))
           return (
-            // NavDropdown reads useSearchParams() (?board=); a Suspense boundary
-            // keeps that from bailing every statically-prerendered page out of
-            // static generation. Fallback keeps the group label linked in the
-            // static HTML (hydrates to the full dropdown on the client).
+            // NavDropdown reads useSearchParams(); the Suspense boundary lets the
+            // otherwise-static pages (/sends, /changelog, /api-reference) keep
+            // static rendering instead of bailing out. Fallback keeps the group
+            // label linked in the SSR HTML. (The menu's position is fixed by the
+            // portal in NavDropdown, independent of this boundary.)
             <Suspense
               key={item.label}
               fallback={
@@ -124,33 +126,38 @@ function NavDropdown({ group, pathname }: { group: NavGroup; pathname: string })
           <path d="m6 9 6 6 6-6" />
         </svg>
       </Link>
-      {/* position:fixed at the trigger's coords — escapes the .nav-links
-          overflow:hidden clip. Hovering the menu keeps it open (cancels close). */}
-      {open && pos && (
-        <div
-          className="nav-drop-menu"
-          style={{ position: "fixed", top: pos.top, left: pos.left, zIndex: 60 }}
-          role="menu"
-          onMouseEnter={openMenu}
-          onMouseLeave={scheduleClose}
-        >
-          {group.children.map((c) => {
-            const cActive = childActive(c.href, pathname, board);
-            return (
-              <Link
-                key={c.href}
-                href={c.href as Route}
-                role="menuitem"
-                onClick={() => setOpen(false)}
-                aria-current={cActive ? "page" : undefined}
-                className={cActive ? "is-active" : undefined}
-              >
-                {c.label}
-              </Link>
-            );
-          })}
-        </div>
-      )}
+      {/* Portaled to <body>: position:fixed at the trigger's viewport coords. The
+          site header has backdrop-blur (backdrop-filter), which establishes a
+          containing block for fixed descendants — rendered inline, the menu would
+          be offset by the header's centered/padded box. The portal escapes that
+          AND the .nav-links overflow clip. Hovering the menu keeps it open. */}
+      {open && pos && typeof document !== "undefined" &&
+        createPortal(
+          <div
+            className="nav-drop-menu"
+            style={{ position: "fixed", top: pos.top, left: pos.left, zIndex: 60 }}
+            role="menu"
+            onMouseEnter={openMenu}
+            onMouseLeave={scheduleClose}
+          >
+            {group.children.map((c) => {
+              const cActive = childActive(c.href, pathname, board);
+              return (
+                <Link
+                  key={c.href}
+                  href={c.href as Route}
+                  role="menuitem"
+                  onClick={() => setOpen(false)}
+                  aria-current={cActive ? "page" : undefined}
+                  className={cActive ? "is-active" : undefined}
+                >
+                  {c.label}
+                </Link>
+              );
+            })}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

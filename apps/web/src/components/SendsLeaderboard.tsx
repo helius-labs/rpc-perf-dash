@@ -19,24 +19,14 @@ import {
 } from "@/components/leaderboardShared";
 import { FloatingTooltip } from "@/components/FloatingTooltip";
 import {
-  PROVIDERS,
   benchmarkedProviderByRouteParam,
   slugForProviderId,
   websiteForProviderId,
 } from "@rpcbench/shared/providers";
+import { targetLabel } from "@/lib/sendLabels";
 import type { SendBoardRow } from "@/lib/sends";
 
 const fmt = (v: number | null): string => (v == null ? "—" : Math.round(v).toLocaleString());
-
-/** Display name — the registry name (proper casing), else title-cased id. */
-function labelFor(id: string): string {
-  const p = PROVIDERS.find((row) => row.id === id);
-  if (p) return p.name;
-  return id
-    .split(/[-_]/)
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(" ");
-}
 
 /** One labeled cell in the expanded detail strip (RPC idx-ds style). */
 function DS({ label, children }: { label: string; children: React.ReactNode }) {
@@ -91,7 +81,7 @@ function Row({ r, index, isOpen, toggle }: { r: SendBoardRow; index: number; isO
           {String(index + 1).padStart(2, "0")}
         </span>
         <span className="idx-name" style={leaderColor ? { color: leaderColor } : undefined}>
-          {labelFor(r.send_target)}
+          {targetLabel(r.send_target)}
         </span>
         <span className="idx-rowstats">
           {failed > 0 ? (
@@ -126,8 +116,8 @@ function Row({ r, index, isOpen, toggle }: { r: SendBoardRow; index: number; isO
               target="_blank"
               rel="noopener nofollow"
               className="idx-website"
-              aria-label={`Visit ${labelFor(r.send_target)}'s website`}
-              title={`Visit ${labelFor(r.send_target)}'s website`}
+              aria-label={`Visit ${targetLabel(r.send_target)}'s website`}
+              title={`Visit ${targetLabel(r.send_target)}'s website`}
               onClick={(e) => e.stopPropagation()}
             >
               <svg viewBox="0 0 24 24" width="100%" height="100%" aria-hidden="true">
@@ -143,7 +133,7 @@ function Row({ r, index, isOpen, toggle }: { r: SendBoardRow; index: number; isO
             <Link
               href={`/provider/${slugForProviderId(r.send_target)}` as Route}
               className="idx-arrow"
-              aria-label={`Open ${labelFor(r.send_target)} details page`}
+              aria-label={`Open ${targetLabel(r.send_target)} details page`}
               onClick={(e) => e.stopPropagation()}
             >
               <svg viewBox="0 0 24 24" width="100%" height="100%" aria-hidden="true">

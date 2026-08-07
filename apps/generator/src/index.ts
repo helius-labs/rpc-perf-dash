@@ -36,7 +36,7 @@ import {
   runFundingTick,
   createSolanaRpc,
 } from "@rpcbench/send";
-import { SEND_TARGET_CONFIGS, type Scenario } from "@rpcbench/shared";
+import { SEND_TARGET_CONFIGS, VANTAGE_SAMPLE_SIZE, type Scenario } from "@rpcbench/shared";
 import { ensureProvidersSeeded } from "./seed-providers.js";
 import {
   ROLLUP_INTERVAL_MS,
@@ -53,28 +53,10 @@ const TICK_INTERVAL_MS = 30_000;
 // tick fires.
 const TICK_TIMEOUT_MS = 25_000;
 
-/**
- * How many vantages each challenge is dispatched to. Dispatching to every
- * active vantage overshoots worker claim throughput by ~3x — the excess
- * assignments expire unclaimed, never producing samples. K=3 matches dispatch
- * (45 combos/tick × 3 = 135/tick = 270/min) under the ~450/min worker claim
- * rate with headroom for slow lanes.
- *
- * If |active vantages| < K, every vantage is selected (sampling is min(K, N)).
- *
- * Tradeoffs:
- *   - Each challenge is sampled by a smaller fraction of the fleet, so per-
- *     challenge cross-vantage win-rate has higher variance. Pooled long-
- *     window win-rate is unaffected (every vantage is sampled in
- *     expectation).
- *   - Per-(provider × method × region × 4h) sample count drops ~5x, still
- *     ~20-300x the eligibility floor.
- *   - Slow lanes (CF/lax) still mildly over capacity at K=3 uniform;
- *     weighted K-sampling would close the residual.
- *
- * See docs/operations.md § K-sampling for the deeper rationale.
- */
-const VANTAGE_SAMPLE_SIZE = 3;
+// Dispatch fan-out K=3 (VANTAGE_SAMPLE_SIZE) is defined in @rpcbench/shared
+// (timing.ts, imported above) — shared so the send swap builders derive their
+// reverse-swap safety divisor from the same value. Rationale + tradeoffs:
+// docs/operations.md § K-sampling.
 
 /**
  * Skip a tick entirely if the unclaimed-assignment backlog is above this
