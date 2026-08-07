@@ -13,4 +13,5 @@ export * from "./scenarios/index.js";
 export * from "./targets/index.js";
 export * from "./nonce.js";
 export * from "./wallets.js";
+export * from "./harvest.js";
 export * from "./dispatch.js";
