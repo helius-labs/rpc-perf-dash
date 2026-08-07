@@ -68,6 +68,14 @@ export class GeneratorStack extends Stack {
         SEND_TICK_INTERVAL_MS: process.env.SEND_TICK_INTERVAL_MS ?? "300000",
         SEND_MIN_BALANCE_LAMPORTS: process.env.SEND_MIN_BALANCE_LAMPORTS ?? "10000000",
         SEND_TOPUP_LAMPORTS: process.env.SEND_TOPUP_LAMPORTS ?? "20000000",
+        // Harvest / SOL recovery (only active when SENDS_ENABLED). Unwraps accumulated
+        // WSOL → native to stop the master burn; sweeps genuine excess + orphans back to
+        // the master. See docs/operations.md § Harvest / SOL recovery.
+        HARVEST_ENABLED: process.env.HARVEST_ENABLED ?? "true",
+        HARVEST_INTERVAL_MS: process.env.HARVEST_INTERVAL_MS ?? "3600000",
+        HARVEST_MIN_WSOL_LAMPORTS: process.env.HARVEST_MIN_WSOL_LAMPORTS ?? "2000000",
+        HARVEST_ACTIVE_FLOOR_LAMPORTS: process.env.HARVEST_ACTIVE_FLOOR_LAMPORTS ?? "30000000",
+        HARVEST_SWEEP_CEILING_LAMPORTS: process.env.HARVEST_SWEEP_CEILING_LAMPORTS ?? "50000000",
       },
       secrets,
     });

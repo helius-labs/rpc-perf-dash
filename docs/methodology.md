@@ -490,7 +490,11 @@ directions alternating 1:1 it oscillates between the post-reverse trough
 reverse whose slice rounds to 0 (drained/empty balance) is
 skipped rather than sent, so a target's forward/reverse sample mix can skew
 slightly toward forward during warmup or if its forwards are failing —
-negligible in steady state.
+negligible in steady state. Because reverses leave that counter-token as WSOL that
+never returns to native, a generator-side **harvest** job periodically closes each
+wallet's WSOL ATA (unwrapping it back to native in place) to close the inventory
+loop and keep the master's funding outflow from growing unbounded (see
+`docs/operations.md` § Harvest / SOL recovery).
 
 **Cost.** The board's cost/tx = `base_fee (5,000) + priority_fee (µlamports/CU) ×
 CU_limit ÷ 1e6` lamports — Solana charges the priority fee on the compute-unit

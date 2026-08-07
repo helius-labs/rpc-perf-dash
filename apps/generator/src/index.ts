@@ -33,7 +33,13 @@ import { runSendRollup5m, runSendHeavyRollups, runSendLeaderboard } from "./send
 import {
   KeyRegistry,
   loadMasterFromEnv,
+  loadSendWallets,
+  loadExistingPayers,
+  sendTargetOf,
   runFundingTick,
+  runHarvestTick,
+  harvestBeatAgeMs,
+  heartbeatHarvest,
   createSolanaRpc,
 } from "@rpcbench/send";
 import { SEND_TARGET_CONFIGS, VANTAGE_SAMPLE_SIZE, type Scenario } from "@rpcbench/shared";
@@ -44,6 +50,21 @@ import {
   runLeaderboardPrecompute,
   runRollup5m,
 } from "./rollup.js";
+
+/** Parse a lamports env var as bigint, falling back to `dflt` on empty/invalid. `BigInt`
+ *  throws on a non-integer string (`"2_000_000"`, `"0.002"`) — at module scope that would
+ *  crashloop the generator — and silently returns `0n` for `""`, which would (e.g.) make
+ *  HARVEST_MIN_WSOL_LAMPORTS close every ATA every tick. Guard both. */
+function bigintEnv(name: string, dflt: bigint): bigint {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === "") return dflt;
+  try {
+    return BigInt(raw);
+  } catch {
+    console.warn(`[send] ${name}="${raw}" is not an integer; using default ${dflt}`);
+    return dflt;
+  }
+}
 
 const VANTAGE_FRESHNESS_S = 60;
 const TICK_INTERVAL_MS = 30_000;
@@ -905,7 +926,13 @@ async function main() {
     // Send tick is DECOUPLED from the 30s read cadence: every send pays real
     // relay tips, so frequency drives SOL burn. Default 5min (was 30s); tune via
     // SEND_TICK_INTERVAL_MS. (Observatory reference: 1800s.)
-    const sendTickMs = Math.max(30_000, Number(process.env.SEND_TICK_INTERVAL_MS ?? 300_000));
+    // Guard against a non-numeric/empty env ("5m" → NaN, "" → 0 → both would floor to the
+    // minimum cadence, not the intended default). Require a finite positive number.
+    const sendTickRaw = Number(process.env.SEND_TICK_INTERVAL_MS);
+    const sendTickMs = Math.max(30_000, Number.isFinite(sendTickRaw) && sendTickRaw > 0 ? sendTickRaw : 300_000);
+    // The funding floor — read by funding (top-up threshold) AND harvest (asserts its
+    // sweep float stays ≥ this so a swept wallet never re-enters the top-up band).
+    const sendMinBalanceLamports = bigintEnv("SEND_MIN_BALANCE_LAMPORTS", 10_000_000n);
     console.log(`[send] enabled; scenarios=${sendScenarios.join(",")} tick=${sendTickMs}ms`);
 
     // Wallet funding (leader-only). Creates + tops up per-(target × scenario)
@@ -921,19 +948,10 @@ async function main() {
           process.env.SEND_FUNDING_RPC_URL ?? process.env.UTILITY_RPC_URL ?? "",
         );
         const registry = new KeyRegistry(db);
-        const wallets: { name: string; signer: Awaited<ReturnType<KeyRegistry["loadOrCreate"]>> }[] = [];
-        for (const cfg of SEND_TARGET_CONFIGS) {
-          for (const scenario of sendScenarios) {
-            const name = `${cfg.name}:${scenario}`;
-            wallets.push({
-              name,
-              signer: await registry.loadOrCreate(name, "payer", { scenario, sendTarget: cfg.name }),
-            });
-          }
-        }
+        const wallets = await loadSendWallets(registry, sendScenarios);
         await runFundingTick(db, rpc, master, wallets, {
-          minBalanceLamports: BigInt(process.env.SEND_MIN_BALANCE_LAMPORTS ?? "10000000"),
-          topupLamports: BigInt(process.env.SEND_TOPUP_LAMPORTS ?? "20000000"),
+          minBalanceLamports: sendMinBalanceLamports,
+          topupLamports: bigintEnv("SEND_TOPUP_LAMPORTS", 20_000_000n),
           region: process.env.WORKER_REGION ?? "generator",
         });
       } catch (err) {
@@ -944,6 +962,96 @@ async function main() {
     };
     setInterval(() => void runFunding(), 300_000);
     void runFunding();
+
+    // Wallet harvest (leader-only). Loads the EXISTING payer wallets from the DB and
+    // unwraps accumulated WSOL → native for still-configured targets (in place — stops the
+    // master burn by cutting funding top-ups); drains wallets of retired targets to the
+    // master. NOT gated by SEND_SCENARIOS (that only gates what we SEND — a scenario
+    // disabled this deploy still holds WSOL to reclaim), so it processes every payer row,
+    // not just this deploy's active send set. Best-effort; every on-chain step is
+    // confirmation-gated. See docs/operations.md § Harvest / SOL recovery.
+    if ((process.env.HARVEST_ENABLED ?? "true") === "true") {
+      // Guard against a non-numeric/empty env (NaN → setInterval ~1ms → runaway harvest;
+      // "" → 0 → floors to 5min not the 1h default). Require a finite positive number.
+      const harvestRaw = Number(process.env.HARVEST_INTERVAL_MS);
+      const harvestMs = Math.max(300_000, Number.isFinite(harvestRaw) && harvestRaw > 0 ? harvestRaw : 3_600_000);
+      // Thresholds parsed once. `rosterTargets` is the still-configured send targets.
+      const minWsol = bigintEnv("HARVEST_MIN_WSOL_LAMPORTS", 2_000_000n);
+      const activeFloor = bigintEnv("HARVEST_ACTIVE_FLOOR_LAMPORTS", 30_000_000n);
+      const sweepCeiling = bigintEnv("HARVEST_SWEEP_CEILING_LAMPORTS", 50_000_000n);
+      const rosterTargets = new Set<string>(SEND_TARGET_CONFIGS.map((c) => c.name));
+
+      if (activeFloor < sendMinBalanceLamports || sweepCeiling <= activeFloor) {
+        // The churn-free design relies on floor ≥ funding min (a swept wallet must not land
+        // back in the top-up band) and ceiling > floor. Independent env vars, so assert it.
+        // Write an unhealthy heartbeat so the ops verify query distinguishes misconfig from
+        // a stuck tick (stale beat_at) rather than seeing no row at all.
+        console.warn(
+          `[send/harvest] invalid thresholds (floor=${activeFloor} min=${sendMinBalanceLamports} ceiling=${sweepCeiling}); ` +
+            "need floor≥min and ceiling>floor — harvest disabled",
+        );
+        void heartbeatHarvest(db, false).catch((e) =>
+          console.warn("[send/harvest] heartbeat write failed:", (e as Error).message),
+        );
+      } else if (rosterTargets.size === 0) {
+        // Static array from the provider registry — only empty via a providers.ts edit that
+        // removes every send target, which would otherwise orphan-drain the whole fleet.
+        console.warn("[send/harvest] SEND_TARGET_CONFIGS is empty; harvest disabled (would orphan-drain the fleet)");
+        void heartbeatHarvest(db, false).catch((e) =>
+          console.warn("[send/harvest] heartbeat write failed:", (e as Error).message),
+        );
+      } else {
+        let harvestInFlight = false;
+        const runHarvest = async (): Promise<void> => {
+          if (harvestInFlight) return;
+          harvestInFlight = true;
+          try {
+            const master = await loadMasterFromEnv();
+            const rpc = createSolanaRpc(
+              process.env.SEND_FUNDING_RPC_URL ?? process.env.UTILITY_RPC_URL ?? "",
+            );
+            // Load EXISTING payer wallets only (never create — a harvest tick must not mint
+            // fresh keypairs). Classify by the persisted send_target column (name-prefix
+            // fallback only if null): still-configured targets are roster (unwrap in place);
+            // retired targets are orphans (drained). NOT gated by SEND_SCENARIOS — a scenario
+            // disabled this deploy still holds WSOL to reclaim.
+            const payers = await loadExistingPayers(db);
+            const rosterWallets = payers.filter((w) => rosterTargets.has(sendTargetOf(w)));
+            const orphanWallets = payers.filter((w) => !rosterTargets.has(sendTargetOf(w)));
+            await runHarvestTick(db, rpc, rosterWallets, orphanWallets, master, {
+              region: process.env.WORKER_REGION ?? "generator",
+              minWsolLamports: minWsol,
+              activeFloorLamports: activeFloor,
+              sweepCeilingLamports: sweepCeiling,
+            });
+          } catch (err) {
+            console.error("[send/harvest]", (err as Error).message);
+          } finally {
+            harvestInFlight = false;
+          }
+        };
+        setInterval(() => void runHarvest(), harvestMs);
+        // Don't re-run a full harvest (real on-chain closes cost fees) on every boot — this
+        // generator has a restart-loop history. Kick at startup only if we're overdue: the
+        // last 'harvest' heartbeat is older than one interval, or none was ever recorded.
+        void (async () => {
+          const beatAge = await harvestBeatAgeMs(db);
+          if (beatAge === null || beatAge >= harvestMs) {
+            void runHarvest();
+          } else {
+            console.log(
+              `[send/harvest] last tick ${Math.round(beatAge / 1000)}s ago (< interval); deferring to setInterval`,
+            );
+          }
+        })();
+      }
+    } else {
+      // Rollback lever (HARVEST_ENABLED=false): record disabled so the ops verify query
+      // doesn't read the last (possibly ready=true) row + stale beat_at as a stuck tick.
+      void heartbeatHarvest(db, false).catch((e) =>
+        console.warn("[send/harvest] heartbeat write failed:", (e as Error).message),
+      );
+    }
 
     // Send challenge tick — one challenge per scenario, K-sampled to vantages.
     setInterval(() => {

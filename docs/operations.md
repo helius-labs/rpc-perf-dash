@@ -539,6 +539,85 @@ them. The funding tick (every ~300s) tops up any wallet below
 `landing_wallet_balances` for the low-balance alert. **This spends real mainnet
 SOL** — monitor the master balance and cap the top-up budget.
 
+### Harvest / SOL recovery
+Forward swaps wrap native SOL → WSOL → USDC; **reverses convert USDC → WSOL that is
+never unwrapped**, so native SOL migrates one-way into each wallet's WSOL account and
+the master drains via top-ups. Harvest (`send/harvest.ts`) is the inverse of funding:
+a **generator-leader-only** guarded `setInterval` (default 1 h) that loads the
+**existing payer rows** from `send_wallets` (never creates — unlike funding) and, per
+wallet, closes the WSOL ATA (`closeAccount`) → rent + wrapped balance return as **native
+in the same wallet**, so the next funding tick sees it at/above min and stops topping up.
+It partitions those rows **by target** (not by `SEND_SCENARIOS`), so it processes every
+payer row regardless of which scenarios this deploy sends. Every on-chain step is gated
+on confirmation; a per-wallet failure is logged and skipped.
+
+- **Roster wallets** (payer rows whose target is still in `SEND_TARGET_CONFIGS`, **not**
+  gated by the env-filtered `SEND_SCENARIOS` — a scenario disabled this deploy still holds
+  WSOL): unwrap in place; sweep to master only *genuine excess* (native `>
+  HARVEST_SWEEP_CEILING_LAMPORTS`, leaving `HARVEST_ACTIVE_FLOOR_LAMPORTS` ≥ the funding
+  min so a swept wallet never re-enters the top-up band — rarely fires by design).
+- **Orphan wallets** (`send_wallets role='payer'` for a target no longer in
+  `SEND_TARGET_CONFIGS`): always close the WSOL ATA (reclaims its ~2.04M-lamport rent even
+  at 0 wrapped balance — orphans are never reused), then drain native to master down to
+  **exactly 0** so the account is purged. Only the USDC ATA rent (~0.002 SOL) stays stranded
+  (a non-empty ATA can't be closed; the USDC leg is out of scope).
+
+> **Deploy order when REMOVING / PAUSING a send target: workers first, then the generator.**
+> The moment the generator rolls a new image where a target has left the derived send-target
+> list, harvest reclassifies that target's wallets as orphans and drains them to 0. Two ways
+> a target leaves the list: dropping it from `SEND_TARGET_CONFIGS`, **or** flipping
+> `sends: false` on its `ProviderRow` (the likelier "pause this provider" action) — both drop
+> it identically. Workers still on the old image would keep trying to send for that target
+> with an empty wallet → failed samples on the board. Deploy the workers (target gone/paused)
+> **before** the generator so nothing sends for a drained wallet. This is the inverse of the
+> add-a-provider order (generator/DB first); adding a target is safe because harvest only ever
+> drains *retired* targets. **If the pause is temporary, disable harvest first**
+> (`HARVEST_ENABLED=false`) so the wallets aren't drained while the provider is off.
+
+**Third (parked) category — dormant scenarios.** Partitioning is by *target*, so a
+wallet whose **scenario** is dropped from `SEND_SCENARIOS` (but whose target is still
+configured) stays "roster": it's unwrapped in place but only swept above the 0.05
+ceiling, so ~0.03 SOL sits parked and funding never tops it up either. This is
+deliberate — `SEND_SCENARIOS` is a per-deploy send filter, not a retirement, so the
+scenario may re-enable and the float should stay put. It's the one accepted stranded
+amount (~0.03 SOL × the targets, keys retained), not a leak. If a scenario is truly gone
+forever, drain those wallets manually.
+
+**What it does / doesn't fix:** harvest stops the **recoverable** outflow (native locked
+in WSOL). It does **not** touch the network+pool fee/slippage burn (fewer/smaller swaps is
+the only lever there), so success = "funding top-ups go quiet + master decline flattens
+toward the fee floor," **not** "master balance rises."
+
+**Env knobs** (`generator-stack.ts`, all non-secret; harvest only runs when
+`SENDS_ENABLED`): `HARVEST_ENABLED` (default `true`), `HARVEST_INTERVAL_MS` (`3600000`,
+floored at 300000), `HARVEST_MIN_WSOL_LAMPORTS` (`2000000` — skip closes not worth the
+fee), `HARVEST_ACTIVE_FLOOR_LAMPORTS` (`30000000` = 0.03), `HARVEST_SWEEP_CEILING_LAMPORTS`
+(`50000000` = 0.05). **Rollback:**
+`HARVEST_ENABLED=false` (pure additive, no migration). **Verify:** each tick heartbeats
+`send_service_status` — `SELECT ready, beat_at FROM send_service_status WHERE
+service='harvest'`. **Read `ready` FIRST, then `beat_at`:** `ready=false` = **disabled**
+(the `HARVEST_ENABLED=false` rollback lever, bad thresholds, or an empty roster — its
+`beat_at` is written once at boot and then ages, which is expected, NOT a stall);
+`ready=true` + **fresh** `beat_at` = running; `ready=true` + **stale** `beat_at` = **stuck**.
+(`ready` is NOT per-tick error state — a tick that completes with a few transient
+per-wallet errors still heartbeats `ready=true`; those errors stay in the `[send/harvest]`
+log.) **When `SENDS_ENABLED≠true` the whole send subsystem is off, so neither harvest nor
+confirm beats — the row just ages; that's "sends disabled," not "harvest stuck."** Also:
+`[send/harvest]` logs one confirmed close per above-threshold wallet; over hours
+`[send/funding] top-up` frequency drops — and each tick records the master balance, so
+`SELECT balance_lamports, started_at FROM landing_wallet_balances WHERE
+target_name='master' ORDER BY started_at DESC` shows the decline flattening directly.
+
+**Orphan cleanup (manual).** A drained orphan's `send_wallets` row is **not** deleted (the
+key is kept in case its stranded USDC dust is ever swept), so harvest keeps spending ~3
+read RPCs/tick on it forever. Orphans are rare (only retired targets), so this is
+negligible — but if many targets are retired, periodically `DELETE FROM send_wallets WHERE
+name = '<target>:<scenario>'` for confirmed-empty drained wallets to stop the probes. Same
+manual fix for the one self-perpetuating error case: an orphan that still holds a WSOL ATA
+but has < ~5,005 native lamports can't pay the close fee, so it throws and increments the
+tick's `errors` (a `[send/harvest] orphan …` log line) every tick — harmless but noisy;
+delete the row or hand-fund it a few thousand lamports to let the close land once.
+
 ### Confirm poll (in the generator)
 Confirmation is a poll loop **inside the generator** (`send/confirm.ts`), not a
 separate service — the generator is already the leader-elected singleton, so the
