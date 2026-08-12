@@ -430,6 +430,8 @@ export function MethodRegionTabs({
     [],
   );
   const selectOnlyMethod = useCallback((m: Method) => setSelectedMethods(new Set([m])), []);
+  /** Replace the selection with a method group (Archival / Account-based). */
+  const selectMethodGroup = useCallback((ms: Method[]) => setSelectedMethods(new Set(ms)), []);
   const selectAllMethods = useCallback(
     () => setSelectedMethods(new Set(methodRows.map((r) => r.key))),
     [methodRows],
@@ -605,6 +607,7 @@ export function MethodRegionTabs({
               onToggle={toggleMethod}
               onOnly={selectOnlyMethod}
               onAll={selectAllMethods}
+              onSelectMany={selectMethodGroup}
               triggerClass={TRIGGER_CLS}
             />
           )}

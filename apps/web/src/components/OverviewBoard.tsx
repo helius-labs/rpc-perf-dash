@@ -195,6 +195,8 @@ export function OverviewBoard({
     });
   const selectOnlyMethod = (m: Method) => setSelectedMethods(new Set([m]));
   const selectAllMethods = () => setSelectedMethods(new Set(ALL_METHODS_SORTED));
+  /** Replace the selection with a method group (Archival / Account-based). */
+  const selectMethodGroup = (ms: Method[]) => setSelectedMethods(new Set(ms));
 
   // Apply a preset's defaults — component weights, region subset, and method
   // set. Used by the preset pills (so clicking one always re-applies it, even
@@ -408,6 +410,7 @@ export function OverviewBoard({
                 onToggle={toggleMethod}
                 onOnly={selectOnlyMethod}
                 onAll={selectAllMethods}
+                onSelectMany={selectMethodGroup}
                 className={CONTROL_PILL_W}
                 triggerClass={"w-full " + PILL_BASE + " " + PILL_IDLE}
               />
