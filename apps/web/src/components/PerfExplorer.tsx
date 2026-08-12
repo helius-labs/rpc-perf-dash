@@ -273,6 +273,10 @@ export function PerfExplorer({
     (m: Method) => void loadSlice(infra, nextToggleList(m)),
     [infra, loadSlice, nextToggleList],
   );
+  const prefetchMethods = useCallback(
+    (ms: Method[]) => void loadSlice(infra, ms),
+    [infra, loadSlice],
+  );
 
   // Display state derives from cache presence for the CURRENT (infra, methods)
   // key — never from a stale loading flag, so rapid switches always resolve
@@ -410,7 +414,9 @@ export function PerfExplorer({
           onToggle={toggleMethod}
           onOnly={selectOnlyMethod}
           onAll={selectAllMethods}
+          onSelectMany={applyMethods}
           onPrefetch={prefetchMethod}
+          onPrefetchMany={prefetchMethods}
           triggerClass={METHOD_TRIGGER_CLS}
         />
       </FilterGroup>
