@@ -1,14 +1,24 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ReactNode } from "react";
+import type { Metadata } from "next";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import MethodExplorer from "./MethodExplorer";
 import MethodologyToc, { type TocEntry } from "./MethodologyToc";
 import ScoreFormulas from "./ScoreFormulas";
 import { MethodologyCollapsible } from "./MethodologyCollapsible";
+import { pageSeo } from "@/lib/seo";
 
 export const dynamic = "force-dynamic";
+
+// Takes no searchParams — one URL, always indexable.
+export const metadata: Metadata = {
+  title: "Methodology — Solana RPC Benchmark",
+  description:
+    "How the benchmark works: sealed challenges, multi-provider consensus, regional vantage points, and the scoring formula behind the rankings.",
+  ...pageSeo("/methodology"),
+};
 
 async function loadDoc(): Promise<string> {
   const candidates = [

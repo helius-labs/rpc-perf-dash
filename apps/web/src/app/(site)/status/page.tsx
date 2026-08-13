@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import type { Metadata } from "next";
 import { fetchPipelineStatus } from "@/lib/status";
 import {
   PipelineStatusView,
@@ -8,12 +9,16 @@ import {
   StatusHealthSkeleton,
 } from "@/components/PipelineStatus";
 import { AutoRefresh } from "@/components/AutoRefresh";
+import { NOINDEX } from "@/lib/seo";
 
 export const dynamic = "force-dynamic";
 
-export const metadata = {
+// Operational dashboard, not content — restate the inherited noindex explicitly
+// since this page exports its own metadata and a reader will look for it here.
+export const metadata: Metadata = {
   title: "Pipeline status · Solana RPC Benchmark",
   description: "Live health of the benchmark pipeline: generator, dispatch, workers, samples.",
+  robots: NOINDEX,
 };
 
 export default async function StatusPage() {

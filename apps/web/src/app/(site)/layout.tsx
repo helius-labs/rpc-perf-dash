@@ -1,8 +1,18 @@
 import type { ReactNode } from "react";
+import type { Metadata } from "next";
 import Link from "next/link";
 import NavLinks from "@/components/NavLinks";
 import MobileMenu from "@/components/MobileMenu";
 import HeaderStatus from "@/components/HeaderStatus";
+import { NOINDEX } from "@/lib/seo";
+
+// Default-DENY for the whole site group. Next merges metadata parent→child per
+// field, so every page under (site) inherits noindex unless it sets `robots`
+// itself — which the indexable pages do via `pageSeo()` (see lib/seo.ts).
+// This is what keeps /runs, /raw, /status and /run/[id] out of the index with
+// no per-page edits, and makes any NEW route noindex until someone adds it to
+// INDEXABLE_PATHS on purpose.
+export const metadata: Metadata = { robots: NOINDEX };
 
 // Site chrome shared by every full-page route (everything except the (embed)
 // group). Moved verbatim out of the root layout so embeds can skip it. Fonts,

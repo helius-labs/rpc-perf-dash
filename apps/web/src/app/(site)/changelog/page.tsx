@@ -5,6 +5,19 @@
  * `tag` keys into TAG_COLORS for its pill color.
  */
 
+import type { Metadata } from "next";
+import { pageSeo } from "@/lib/seo";
+
+// Static `metadata`, not generateMetadata — this page has no searchParams and
+// no dynamic APIs, and keeping it a plain constant preserves its fully-static
+// render (see the staleTimes.static note in next.config.ts).
+export const metadata: Metadata = {
+  title: "Changelog — Solana RPC Benchmark",
+  description:
+    "Dated log of notable changes to the Solana RPC benchmark: scoring updates, new methods and providers, and infrastructure changes.",
+  ...pageSeo("/changelog"),
+};
+
 interface Entry {
   date: string;
   tag: keyof typeof TAG_COLORS;

@@ -12,6 +12,7 @@ import { ALL_METHODS } from "@/lib/methods";
 import { WINDOWS } from "@/lib/windows";
 import { parseInfraOrPooled } from "@/lib/apiParams";
 import { ogImagePath, parseShareParams } from "@/lib/share";
+import { canonicalUrl, NOINDEX } from "@/lib/seo";
 import {
   MethodRegionTabs,
   type InfraOption,
@@ -125,6 +126,12 @@ export async function generateMetadata({
   return {
     title,
     description,
+    // Noindex unconditionally — not just the parameterized forms. This is a
+    // deep-dive view of the same data the indexed leaderboards cover, and its
+    // 8 filter params made it a top source of near-duplicate indexed URLs.
+    // Self-canonical: it's a real page, just not one we want ranking.
+    robots: NOINDEX,
+    alternates: { canonical: canonicalUrl("/performance") },
     openGraph: { title, description, images: [image] },
     twitter: { card: "summary_large_image", title, description, images: [image] },
   };

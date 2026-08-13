@@ -77,6 +77,14 @@ const config: NextConfig = {
         source: "/embed/:path*",
         headers: [{ key: "Content-Security-Policy", value: "frame-ancestors *" }],
       },
+      // The JSON API and the OG image routes can't carry a <meta name="robots">
+      // tag, and the (site) layout's default-deny (see lib/seo.ts) never reaches
+      // them — a header is the only crawl signal available. Without it these
+      // URLs are the one part of the app with no index policy at all.
+      {
+        source: "/(api|og)/:path*",
+        headers: [{ key: "X-Robots-Tag", value: "noindex" }],
+      },
     ];
   },
   // Server-side hop for Web Analytics. The client (see layout.tsx) sends the

@@ -29,8 +29,8 @@ import { LatencyChart } from "@/components/LatencyChart";
 import { Tooltip } from "@/components/Tooltip";
 import { explainAntiGamingFlags } from "@/lib/antiGamingFlags";
 import { describeFailure } from "@/lib/failureLabels";
-import { siteUrl } from "@/lib/siteUrl";
 import { ogImagePath, DEFAULT_SHARE_FILTERS } from "@/lib/share";
+import { canonicalUrl, INDEX, NOINDEX } from "@/lib/seo";
 
 export const dynamic = "force-dynamic";
 
@@ -46,17 +46,22 @@ export async function generateMetadata({
   const { id: routeParam } = await params;
   const provider = benchmarkedProviderByRouteParam(routeParam);
   if (!provider) {
-    // Unknown provider — the page itself renders notFound(); keep metadata generic.
-    return { title: "Provider — Solana RPC Benchmark" };
+    // Unknown provider — the page itself renders notFound(); keep metadata
+    // generic, and keep the 404 out of the index.
+    return { title: "Provider — Solana RPC Benchmark", robots: NOINDEX };
   }
   const slug = providerSlug(provider);
   const title = `${provider.name} — Solana RPC performance | Solana RPC Benchmark`;
   const description = `Live latency, reliability, and correctness benchmarks for ${provider.name}'s Solana RPC across regions — independent, continuous, and non-gameable.`;
   const image = ogImagePath(DEFAULT_SHARE_FILTERS);
-  const canonical = `${siteUrl()}/provider/${slug}`;
+  // canonicalUrl(), not siteUrl(): NEXT_PUBLIC_SITE_URL is Production-only, so
+  // on Preview/local siteUrl() is a bare origin and this canonical used to
+  // point at a basePath-less 404.
+  const canonical = canonicalUrl(`/provider/${slug}`);
   return {
     title,
     description,
+    robots: INDEX,
     alternates: { canonical },
     openGraph: { title, description, url: canonical, images: [image] },
     twitter: { card: "summary_large_image", title, description, images: [image] },
