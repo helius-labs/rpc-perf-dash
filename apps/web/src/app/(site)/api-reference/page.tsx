@@ -25,8 +25,7 @@ import {
 import { ALL_METHODS } from "@/lib/methods";
 import { WINDOWS } from "@/lib/windows";
 import { SCORE_PRESETS } from "@/lib/workloadPresets";
-import { siteUrl } from "@/lib/siteUrl";
-import { BASE_PATH } from "@/lib/basePath";
+import { canonicalOrigin } from "@/lib/seo";
 import MethodologyToc from "../methodology/MethodologyToc";
 import ApiEndpointCard, { type ApiEndpoint, CodeBlock } from "./ApiEndpointCard";
 import EmbedWidgetCard, { type EmbedWidget } from "./EmbedWidgetCard";
@@ -483,12 +482,11 @@ function ValueList({ title, items }: { title: string; items: readonly string[] }
 }
 
 export default function ApiReferencePage() {
-  // siteUrl() is a BARE origin — the app is mounted under basePath, so every
-  // printed URL (curl examples, embed iframes) needs the /benchmarks prefix or
-  // it 404s. NEXT_PUBLIC_SITE_URL may or may not already carry it depending on
-  // how the deployment set it, so append only when it's missing.
-  const base = siteUrl();
-  const origin = base.endsWith(BASE_PATH) ? base : base + BASE_PATH;
+  // Every printed URL (curl examples, embed iframes) needs the /benchmarks
+  // prefix or it 404s, and siteUrl() only carries it in some environments.
+  // canonicalOrigin() is the shared version of the append-if-missing dance this
+  // page used to do inline; see lib/seo.ts.
+  const origin = canonicalOrigin();
 
   return (
     <div className="pt-1">

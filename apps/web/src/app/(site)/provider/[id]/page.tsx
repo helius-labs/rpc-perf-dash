@@ -29,8 +29,8 @@ import { LatencyChart } from "@/components/LatencyChart";
 import { Tooltip } from "@/components/Tooltip";
 import { explainAntiGamingFlags } from "@/lib/antiGamingFlags";
 import { describeFailure } from "@/lib/failureLabels";
-import { siteUrl } from "@/lib/siteUrl";
 import { ogImagePath, DEFAULT_SHARE_FILTERS } from "@/lib/share";
+import { canonicalUrl, pageSeo, NOINDEX, type AnySearchParams } from "@/lib/seo";
 
 export const dynamic = "force-dynamic";
 
@@ -38,26 +38,36 @@ export const dynamic = "force-dynamic";
 // (one canonical URL each), so give each a provider-specific title/description
 // and a self-referencing canonical — the main SEO lever, since the outbound
 // provider links themselves are nofollow.
+// searchParams is taken purely for the index decision — the page itself reads
+// none. Without it a share link like ?utm_source=… would render as an
+// indexable near-duplicate of the clean provider URL. Free to accept here
+// because this route is already force-dynamic.
 export async function generateMetadata({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<AnySearchParams>;
 }): Promise<Metadata> {
-  const { id: routeParam } = await params;
+  const [{ id: routeParam }, query] = await Promise.all([params, searchParams]);
   const provider = benchmarkedProviderByRouteParam(routeParam);
   if (!provider) {
-    // Unknown provider — the page itself renders notFound(); keep metadata generic.
-    return { title: "Provider — Solana RPC Benchmark" };
+    // Unknown provider — the page itself renders notFound(); keep metadata
+    // generic, and keep the 404 out of the index.
+    return { title: "Provider — Solana RPC Benchmark", robots: NOINDEX };
   }
   const slug = providerSlug(provider);
   const title = `${provider.name} — Solana RPC performance | Solana RPC Benchmark`;
   const description = `Live latency, reliability, and correctness benchmarks for ${provider.name}'s Solana RPC across regions — independent, continuous, and non-gameable.`;
   const image = ogImagePath(DEFAULT_SHARE_FILTERS);
-  const canonical = `${siteUrl()}/provider/${slug}`;
+  // canonicalUrl(), not siteUrl(): NEXT_PUBLIC_SITE_URL is Production-only, so
+  // on Preview/local siteUrl() is a bare origin and this canonical used to
+  // point at a basePath-less 404.
+  const canonical = canonicalUrl(`/provider/${slug}`);
   return {
     title,
     description,
-    alternates: { canonical },
+    ...pageSeo(`/provider/${slug}`, query),
     openGraph: { title, description, url: canonical, images: [image] },
     twitter: { card: "summary_large_image", title, description, images: [image] },
   };

@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { Metadata, Route } from "next";
 import { WINDOWS } from "@/lib/windows";
 import { ogImagePath, parseShareParams } from "@/lib/share";
+import { canonicalUrl, pageSeo } from "@/lib/seo";
 import { presetById } from "@/lib/workloadPresets";
 import { type MethodRegionLatency } from "@/components/IndexLeaderboard";
 import { type MethodGeoRows } from "@/components/leaderboardShared";
@@ -21,6 +22,10 @@ interface SearchParams {
 
 // Per-view social card: reads the same filters the ShareButton encodes so a
 // tweeted link renders the matching preset leaderboard card in-feed.
+//
+// The card varies per filter, but the INDEXED page must not: pageSeo() pins the
+// canonical to the bare "/" and noindexes any ?window=/?preset= variant, so the
+// permutations stop competing with the page they're all variants of.
 export async function generateMetadata({
   searchParams,
 }: {
@@ -38,7 +43,8 @@ export async function generateMetadata({
   return {
     title,
     description,
-    openGraph: { title: shareTitle, description, images: [image] },
+    ...pageSeo("/", params),
+    openGraph: { title: shareTitle, description, url: canonicalUrl("/"), images: [image] },
     twitter: { card: "summary_large_image", title: shareTitle, description, images: [image] },
   };
 }

@@ -5,11 +5,23 @@
  * client <SendsBoard>; this page just fetches the (default-weighted) rows.
  */
 
+import type { Metadata } from "next";
 import { fetchSendBoard } from "@/lib/sends";
 import { SendsBoard } from "@/components/SendsBoard";
 import { DB_ERROR_MESSAGE } from "@/lib/db";
+import { pageSeo } from "@/lib/seo";
 
 export const revalidate = 120;
+
+// No searchParams on this route, so no params argument — it can't be turned
+// into a duplicate URL. Static `metadata` (not generateMetadata) keeps the ISR
+// render above intact.
+export const metadata: Metadata = {
+  title: "Transaction landing benchmark — Solana RPC Benchmark",
+  description:
+    "Which Solana RPC lands transactions fastest and most reliably: continuous, independent send benchmarks with landing rate and time-to-land.",
+  ...pageSeo("/sends"),
+};
 
 export default async function SendsPage() {
   let rows;

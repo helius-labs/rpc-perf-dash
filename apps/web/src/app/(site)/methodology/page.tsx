@@ -1,14 +1,33 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ReactNode } from "react";
+import type { Metadata } from "next";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import MethodExplorer from "./MethodExplorer";
 import MethodologyToc, { type TocEntry } from "./MethodologyToc";
 import ScoreFormulas from "./ScoreFormulas";
 import { MethodologyCollapsible } from "./MethodologyCollapsible";
+import { pageSeo, type AnySearchParams } from "@/lib/seo";
 
 export const dynamic = "force-dynamic";
+
+// searchParams is taken purely for the index decision — the page itself reads
+// none. Without it a share link like ?utm_source=… would render as an
+// indexable near-duplicate of the clean URL. Free to accept here because this
+// route is already force-dynamic (above), so it costs no static rendering.
+export async function generateMetadata({
+  searchParams,
+}: {
+  searchParams: Promise<AnySearchParams>;
+}): Promise<Metadata> {
+  return {
+    title: "Methodology — Solana RPC Benchmark",
+    description:
+      "How the benchmark works: sealed challenges, multi-provider consensus, regional vantage points, and the scoring formula behind the rankings.",
+    ...pageSeo("/methodology", await searchParams),
+  };
+}
 
 async function loadDoc(): Promise<string> {
   const candidates = [

@@ -20,13 +20,14 @@
 
 import { sql } from "drizzle-orm";
 import Link from "next/link";
-import type { Route } from "next";
+import type { Metadata, Route } from "next";
 import { unstable_cache } from "next/cache";
 import { db, DB_ERROR_MESSAGE } from "@/lib/db";
 import { type Method } from "@rpcbench/shared";
 import { ALL_METHODS } from "@/lib/methods";
 import { WINDOWS } from "@/lib/windows";
 import { buildPageUrl } from "@/lib/apiParams";
+import { pageSeo } from "@/lib/seo";
 import { FilterPill } from "@/components/FilterPill";
 import { FilterGroup } from "@/components/FilterGroup";
 import { MethodFilter } from "@/components/MethodFilter";
@@ -64,6 +65,29 @@ interface SearchParams {
   window?: string;
   target?: string;
   offset?: string;
+}
+
+// Every filter here is a query param, so the permutation count is effectively
+// unbounded — this page was the biggest source of junk indexed URLs. pageSeo()
+// indexes the bare /challenges and noindexes every ?bucket=/?board=/?offset=…
+// variant while pointing each back at the clean path.
+//
+// Caveat worth knowing: ?offset= pagination also canonicalizes to page 1, which
+// runs against Google's self-canonical advice for paginated listings. Harmless
+// while those URLs are noindex anyway; revisit if paginated challenge URLs ever
+// need to rank.
+export async function generateMetadata({
+  searchParams,
+}: {
+  searchParams: Promise<SearchParams>;
+}): Promise<Metadata> {
+  const params = await searchParams;
+  return {
+    title: "Challenge feed — Solana RPC Benchmark",
+    description:
+      "Browse the sealed challenges driving the benchmark: method, bucket, target and consensus outcome for every recent request.",
+    ...pageSeo("/challenges", params),
+  };
 }
 
 /** Total matching count — offset-independent, so it's reused across pages. */
