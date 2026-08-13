@@ -30,7 +30,7 @@ import { Tooltip } from "@/components/Tooltip";
 import { explainAntiGamingFlags } from "@/lib/antiGamingFlags";
 import { describeFailure } from "@/lib/failureLabels";
 import { ogImagePath, DEFAULT_SHARE_FILTERS } from "@/lib/share";
-import { canonicalUrl, INDEX, NOINDEX } from "@/lib/seo";
+import { canonicalUrl, pageSeo, NOINDEX, type AnySearchParams } from "@/lib/seo";
 
 export const dynamic = "force-dynamic";
 
@@ -38,12 +38,18 @@ export const dynamic = "force-dynamic";
 // (one canonical URL each), so give each a provider-specific title/description
 // and a self-referencing canonical — the main SEO lever, since the outbound
 // provider links themselves are nofollow.
+// searchParams is taken purely for the index decision — the page itself reads
+// none. Without it a share link like ?utm_source=… would render as an
+// indexable near-duplicate of the clean provider URL. Free to accept here
+// because this route is already force-dynamic.
 export async function generateMetadata({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<AnySearchParams>;
 }): Promise<Metadata> {
-  const { id: routeParam } = await params;
+  const [{ id: routeParam }, query] = await Promise.all([params, searchParams]);
   const provider = benchmarkedProviderByRouteParam(routeParam);
   if (!provider) {
     // Unknown provider — the page itself renders notFound(); keep metadata
@@ -61,8 +67,7 @@ export async function generateMetadata({
   return {
     title,
     description,
-    robots: INDEX,
-    alternates: { canonical },
+    ...pageSeo(`/provider/${slug}`, query),
     openGraph: { title, description, url: canonical, images: [image] },
     twitter: { card: "summary_large_image", title, description, images: [image] },
   };

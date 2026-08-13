@@ -69,6 +69,14 @@ export const INDEX: Metadata["robots"] = { index: true, follow: true };
 export const NOINDEX: Metadata["robots"] = { index: false, follow: true };
 
 /**
+ * Shape of `searchParams` for a route that doesn't declare its own — i.e. one
+ * that reads no params but still has to notice when a URL carries some (share
+ * links, ?utm_source=…). `string[]` is real: Next hands back an array for
+ * repeated keys.
+ */
+export type AnySearchParams = Record<string, string | string[] | undefined>;
+
+/**
  * True if the request carried any query string at all.
  *
  * Typed `object`, not `Record<string, string | undefined>`: pages declare their
@@ -91,8 +99,13 @@ export function hasQuery(params: object): boolean {
  * The robots + canonical pair for a page. Spread into a `Metadata` return.
  *
  * The canonical is ALWAYS the clean path, so a parameterized URL points home.
- * Pass `params` on routes that read searchParams; omit it on routes that don't
- * (they can never be parameterized into a duplicate).
+ *
+ * Pass `params` wherever you can — a route that reads no params can still be
+ * REQUESTED with some (?utm_source=…), and without them here that URL renders
+ * as an indexable near-duplicate. Omitting them is a deliberate tradeoff, made
+ * only on /sends (ISR) and /changelog (fully static): touching searchParams
+ * would force both to dynamic rendering, and their canonical already points
+ * Google at the clean path. Every force-dynamic route passes them.
  *
  * Note the parameterized case emits noindex AND a canonical to a different URL
  * — a combination Google's docs call contradictory. Accepted deliberately: the
