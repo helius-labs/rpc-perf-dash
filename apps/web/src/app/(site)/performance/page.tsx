@@ -282,8 +282,9 @@ async function LatencyTablePanel({
  * (<SendMethodRegionTabs>), with a metric selector (landing / slot / wall /
  * block / cost) in place of the RPC cold/warm toggle.
  */
-// 2-axis weight caption for the sends mini leaderboard (analogue of the RPC
-// ScoreStrip's 5-axis WEIGHT_SUMMARY).
+// 2-axis weight caption for the sends mini leaderboard. Passed explicitly because
+// ScoreStrip otherwise derives its caption from a 5-axis ScoringWeights, which the
+// send model has no equivalent of.
 const SEND_WEIGHT_SUMMARY = `Reliability ${Math.round(DEFAULT_SEND_WEIGHTS.reliability * 100)}% · Latency ${Math.round(DEFAULT_SEND_WEIGHTS.latency * 100)}%`;
 
 /** Board rows (already scored + ranked server-side) → ScoreStrip mini rows. */

@@ -138,6 +138,9 @@ export async function buildPerfSlice(opts: PerfSliceOpts): Promise<PerfSlice> {
     );
     const filtered =
       selectedGeos.length > 0 ? regionRows.filter((o) => selectedSet.has(o.geo)) : regionRows;
+    // Scored at the builder's default component weights. PerfScoreboard passes
+    // the SAME weights to ScoreStrip (`weights={DEFAULT_WEIGHTS}`) so the
+    // breakdown tooltip's formula matches these numbers — change one, change both.
     scoreboard = { kind: "prebuilt", prebuiltRows: buildMiniScoreRows(filtered, null) };
   }
 

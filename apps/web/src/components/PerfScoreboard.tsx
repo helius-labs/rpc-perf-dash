@@ -37,6 +37,13 @@ import {
   type MiniScoreRow,
 } from "./leaderboardShared";
 
+// The component weights every row on this page is scored at: the cube path passes
+// them to buildPresetLeaderRows, the prebuilt path gets them from
+// buildMiniScoreRows' default (see lib/perfSlice.ts), and ScoreStrip prints its
+// breakdown formula from them. The page has no component-weight tuner — that
+// lives on the Overview.
+const COMPONENT_WEIGHTS = DEFAULT_WEIGHTS;
+
 export function PerfScoreboard({
   cube,
   prebuiltRows,
@@ -64,7 +71,11 @@ export function PerfScoreboard({
    *  caption, and controls stay — for switching filters without blanking it. */
   loading?: boolean;
 }) {
-  const tunable = cube != null && selectedMethods.length > 1;
+  // ONE definition of "how many methods" for the whole component: dupes in
+  // `?method=` are not extra methods (perfSlice branches on the deduped count),
+  // so both the weight panel and the strip's caption must read from this.
+  const methodCount = new Set(selectedMethods).size;
+  const tunable = cube != null && methodCount > 1;
 
   // Seed directly from the selected methods (equal), then overlay only the mw
   // overrides that apply to a selected method. NOT via parseShareParams, whose
@@ -80,7 +91,7 @@ export function PerfScoreboard({
   const rows: MiniScoreRow[] = useMemo(() => {
     if (!cube) return prebuiltRows ?? [];
     return buildPresetLeaderRows(cube, {
-      componentWeights: DEFAULT_WEIGHTS,
+      componentWeights: COMPONENT_WEIGHTS,
       methodWeights,
       regionWeights: DEFAULT_REGION_WEIGHTS,
     }).map((r) => ({
@@ -88,6 +99,20 @@ export function PerfScoreboard({
       provider_name: r.provider_name,
       total: r.total,
       failing_reason: r.total > 0 ? null : r.exclusion_reason,
+      // Sub-scores for the strip's breakdown tooltip. Spread-omit (not a ternary
+      // to undefined) — the repo builds with exactOptionalPropertyTypes.
+      ...(r.total > 0
+        ? {
+            subs: {
+              total: r.total,
+              latency_sub: r.latency_sub,
+              win_sub: r.win_sub,
+              reliability_sub: r.reliability_sub,
+              correctness_sub: r.correctness_sub,
+              freshness_sub: r.freshness_sub,
+            },
+          }
+        : {}),
     }));
   }, [cube, prebuiltRows, methodWeights]);
 
@@ -98,7 +123,7 @@ export function PerfScoreboard({
     methods: selectedMethods,
     methodWeights,
     regions,
-    weights: DEFAULT_WEIGHTS,
+    weights: COMPONENT_WEIGHTS,
     mode,
     windowHours,
     infra,
@@ -109,7 +134,10 @@ export function PerfScoreboard({
       <ScoreStrip
         rows={rows}
         ranked={ranked}
-        methodCount={selectedMethods.length}
+        methodCount={methodCount}
+        // Same weights the rows were scored at — the breakdown tooltip prints
+        // its formula from these, so they must not drift apart.
+        weights={COMPONENT_WEIGHTS}
         loading={loading}
       />
       <div className="flex justify-end items-center gap-3 mt-3">

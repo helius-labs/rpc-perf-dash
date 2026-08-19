@@ -10,11 +10,20 @@
  * smaller and muted, each score tinted by its tier color.
  *
  * No "use client" — pure presentational, rendered server-side so it re-runs on
- * every filter navigation.
+ * every filter navigation. The per-score breakdown tooltip is the one interactive
+ * bit and lives in the (client) FloatingTooltip child; it renders only for rows
+ * that carry `subs`, so the embed + sends strips draw no tooltip at all (they do
+ * still pull FloatingTooltip into their client bundle — a static import).
  */
 
 import { DEFAULT_WEIGHTS, type ScoringWeights } from "@rpcbench/shared/scoring";
-import { scoreColor, type MiniScoreRow } from "@/components/leaderboardShared";
+import {
+  ScoreFormula,
+  SubScoreBreakdown,
+  scoreColor,
+  type MiniScoreRow,
+} from "@/components/leaderboardShared";
+import { FloatingTooltip } from "@/components/FloatingTooltip";
 import { brandColorFor } from "@/lib/providerColors";
 
 // Axis order + labels for the weights disclaimer (matches the Overview).
@@ -26,9 +35,8 @@ const WEIGHT_LABELS: ReadonlyArray<[keyof ScoringWeights, string]> = [
   ["freshness", "Freshness"],
 ];
 
-const WEIGHT_SUMMARY = WEIGHT_LABELS.map(
-  ([k, label]) => `${label} ${Math.round(DEFAULT_WEIGHTS[k] * 100)}%`,
-).join(" · ");
+const weightSummaryFor = (weights: ScoringWeights) =>
+  WEIGHT_LABELS.map(([k, label]) => `${label} ${Math.round(weights[k] * 100)}%`).join(" · ");
 
 // Pulsing fill for skeleton cells. Applied as the background of a span whose
 // text is made transparent, so the pulsing rectangle is sized to the exact text
@@ -49,7 +57,8 @@ export function ScoreStrip({
   ranked,
   methodCount = 1,
   loading = false,
-  weightSummary = WEIGHT_SUMMARY,
+  weights = DEFAULT_WEIGHTS,
+  weightSummary,
 }: {
   rows: MiniScoreRow[];
   ranked: boolean;
@@ -59,10 +68,16 @@ export function ScoreStrip({
    *  (row count taken from the last data, or a sensible default) — so switching
    *  filters doesn't blank the whole leaderboard. */
   loading?: boolean;
-  /** The weight-breakdown caption. Defaults to the RPC 5-axis weights; the sends
-   *  board passes its own 2-axis summary. */
+  /** Component weights the `rows` were SCORED at — drives both the caption and
+   *  the per-score breakdown tooltip's formula. Must match the weights the
+   *  caller passed to its score builder, or the tooltip prints a formula that
+   *  doesn't produce the numbers beside it. */
+  weights?: ScoringWeights;
+  /** Overrides the derived weight caption. Only the sends board needs this: its
+   *  2-axis model has no ScoringWeights to derive from. */
   weightSummary?: string;
 }) {
+  const caption = weightSummary ?? weightSummaryFor(weights);
   if (loading) {
     // Skeleton over the retained rows (or a fallback on first load) using the
     // IDENTICAL markup + text as the real board — only the text is made
@@ -113,7 +128,7 @@ export function ScoreStrip({
         </ol>
         <p className="mt-2 font-geistmono text-[9px] uppercase tracking-[0.08em] text-muted leading-snug">
           {methodCount > 1 ? `Blended across ${methodCount} methods · ` : ""}
-          {weightSummary}
+          {caption}
         </p>
       </div>
     );
@@ -137,6 +152,22 @@ export function ScoreStrip({
         const leader = i === 0;
         const eligible = r.total > 0;
         const nameColor = leader ? (brandColorFor(r.provider_id) ?? "var(--accent)") : undefined;
+        // The score cell itself. `shrink-0` lives on the wrapper below, not here:
+        // when a tooltip is attached, FloatingTooltip's own inline-block span
+        // becomes the flex item, so the shrink rule has to sit above it.
+        const scoreEl = (
+          <span
+            className="tabular-nums"
+            style={{ color: eligible ? scoreColor(r.total) : "var(--muted, #666)" }}
+          >
+            {eligible ? r.total.toFixed(1) : "—"}
+            {eligible && (
+              <i className="not-italic font-normal text-[0.34em] text-muted ml-[0.1em] align-baseline">
+                /100
+              </i>
+            )}
+          </span>
+        );
         return (
           <li
             key={r.provider_id}
@@ -165,15 +196,19 @@ export function ScoreStrip({
                 ) : null}
               </span>
             </span>
-            <span
-              className="tabular-nums shrink-0"
-              style={{ color: eligible ? scoreColor(r.total) : "var(--muted, #666)" }}
-            >
-              {eligible ? r.total.toFixed(1) : "—"}
-              {eligible && (
-                <i className="not-italic font-normal text-[0.34em] text-muted ml-[0.1em] align-baseline">
-                  /100
-                </i>
+            <span className="shrink-0">
+              {r.subs ? (
+                /* Same breakdown the Overview leaderboard shows (L/W/R/C/F ×
+                   weight = product). No method-count line here — the caption
+                   below the board already carries it. */
+                <FloatingTooltip title="Score breakdown" trigger={scoreEl}>
+                  <div className="text-left font-normal normal-case tracking-normal leading-normal">
+                    <ScoreFormula weights={weights} />
+                    <SubScoreBreakdown row={r.subs} weights={weights} />
+                  </div>
+                </FloatingTooltip>
+              ) : (
+                scoreEl
               )}
             </span>
           </li>
@@ -182,7 +217,7 @@ export function ScoreStrip({
       </ol>
       <p className="mt-2 font-geistmono text-[9px] uppercase tracking-[0.08em] text-muted leading-snug">
         {methodCount > 1 ? `Blended across ${methodCount} methods · ` : ""}
-        {weightSummary}
+        {caption}
       </p>
     </div>
   );

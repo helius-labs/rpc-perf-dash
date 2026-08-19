@@ -67,6 +67,10 @@ export default async function EmbedScorePage({
       rows={rows}
       ranked={rows.some((r) => r.total > 0)}
       methodCount={methods.length}
+      // The preset's own component weights — the rows above were scored at these,
+      // so the caption must quote them too (the non-balanced presets differ from
+      // DEFAULT_WEIGHTS on every axis).
+      weights={preset.weights}
     />
   );
 }

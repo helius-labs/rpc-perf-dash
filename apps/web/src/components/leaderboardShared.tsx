@@ -80,6 +80,23 @@ export interface PerGeoScore {
   freshness_sub: number;
 }
 
+/**
+ * `ScoredProvider` (scoring's field names) → `PerGeoScore` (the row/UI field
+ * names the breakdown components read). Kept in one place because three
+ * builders below need the same rename, and a per-site literal is how the two
+ * shapes drift apart.
+ */
+export function toPerGeoScore(s: ScoredProvider): PerGeoScore {
+  return {
+    total: s.total,
+    latency_sub: s.latency,
+    win_sub: s.winRate,
+    reliability_sub: s.reliability,
+    correctness_sub: s.correctness,
+    freshness_sub: s.freshness,
+  };
+}
+
 export interface OverallLeaderRow {
   provider_id: string;
   provider_name: string;
@@ -500,16 +517,7 @@ export function buildOverallLeaderRows(
     const reasonTally = new Map<string, number>();
     for (const o of perGeo) {
       const sp = o.scored.find((x) => x.provider_id === provider.id);
-      per_geo[o.geo] = sp
-        ? {
-            total: sp.total,
-            latency_sub: sp.latency,
-            win_sub: sp.winRate,
-            reliability_sub: sp.reliability,
-            correctness_sub: sp.correctness,
-            freshness_sub: sp.freshness,
-          }
-        : null;
+      per_geo[o.geo] = sp ? toPerGeoScore(sp) : null;
       const r = o.rows.find((x) => x.provider_id === provider.id);
       if (!r) continue;
       if (!sp && r.failing_reason) {
@@ -734,16 +742,7 @@ export function buildPresetLeaderRows(
     const per_geo: PresetLeaderRow["per_geo"] = {};
     for (const geo of geoSet) {
       const gc = perGeoComposite.get(geo)?.get(provider.id);
-      per_geo[geo] = gc
-        ? {
-            total: gc.total,
-            latency_sub: gc.latency,
-            win_sub: gc.winRate,
-            reliability_sub: gc.reliability,
-            correctness_sub: gc.correctness,
-            freshness_sub: gc.freshness,
-          }
-        : null;
+      per_geo[geo] = gc ? toPerGeoScore(gc) : null;
     }
 
     return {
@@ -792,6 +791,10 @@ export interface MiniScoreRow {
   total: number;
   /** Plain-language reason the provider is unscored here (total 0), else null. */
   failing_reason?: string | null;
+  /** L/W/R/C/F sub-scores behind `total` — populated only for scored rows, and
+   *  only by boards whose axes are the RPC 5-axis model (the sends strip has its
+   *  own 2-axis model, so it omits this and gets no breakdown tooltip). */
+  subs?: PerGeoScore;
 }
 
 /**
@@ -825,11 +828,23 @@ export function buildMiniScoreRows(
   }
 
   const map = new Map(outcomes.map((o) => [o.geo, o.scored]));
-  const blended = blendRegionScores(map, DEFAULT_REGION_WEIGHTS);
-  return buildOverallLeaderRows(blended, outcomes).map((r) => ({
-    provider_id: r.provider_id,
-    provider_name: r.provider_name,
-    total: r.total,
-    failing_reason: r.failing_reason,
-  }));
+  // `{ subs: true }` blends L/W/R/C/F with the SAME renormalized region weights
+  // as `total`, so the strip's breakdown tooltip reconciles with the score it
+  // sits on. Without it the sub-scores come back 0 (blendRegionScores' default).
+  const blended = blendRegionScores(map, DEFAULT_REGION_WEIGHTS, { subs: true });
+  // buildOverallLeaderRows exposes per-REGION subs (per_geo) but no blended ones,
+  // so read those straight off the blend rather than widening OverallLeaderRow.
+  const subsById = new Map(blended.map((s) => [s.provider_id, s]));
+  return buildOverallLeaderRows(blended, outcomes).map((r) => {
+    const s = r.total > 0 ? subsById.get(r.provider_id) : undefined;
+    return {
+      provider_id: r.provider_id,
+      provider_name: r.provider_name,
+      total: r.total,
+      failing_reason: r.failing_reason,
+      // Spread-omit, not `subs: cond ? {...} : undefined` — the repo builds with
+      // exactOptionalPropertyTypes.
+      ...(s ? { subs: toPerGeoScore(s) } : {}),
+    };
+  });
 }
