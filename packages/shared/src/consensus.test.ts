@@ -9,6 +9,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { decideConsensus, type Voter } from "./consensus.js";
+import { consensusFloorsForMethod, structuralPanelSize } from "./providers.js";
+import { EMITTED_METHODS } from "./types.js";
 import { score, DEFAULT_WEIGHTS, type ProviderMetrics } from "./scoring.js";
 
 /** Voter whose projection hash is the single byte `group` — voters sharing a
@@ -80,6 +82,66 @@ test("n=3 split 2-1 with minGroup=2 (3-voter structural panel) → consensus", (
 
 test("n=2 → ambiguous (below MIN_CONSENSUS_VOTERS)", () => {
   assert.equal(decideConsensus(panel(2)).kind, "ambiguous");
+});
+
+test("n=2 split 2-0 with both floors at 2 (2-voter panel) → consensus, no dissenters", () => {
+  const out = decideConsensus(panel(2), undefined, { minGroup: 2, minVoters: 2 });
+  assert.equal(out.kind, "consensus");
+  assert.equal(out.kind === "consensus" && out.majority_ids.length, 2);
+  assert.equal(out.kind === "consensus" && out.dissenter_ids.length, 0);
+});
+
+test("n=2 split 1-1 stays ambiguous even at minVoters=2 (no tie-breaker)", () => {
+  const out = decideConsensus(panel(1, 1), undefined, { minGroup: 2, minVoters: 2 });
+  assert.equal(out.kind, "ambiguous");
+});
+
+test("n=1 with minVoters=2 → ambiguous (a lone voter never decides)", () => {
+  assert.equal(
+    decideConsensus(panel(1), undefined, { minGroup: 2, minVoters: 2 }).kind,
+    "ambiguous",
+  );
+});
+
+// ── Per-method floors (consensusFloorsForMethod) ───────────────────────
+//
+// These pin the registry-derived thresholds record.ts and the CLI both read.
+// A provider gaining or losing a method changes its panel size and therefore
+// its floors — if one of these breaks, docs/methodology.md § Who votes and the
+// methodology page's `voters` line need a paired update.
+
+test("full-panel method → default floors (3/3)", () => {
+  assert.equal(structuralPanelSize("getTransaction"), 5);
+  assert.deepEqual(consensusFloorsForMethod("getTransaction"), { minGroup: 3, minVoters: 3 });
+});
+
+test("4-voter method → default floors (3/3)", () => {
+  assert.equal(structuralPanelSize("getStakeMinimumDelegation"), 4);
+  assert.deepEqual(consensusFloorsForMethod("getStakeMinimumDelegation"), {
+    minGroup: 3,
+    minVoters: 3,
+  });
+});
+
+test("3-voter method → minGroup relaxed to 2, all three must answer", () => {
+  assert.equal(structuralPanelSize("simulateBundle"), 3);
+  assert.deepEqual(consensusFloorsForMethod("simulateBundle"), { minGroup: 2, minVoters: 3 });
+});
+
+test("every emitted method's floors are >= 2 (nothing is decidable by one voter)", () => {
+  for (const m of EMITTED_METHODS) {
+    const f = consensusFloorsForMethod(m);
+    assert.ok(f.minVoters >= 2, `${m} minVoters=${f.minVoters}`);
+    assert.ok(f.minGroup >= 2, `${m} minGroup=${f.minGroup}`);
+  }
+});
+
+test("2-voter method (getTransactionsForAddress) → both floors relaxed to 2", () => {
+  assert.equal(structuralPanelSize("getTransactionsForAddress"), 2);
+  assert.deepEqual(consensusFloorsForMethod("getTransactionsForAddress"), {
+    minGroup: 2,
+    minVoters: 2,
+  });
 });
 
 test("consensus reference comes from the majority group", () => {

@@ -913,14 +913,15 @@ export const METHODS: readonly MethodSpec[] = [
         "paginationToken (provider-internal cursor), blockTime, memo, confirmationStatus, transactionIndex (vote-tx counting parity unverified), and in full mode the message body, logs, innerInstructions, loadedAddresses, rewards, and version (Triton omits the field entirely)",
     },
     match:
-      "Byte-equal. \"The newest ≤limit txs at or before the pin\" is an immutable answer: the finalized-semantics tip drift that forces getSignaturesForAddress into a Jaccard tolerance lives at the tip, which the pin excludes. Yields a 3-provider byte-match across signatures-mode and full-mode probes.",
+      "Byte-equal. \"The newest ≤limit txs at or before the pin\" is an immutable answer: the finalized-semantics tip drift that forces getSignaturesForAddress into a Jaccard tolerance lives at the tip, which the pin excludes. Yields a byte-match across signatures-mode and full-mode probes.",
     voters:
-      "3 voters · Helius, Triton, Alchemy (QuickNode serves a non-comparable variant; Chainstack doesn't serve the method at all → both tier_method_unsupported)",
+      "2 voters · Helius, Alchemy (QuickNode serves a non-comparable variant; Chainstack never served it; Triton dropped it in Aug 2026 → all three tier_method_unsupported)",
     notes: [
       "Custom indexer-backed method (not in the standard Solana JSON-RPC set). Params stick to the cross-provider common subset: no Helius-only tokenTransfer filter, no processed commitment, full-mode limit under Alchemy's cap.",
       "QuickNode's variant returns a bare array (no {data, paginationToken} envelope), always-full details, and ignores the slot filter — non-comparable by construction, so it's a non-voter rather than penalized.",
       "Chainstack returns -32601 Method not found (confirmed live) — it's a standard Solana core RPC node, and this is a proprietary indexer API, not part of the standard method set.",
-      "3-voter panels decide by 2-1 strict majority (the usual ≥3-group floor would demand unanimity): a lone deviator — e.g. Triton's intermittent empty responses — is scored incorrect. All three must answer usably or the challenge is thrown out.",
+      "Triton served this compatibly and then dropped it: the endpoint returns -32601 Method not found for this method while every other method on it stays healthy (verified live 2026-08-20). It's now a non-voter here rather than being scored wrong on a method its tier no longer serves.",
+      "Weakest correctness signal on the board: with 2 voters this is a pairwise byte-equal agreement check, not a majority vote — both must answer and agree, a 1-1 disagreement is thrown out as no_consensus (nothing can break the tie), and two providers agreeing on the same wrong answer is indistinguishable from correct. Read this method's correctness column with that caveat; latency, reliability and freshness are unaffected.",
       "The non-high-activity address filter is load-bearing: vote-authority addresses diverge massively across providers' indexers (vote-tx indexing differs), and filtering them is what makes byte-equal consensus possible.",
     ],
   },

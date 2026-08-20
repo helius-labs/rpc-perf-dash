@@ -65,7 +65,7 @@ separately:
 
 | What happened | Result |
 |---|---|
-| Fewer than 3 providers returned a usable answer | Skipped — not enough to compare |
+| Fewer providers returned a usable answer than the method's panel needs (3 on most methods, 2 on `getTransactionsForAddress`) | Skipped — not enough to compare |
 | No clear majority (e.g. a 2–2 tie) | Skipped — too close to call |
 | A clear majority agrees | That group is **correct**; anyone who disagrees is **wrong** |
 
@@ -79,24 +79,37 @@ the method or returns it in a format we can't compare against the others:
 - `simulateBundle` — three voters (Helius, Triton, Alchemy). Neither QuickNode
   nor Chainstack serve it: it's a Jito bundle-simulation extension, and neither
   runs Jito-enabled infra on this tier.
-- `getTransactionsForAddress` — three voters (Helius, Triton, Alchemy). It's a
-  custom indexer-backed method, not standard Solana JSON-RPC: QuickNode serves
-  a non-comparable variant, and Chainstack (a standard core RPC node) doesn't
-  serve it at all.
+- `getTransactionsForAddress` — **two** voters (Helius, Alchemy). It's a custom
+  indexer-backed method, not standard Solana JSON-RPC: QuickNode serves a
+  non-comparable variant, Chainstack (a standard core RPC node) doesn't serve it
+  at all, and Triton — which did serve it compatibly — dropped it in August 2026
+  and now returns "Method not found" for it while every other method on the same
+  endpoint stays healthy.
 - `getStakeMinimumDelegation` — four voters (Helius, Triton, QuickNode,
   Chainstack). Alchemy returns "unsupported method"; it's a standard method
   everyone else on the panel serves.
 - `getTokenLargestAccounts` — four voters (Helius, Triton, Alchemy,
   QuickNode). Chainstack's shared tier restricts it to dedicated nodes only.
 
-On the two three-voter methods, two providers agreeing is enough to settle the
-answer (the third is then the odd one out and scored wrong). We still need all
-three to answer for the test to count.
-
-On the three-voter methods a 2–1 split is settled by the two that agree, with no
+On `simulateBundle`, the remaining three-voter method, two providers agreeing is
+enough to settle the answer (the third is then the odd one out and scored
+wrong). We still need all three to answer for the test to count. There's no
 external tie-breaker, so two independent providers agreeing is the entire
 correctness signal there. The two four-voter methods need the usual strict
 majority (3 of 4) instead.
+
+**`getTransactionsForAddress` is weaker still, and we'd rather say so than
+quietly drop the method.** With two voters, correctness there is a *pairwise
+agreement check*, not a majority vote: both providers must answer and their
+answers must match byte-for-byte, a disagreement is thrown out (nothing can
+break a 1–1 tie, so neither side is ever scored wrong), and two providers
+agreeing on the same wrong answer is indistinguishable from both being right.
+Read that method's correctness column with the caveat; its latency, reliability
+and freshness numbers are ordinary panel-wide measurements and carry no such
+asterisk. The alternative — holding the method to the three-voter floor it can
+no longer meet — scores it as nothing at all: every test skipped as "not enough
+to compare", which is exactly what happened between Triton dropping the method
+and this change.
 
 These voter counts describe the **full published panel** and are fixed
 regardless of which subset a given deployment actually configures. A
@@ -105,7 +118,7 @@ B") but deliberately configures fewer than all five provider env vars — fully
 supported, see the README — still gets these fixed thresholds, not ones
 recomputed from their smaller subset. Concretely: a reproducer running only
 Helius+Triton+QuickNode for `getStakeMinimumDelegation` (omitting Chainstack)
-only ever gets 3 actual votes, but the threshold is still derived from the
+only ever gets 3 actual votes, but the thresholds are still derived from the
 full 4-voter structural panel, so the relaxed 2-of-3 rule never kicks in —
 those 3 votes must agree unanimously, and a 2-1 split among them is rejected
 as `no_consensus` rather than being decided in the majority's favor. Under the
@@ -265,15 +278,17 @@ similarity threshold, a slot tolerance, or a well-formedness check.
 ### Custom methods: getTransactionsForAddress
 
 `getTransactionsForAddress` is a non-standard method — an
-indexer-backed address-history API served by Helius, Triton, and Alchemy
-(QuickNode's variant is non-comparable; see the consensus section). Two things
-differ from its standard sibling `getSignaturesForAddress`:
+indexer-backed address-history API now served comparably by Helius and Alchemy
+only (QuickNode's variant is non-comparable, Chainstack doesn't serve it, and
+Triton dropped it in August 2026; see the consensus section, including the
+caveat that comes with a two-voter panel). Two things differ from its standard
+sibling `getSignaturesForAddress`:
 
 - **Slot-pinned, byte-equal.** Every test pins the query to `slot ≤ tip − 5000`
   (~35 minutes back, deeply finalized), newest-first. That makes the answer
   immutable — the tip drift that forces `getSignaturesForAddress` into fuzzy
-  matching is excluded — so both buckets match **byte-for-byte**, as the
-  3-voter panel requires. Trade-off: live-tip behavior isn't measured.
+  matching is excluded — so both buckets match **byte-for-byte**, as consensus
+  requires. Trade-off: live-tip behavior isn't measured.
 - **Two detail levels.** `signatures` (limit 1000) hashes
   `{ signature, slot, err }` per entry; `full` (limit 25) hashes the same
   canonical slice as `getTransaction`

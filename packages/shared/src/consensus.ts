@@ -7,10 +7,13 @@
  *
  * Decision (first match wins):
  *
- *   1. fewer than 3 usable voters                    → AMBIGUOUS
- *   2. largest agreement group has fewer than 3 members → AMBIGUOUS
+ *   1. fewer than `minVoters` usable voters            → AMBIGUOUS
+ *   2. largest agreement group has fewer than `minGroup` members → AMBIGUOUS
  *   3. largest group is not a strict majority (g > n/2) → AMBIGUOUS
  *   4. otherwise → CONSENSUS on that group; everyone outside it is a dissenter.
+ *
+ * Both floors default to 3 and are relaxed per-method by the caller from the
+ * method's structural panel size (`consensusFloorsForMethod()`, providers.ts).
  *
  * Worked examples (n = usable voters):
  *
@@ -25,12 +28,21 @@
  *   n=3, split 2-1     → ambiguous under the default floor (largest=2 < 3).
  *                        On methods whose STRUCTURAL panel is 3 voters
  *                        (a provider is declared unsupported_methods, e.g.
- *                        simulateBundle / getTransactionsForAddress), the
- *                        caller lowers `minGroup` to 2 and this becomes
- *                        consensus with one dissenter — two byte-equal
- *                        agreements out of three independent providers is
- *                        treated as decisive.
- *   n<3                → ambiguous (too few voters; e.g. ≥3 timeouts)
+ *                        simulateBundle), the caller lowers `minGroup` to 2 and
+ *                        this becomes consensus with one dissenter — two
+ *                        byte-equal agreements out of three independent
+ *                        providers is treated as decisive.
+ *   n=2, split 2-0     → ambiguous under the default floors. On methods whose
+ *                        STRUCTURAL panel is only 2 voters (e.g.
+ *                        getTransactionsForAddress, where QuickNode, Chainstack
+ *                        and Triton are all declared unsupported) the caller
+ *                        lowers BOTH floors to 2 and this becomes consensus
+ *                        with no dissenters — a pairwise agreement check rather
+ *                        than a majority vote. See consensusFloorsForMethod()
+ *                        in providers.ts and docs/methodology.md.
+ *   n=2, split 1-1     → ambiguous even at minGroup=2 (no strict majority) —
+ *                        a 2-voter panel can never attribute a deviation.
+ *   n<2                → ambiguous (too few voters; e.g. ≥3 timeouts)
  *
  * The `match` predicate is method-specific: byte-equal hash for immutable
  * methods, Jaccard ≥ 0.8 for sigs, slot tolerance for getSlot.
@@ -75,6 +87,19 @@ export interface ConsensusVote {
 export const MIN_CONSENSUS_GROUP = 3;
 /** Minimum usable voters (responding providers) for any consensus to form. */
 export const MIN_CONSENSUS_VOTERS = 3;
+
+/**
+ * The two per-method consensus floors, derived from a method's structural
+ * panel size by `consensusFloorsForMethod()` (providers.ts) and threaded into
+ * `decideConsensus()`. Both default to 3; methods whose panel is structurally
+ * smaller relax them (see that function).
+ */
+export interface ConsensusFloors {
+  /** Floor for the majority-group size, on top of the strict-majority rule. */
+  minGroup: number;
+  /** Minimum usable voters for any consensus to form. */
+  minVoters: number;
+}
 
 /**
  * Group voters by the `match` predicate (transitive within a group; the first
@@ -124,22 +149,15 @@ export function byteEqualHash(
 export function decideConsensus<R>(
   voters: readonly Voter<R>[],
   match: (a: Voter<R>["projection"], b: Voter<R>["projection"]) => boolean = byteEqualHash,
-  opts?: {
-    /**
-     * Override of the majority-group floor (default MIN_CONSENSUS_GROUP).
-     * Pass 2 for methods whose structural panel is 3 voters so a 2-1 split
-     * decides instead of requiring unanimity. The strict-majority rule and
-     * the MIN_CONSENSUS_VOTERS floor still apply unchanged.
-     */
-    minGroup?: number;
-  },
+  opts?: Partial<ConsensusFloors>,
 ): ConsensusOutcome<R> {
   const minGroup = opts?.minGroup ?? MIN_CONSENSUS_GROUP;
+  const minVoters = opts?.minVoters ?? MIN_CONSENSUS_VOTERS;
   const n = voters.length;
-  if (n < MIN_CONSENSUS_VOTERS) {
+  if (n < minVoters) {
     return {
       kind: "ambiguous",
-      reason: `only ${n} usable voter(s); need >= ${MIN_CONSENSUS_VOTERS}`,
+      reason: `only ${n} usable voter(s); need >= ${minVoters}`,
     };
   }
 
