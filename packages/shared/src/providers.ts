@@ -1,3 +1,4 @@
+import { MIN_CONSENSUS_GROUP, MIN_CONSENSUS_VOTERS, type ConsensusFloors } from "./consensus.js";
 import type { Method, SendTargetConfig, SendTargetId } from "./types.js";
 
 /**
@@ -154,6 +155,19 @@ export const PROVIDERS: readonly ProviderRow[] = [
     data_centers: [{ locations: "undisclosed" }],
     pricing: { monthly_cost_usd: 0 },
     anti_gaming_flags: [],
+    // getTransactionsForAddress: Triton served this compatibly (byte-equal with
+    // Helius and Alchemy) and then dropped it — the endpoint now returns -32601
+    // "Method not found" for it, 100% of calls, while every other method on the
+    // same endpoint stays healthy. Verified live 2026-08-20 (direct probe) and
+    // against the fleet (all retained samples `rpc_error`, zero `correct`).
+    // Left undeclared, its error body scored as a `correctness_failure` on a
+    // method its tier no longer serves AND kept the panel at 2 usable voters
+    // against a 3-voter floor, so every gTFA challenge fleet-wide resolved
+    // `no_consensus` ("only 2 usable voter(s); need >= 3") — the method went
+    // dark on the boards. Declaring it unsupported drops Triton from the
+    // method's panel (2 voters: Helius, Alchemy) and, via
+    // consensusFloorsForMethod() below, relaxes both consensus floors to 2.
+    unsupported_methods: ["getTransactionsForAddress"],
     website: "https://triton.one",
     // Send path: plain JSON-RPC sendTransaction on the standard read endpoint, no tip.
     sends: true,
@@ -292,16 +306,57 @@ export const UTILITY_PROVIDER = PROVIDERS.find((p) => p.utility);
  * Structural voter-panel size for a method: how many of the full benchmarked
  * roster (BENCHMARKED_PROVIDERS, not a per-run configured subset) serve it,
  * i.e. don't declare it in `unsupported_methods`. Single source of truth for
- * the "is this method's structural panel exactly 3 voters" check — both
- * packages/runner/src/record.ts's `decideForMode` (deciding the actual
- * `minGroup` override) and apps/cli/src/mode.ts's `minGroupForMethod`
- * (mirroring that decision for the CLI's report label) call this instead of
- * each re-implementing the same filter, so the two can no longer drift apart.
+ * the per-method panel size — `consensusFloorsForMethod()` below is the only
+ * thing that turns it into consensus thresholds, so the runner and the CLI
+ * can no longer drift apart on that derivation.
  */
 export function structuralPanelSize(method: Method): number {
   return BENCHMARKED_PROVIDERS.filter(
     (p) => !(p.unsupported_methods?.includes(method) ?? false),
   ).length;
+}
+
+/**
+ * The consensus floors for a method, derived from its structural panel size.
+ * Single source of truth for both packages/runner/src/record.ts's
+ * `decideForMode` (the thresholds actually applied) and apps/cli/src/mode.ts
+ * (mirroring them for the CLI's report label).
+ *
+ *   panel ≥ 4  → { minGroup: 3, minVoters: 3 }  the default regime: a ≥3
+ *                agreement group that is also a strict majority.
+ *   panel = 3  → { minGroup: 2, minVoters: 3 }  all three must answer, and a
+ *                2-1 split is decided in the pair's favour (the lone deviator
+ *                is attributed). e.g. simulateBundle.
+ *   panel ≤ 2  → { minGroup: 2, minVoters: 2 }  a pairwise agreement check:
+ *                both voters must answer and agree, and a 1-1 split stays
+ *                `no_consensus` because there is nothing to break the tie.
+ *                e.g. getTransactionsForAddress (only Helius and Alchemy still
+ *                serve it comparably). Weaker than a majority vote — two
+ *                providers agreeing on the same wrong answer is
+ *                indistinguishable from correct — and documented as such in
+ *                docs/methodology.md; the alternative is scoring the method not
+ *                at all.
+ *
+ * Deliberately keyed off the full static registry, not CONFIGURED_BENCHMARKED():
+ * this backs both the worker/generator path (env-configured, registry ids) and
+ * the CLI (`apps/cli/src/index.ts`), whose providers get synthetic `byo-N` ids
+ * and typically never populate the registry's env vars at all —
+ * CONFIGURED_BENCHMARKED() would collapse to empty for nearly every real CLI
+ * run, silently disabling these relaxations. Known trade-off: a
+ * worker/generator reproducer who deliberately configures fewer than all
+ * registered providers (README explicitly allows this) gets these floors
+ * computed against the full registry, not their actual subset — see
+ * docs/methodology.md.
+ */
+export function consensusFloorsForMethod(method: Method): ConsensusFloors {
+  const panel = structuralPanelSize(method);
+  return {
+    minGroup: panel <= 3 ? 2 : MIN_CONSENSUS_GROUP,
+    // Floored at 2: a method nobody (or only one provider) serves has no
+    // comparison to make, and must stay unscorable rather than letting a
+    // single voter — or an empty panel — "decide".
+    minVoters: Math.max(2, Math.min(panel, MIN_CONSENSUS_VOTERS)),
+  };
 }
 
 /** Public dashboard-route slug for a provider (its id). */

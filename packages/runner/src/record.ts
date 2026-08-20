@@ -13,9 +13,11 @@
  *   1. Project each provider's response. Skip providers whose tier doesn't
  *      serve this method (ProviderRow.unsupported_methods — e.g. QuickNode
  *      on simulateBundle).
- *   2. Decide consensus across the projections that succeeded. ≥3 usable
- *      voters AND a strict majority of ≥3 members → consensus; else
- *      ambiguous (all samples for this mode dropped from scoring).
+ *   2. Decide consensus across the projections that succeeded, against the
+ *      method's floors (consensusFloorsForMethod — 3 usable voters and a
+ *      strict majority of ≥3 by default, both relaxed on the reduced-panel
+ *      methods) → consensus; else ambiguous (all samples for this mode
+ *      dropped from scoring).
  *   3. Stamp each provider's row: majority voter → correct (or stale via
  *      handler's freshness rule); dissenter → handler.classify decides
  *      between incorrect and stale; non-voter → ambiguous with the
@@ -30,11 +32,10 @@ import type { ConsensusLogRow, SampleRow } from "@rpcbench/db";
 import {
   BENCHMARKED_PROVIDERS,
   METHODOLOGY_VERSION,
-  MIN_CONSENSUS_VOTERS,
   byteEqualHash,
+  consensusFloorsForMethod,
   decideConsensus,
   describeVotes,
-  structuralPanelSize,
   type CanonicalProjection,
   type ConsensusOutcome,
   type Correctness,
@@ -232,41 +233,28 @@ function decideForMode(
     };
   }
 
-  // Structural panel size for this method: benchmarked providers whose tier
-  // serves it. On a 3-voter panel (e.g. simulateBundle /
-  // getTransactionsForAddress, where QuickNode and Chainstack are both
-  // declared unsupported) a 2-1 split decides — requiring the default ≥3
-  // group there means unanimity, which can never attribute a deviation to the
-  // lone dissenter. Two byte-equal agreements out of three independent
-  // providers is treated as decisive.
-  //
-  // structuralPanelSize() is deliberately keyed off the full static registry,
-  // not CONFIGURED_BENCHMARKED(): this same function backs both the
-  // worker/generator path (env-configured, registry ids) and the CLI
-  // (`apps/cli/src/index.ts`), whose providers get synthetic `byo-N` ids and
-  // typically never populate the registry's env vars at all —
-  // CONFIGURED_BENCHMARKED() would collapse to empty for nearly every real
-  // CLI run, silently disabling this relaxation. Known trade-off: a
-  // worker/generator reproducer who deliberately configures fewer than all
-  // registered providers (README explicitly allows this) gets this threshold
-  // computed against the full registry, not their actual subset — see
-  // docs/methodology.md.
-  const methodPanelSize = structuralPanelSize(method);
-  const consensus = decideConsensus(
-    voters,
-    match,
-    methodPanelSize === 3 ? { minGroup: 2 } : undefined,
-  );
+  // Per-method consensus floors, derived from the method's structural panel
+  // size (benchmarked providers whose tier serves it). A 3-voter panel (e.g.
+  // simulateBundle) relaxes minGroup to 2 so a 2-1 split can attribute the
+  // lone deviator instead of demanding unanimity; a 2-voter panel (e.g.
+  // getTransactionsForAddress, after Triton dropped it) relaxes minVoters to 2
+  // as well, or the method can never be scored at all. See
+  // consensusFloorsForMethod() for the full table and the trade-offs,
+  // including why it's keyed off the static registry rather than the
+  // per-run configured subset.
+  const floors = consensusFloorsForMethod(method);
+  const consensus = decideConsensus(voters, match, floors);
 
-  // Hybrid liveness fallback: a real (≥3-voter) panel formed but no value-
+  // Hybrid liveness fallback: a real (full-panel) vote formed but no value-
   // majority emerged — the value churned across the parallel reads. Score on
-  // freshness rather than dropping. Gated on voter COUNT (not just
-  // `kind === "ambiguous"`) so the <3-voter degraded-panel case stays
-  // `no_consensus` and never inflates the correctness denominator.
+  // freshness rather than dropping. Gated on voter COUNT against the same
+  // per-method floor (not just `kind === "ambiguous"`) so the degraded-panel
+  // case — fewer voters than the method needs — stays `no_consensus` and never
+  // inflates the correctness denominator.
   const livenessFallbackActive =
     HANDLERS[method].livenessFallback != null &&
     consensus.kind === "ambiguous" &&
-    voters.length >= MIN_CONSENSUS_VOTERS;
+    voters.length >= floors.minVoters;
 
   const voterDescriptions = describeVotes(voters, consensus);
 

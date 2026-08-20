@@ -12,29 +12,30 @@
  *    `buildRowsForMode`, gated on `!input.is_honeypot`).
  *
  *  - **consensus** (default, ≥3 endpoints): normal challenges, correctness by
- *    majority vote among the user's endpoints. `minGroup` is method-derived from
- *    the global benchmarked roster via the shared `structuralPanelSize()`
- *    (also used by record.ts's `decideForMode`): 3 for most methods, 2 for
- *    the two methods whose full roster panel is structurally 3 voters (two
- *    roster providers declare them unsupported). So at exactly 3 endpoints,
- *    minGroup=3 methods need unanimity (a 2-1 dissent is dropped as
- *    no_consensus, not attributed) while minGroup=2 methods attribute the
- *    dissenter. Uniform dissent detection arrives at ≥5 endpoints.
+ *    majority vote among the user's endpoints. The floors are method-derived
+ *    from the global benchmarked roster via the shared
+ *    `consensusFloorsForMethod()` (also used by record.ts's `decideForMode`):
+ *    minGroup 3 for most methods, 2 for methods whose full roster panel is
+ *    structurally ≤3 voters (roster providers declare them unsupported). So at
+ *    exactly 3 endpoints, minGroup=3 methods need unanimity (a 2-1 dissent is
+ *    dropped as no_consensus, not attributed) while minGroup=2 methods
+ *    attribute the dissenter. Uniform dissent detection arrives at ≥5
+ *    endpoints.
  *
  * With <3 endpoints and no reference, correctness simply can't form → n/a; only
  * latency / reliability / freshness are reported.
  */
 
-import { MIN_CONSENSUS_VOTERS, structuralPanelSize, type Method } from "@rpcbench/shared";
+import { MIN_CONSENSUS_VOTERS, consensusFloorsForMethod, type Method } from "@rpcbench/shared";
 import type { CliConfig } from "./config.js";
 
 /**
- * Replicates the `minGroup` `buildSampleRows` (record.ts's `decideForMode`)
- * will derive for a method, via the same shared `structuralPanelSize()`: a
- * 3-provider structural panel relaxes minGroup to 2.
+ * The `minGroup` `buildSampleRows` (record.ts's `decideForMode`) will derive
+ * for a method, read off the same shared `consensusFloorsForMethod()`: a
+ * structural panel of ≤3 providers relaxes minGroup to 2.
  */
-export function minGroupForMethod(method: Method): 2 | 3 {
-  return structuralPanelSize(method) === 3 ? 2 : 3;
+export function minGroupForMethod(method: Method): number {
+  return consensusFloorsForMethod(method).minGroup;
 }
 
 export type CorrectnessMode = "vs-reference" | "consensus" | "n/a";
@@ -79,8 +80,8 @@ export function determineRegime(config: CliConfig, referenceLabel: string): Regi
     detail = `minGroup=${[...minGroups][0]} across selected methods`;
   } else {
     detail =
-      `minGroup 2–3, varies by method: simulateBundle / getTransactionsForAddress ` +
-      `use 2, the rest 3`;
+      `minGroup 2–3, varies by method: the reduced-panel methods ` +
+      `(simulateBundle, getTransactionsForAddress) use 2, the rest 3`;
   }
 
   let caveat = "";

@@ -10,9 +10,15 @@
  *            older slot → stale.
  *   Fix 2 — BorshIoError serialization skew normalizes away → the dissenter agrees.
  *   Fix 3 — quota/rate-limit body → operational_error (no-fault).
+ *
+ * Plus the reduced-panel regime: getTransactionsForAddress is down to two
+ * structural voters (Helius, Alchemy), so both consensus floors relax to 2 and
+ * the two of them agreeing scores the method instead of every challenge dying
+ * as `no_consensus`. See consensusFloorsForMethod() in providers.ts.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { getTransactionsForAddress } from "@rpcbench/methods";
 import type { Method } from "@rpcbench/shared";
 import { buildSampleRows, type BuildSampleRowsInput } from "./record.js";
 import type { ProviderCallResult, SingleResult } from "./fanout.js";
@@ -57,7 +63,19 @@ function run(
   bodies: Record<string, string>,
   tips: Record<string, bigint>,
 ) {
-  const fanoutResults: ProviderCallResult[] = PANEL.map((id) => {
+  return runPanel(PANEL, method, bucket, bodies, tips);
+}
+
+/** `run` over an explicit panel — the reduced-panel methods need the full
+ *  5-provider roster, including the ones declared unsupported. */
+function runPanel(
+  panel: readonly string[],
+  method: Method,
+  bucket: string,
+  bodies: Record<string, string>,
+  tips: Record<string, bigint>,
+) {
+  const fanoutResults: ProviderCallResult[] = panel.map((id) => {
     const s = ok(bodies[id]!);
     return { provider_id: id, endpoint_used: `https://${id}`, cold: s, warm: s };
   });
@@ -74,7 +92,7 @@ function run(
     is_honeypot: false,
     archive: false,
     fanoutResults,
-    provider_tip_slots: new Map(PANEL.map((id) => [id, tips[id]!])),
+    provider_tip_slots: new Map(panel.map((id) => [id, tips[id]!])),
     startedAt: new Date(0),
   };
   const { rows } = buildSampleRows(input);
@@ -144,4 +162,106 @@ test("control: without normalization a REAL err difference stays incorrect", () 
   };
   const rows = run("getBlock", "last_hour__low", bodies, AGREE_TIPS);
   assert.equal(rows.helius!.correctness, "incorrect");
+});
+
+// ── Reduced-panel consensus (getTransactionsForAddress) ────────────────
+
+const GTFA_SIGS_BUCKET = getTransactionsForAddress.GTFA_SIGS_BUCKET;
+const GTFA_PANEL = ["helius", "triton", "alchemy", "quicknode", "chainstack"] as const;
+const GTFA_TIPS = Object.fromEntries(GTFA_PANEL.map((id) => [id, 100n]));
+
+/** Signatures-mode gTFA body — `data` entries plus the dropped cursor. */
+function gtfaBody(sigs: Array<{ signature: string; slot: number }>): string {
+  return result({
+    data: sigs.map((e) => ({ ...e, err: null, memo: null, blockTime: 1, confirmationStatus: "finalized" })),
+    paginationToken: "cursor-differs-per-provider",
+  });
+}
+function methodNotFoundBody(): string {
+  return JSON.stringify({
+    jsonrpc: "2.0",
+    id: 1,
+    error: { code: -32601, message: "Method not found" },
+  });
+}
+
+const GTFA_ANSWER = gtfaBody([
+  { signature: "sigA", slot: 90 },
+  { signature: "sigB", slot: 91 },
+]);
+
+test("gTFA: the 2 remaining voters agreeing → both correct (was no_consensus)", () => {
+  const rows = runPanel(GTFA_PANEL, "getTransactionsForAddress", GTFA_SIGS_BUCKET, {
+    helius: GTFA_ANSWER,
+    alchemy: GTFA_ANSWER,
+    // Triton dropped the method; QuickNode's variant is non-comparable;
+    // Chainstack never served it. All three are declared unsupported.
+    triton: methodNotFoundBody(),
+    quicknode: GTFA_ANSWER,
+    chainstack: methodNotFoundBody(),
+  }, GTFA_TIPS);
+
+  assert.equal(rows.helius!.correctness, "correct");
+  assert.equal(rows.helius!.exclusion_reason, null);
+  assert.equal(rows.alchemy!.correctness, "correct");
+  assert.equal(rows.alchemy!.exclusion_reason, null);
+});
+
+test("gTFA: Triton's -32601 is tier_method_unsupported, not a correctness failure", () => {
+  const rows = runPanel(GTFA_PANEL, "getTransactionsForAddress", GTFA_SIGS_BUCKET, {
+    helius: GTFA_ANSWER,
+    alchemy: GTFA_ANSWER,
+    triton: methodNotFoundBody(),
+    quicknode: GTFA_ANSWER,
+    chainstack: methodNotFoundBody(),
+  }, GTFA_TIPS);
+
+  for (const id of ["triton", "quicknode", "chainstack"]) {
+    assert.equal(rows[id]!.correctness, "ambiguous", id);
+    assert.equal(rows[id]!.exclusion_reason, "tier_method_unsupported", id);
+  }
+});
+
+test("gTFA: the 2 voters disagreeing → no_consensus for both (no tie-breaker)", () => {
+  const rows = runPanel(GTFA_PANEL, "getTransactionsForAddress", GTFA_SIGS_BUCKET, {
+    helius: GTFA_ANSWER,
+    alchemy: gtfaBody([{ signature: "sigA", slot: 90 }]),
+    triton: methodNotFoundBody(),
+    quicknode: GTFA_ANSWER,
+    chainstack: methodNotFoundBody(),
+  }, GTFA_TIPS);
+
+  for (const id of ["helius", "alchemy"]) {
+    assert.equal(rows[id]!.correctness, "ambiguous", id);
+    assert.equal(rows[id]!.exclusion_reason, "no_consensus", id);
+  }
+});
+
+test("gTFA: one voter timing out → no_consensus (a lone voter never decides)", () => {
+  const fanoutResults: ProviderCallResult[] = GTFA_PANEL.map((id) => {
+    const s: SingleResult =
+      id === "alchemy"
+        ? { latency_ms: 5000, status: "timeout", http_status: null, error_code: "timeout", body: null, timeout_ms: 5000 }
+        : ok(id === "triton" || id === "chainstack" ? methodNotFoundBody() : GTFA_ANSWER);
+    return { provider_id: id, endpoint_used: `https://${id}`, cold: s, warm: s };
+  });
+  const { rows } = buildSampleRows({
+    challenge_id: "t",
+    method: "getTransactionsForAddress",
+    bucket: GTFA_SIGS_BUCKET,
+    worker_provider: "aws",
+    region: "us-east-1",
+    worker_id: "w1",
+    egress_path: "direct",
+    reference_hash: Buffer.alloc(0),
+    reference_tip_slot: 100n,
+    is_honeypot: false,
+    archive: false,
+    fanoutResults,
+    provider_tip_slots: new Map(GTFA_PANEL.map((id) => [id, 100n])),
+    startedAt: new Date(0),
+  });
+  const helius = rows.find((r) => r.provider_id === "helius" && r.connection_mode === "cold")!;
+  assert.equal(helius.correctness, "ambiguous");
+  assert.equal(helius.exclusion_reason, "no_consensus");
 });
