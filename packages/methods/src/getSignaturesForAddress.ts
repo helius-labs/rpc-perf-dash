@@ -96,7 +96,7 @@ const DROP_KEYS = new Set(["blockTime", "memo"]);
  *
  * Why: live multi-provider probing showed two distinct
  * "finalized" semantics across the ecosystem. Helius / Helius Gatekeeper /
- * Triton returned identical lists. Alchemy / Flux / QuickNode returned lists
+ * Triton returned identical lists. Alchemy / Flux / Quicknode returned lists
  * shifted ~30 slots (~12s) newer — they treated freshly-finalized signatures
  * as eligible sooner than the first group. SF Public sat in between with the
  * same set as the first group but a different order.
@@ -301,7 +301,7 @@ async function deriveTipAnchoredSigsChallenge(
  * on the tip of the sig list:
  *
  *   Camp A:  Helius, Triton          — strictest "finalized" semantics
- *   Camp B:  Alchemy, QuickNode, Flux — ~14 slots more aggressive
+ *   Camp B:  Alchemy, Quicknode, Flux — ~14 slots more aggressive
  *   Camp C:  SF Public               — 1-slot lag from Camp A
  *
  * For tip-active addresses with small `limit`, each camp's returned list lives

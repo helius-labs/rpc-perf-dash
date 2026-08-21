@@ -11,7 +11,7 @@
  *
  * Flow per mode (cold / warm — independent votes):
  *   1. Project each provider's response. Skip providers whose tier doesn't
- *      serve this method (ProviderRow.unsupported_methods — e.g. QuickNode
+ *      serve this method (ProviderRow.unsupported_methods — e.g. Quicknode
  *      on simulateBundle).
  *   2. Decide consensus across the projections that succeeded, against the
  *      method's floors (consensusFloorsForMethod — 3 usable voters and a
@@ -193,7 +193,7 @@ function decideForMode(
 
     // Tier-unsupported providers can never vote, so skip projection entirely —
     // a provider serving a non-comparable variant (getTransactionsForAddress on
-    // QuickNode) returns real data, potentially multi-MB, and parsing it per
+    // Quicknode) returns real data, potentially multi-MB, and parsing it per
     // mode per vantage buys nothing. The stub's `outcome` is never consulted:
     // decideProviderOutcome returns `tier_method_unsupported` before reading it.
     const attempt: ProjectAttempt = isUnsupported
@@ -653,7 +653,7 @@ function safeParse(s: string): unknown {
 
 /**
  * Tier-unsupported rows are flagged on EVERY challenge by construction, and a
- * provider serving a non-comparable variant of a method (QuickNode on
+ * provider serving a non-comparable variant of a method (Quicknode on
  * getTransactionsForAddress) returns real data — potentially multi-MB —
  * rather than simulateBundle's tiny -32601 error body. The verbatim body has
  * no scoring value (the provider isn't in the panel for the method), so keep

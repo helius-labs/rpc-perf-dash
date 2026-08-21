@@ -45,7 +45,7 @@ export interface GetTokenLargestAccountsParams {
   options: { commitment: "finalized" };
 }
 
-/** Spec caps this method at the 20 largest holders, but some providers (QuickNode)
+/** Spec caps this method at the 20 largest holders, but some providers (Quicknode)
  *  return up to 100. Cap the PROJECTION to the top-20-by-amount so a longer list
  *  isn't a false mismatch against the panel's 20 — its top-20 is what we compare. */
 const TOP_N = 20;

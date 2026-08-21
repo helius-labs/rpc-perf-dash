@@ -2,7 +2,7 @@
  * getTransactionsForAddress method handlers.
  *
  * Custom (non-standard) address-history method, now served compatibly by
- * Helius and Alchemy only. QuickNode serves a non-comparable variant
+ * Helius and Alchemy only. Quicknode serves a non-comparable variant
  * (bare-array result, always-full details, slot filter ignored), Chainstack
  * doesn't serve it, and Triton dropped it (-32601 as of 2026-08-20) — see the
  * `unsupported_methods` comments in packages/shared/src/providers.ts. The panel

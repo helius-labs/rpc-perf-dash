@@ -2,7 +2,7 @@
  * Run: `pnpm --filter @rpcbench/methods test` (node:test via tsx).
  *
  * Fix 4: the projection must cap to the top-20 holders BY AMOUNT before hashing,
- * so a provider returning up to 100 accounts (QuickNode) still hashes equal to a
+ * so a provider returning up to 100 accounts (Quicknode) still hashes equal to a
  * provider returning the spec'd 20 — as long as the largest-20 agree.
  */
 import { test } from "node:test";
@@ -33,7 +33,7 @@ const dust80: Array<[string, number]> = Array.from({ length: 80 }, (_, i) => [
 
 test("gTLA: 100-account response hashes equal to the 20-account response (same top-20)", () => {
   const twenty = handlers.project(resp(top20));
-  // Panel-style 20. QuickNode-style 100 = the same 20 largest + 80 dust, shuffled.
+  // Panel-style 20. Quicknode-style 100 = the same 20 largest + 80 dust, shuffled.
   const hundred = handlers.project(resp([...dust80, ...top20].reverse()));
   assert.deepEqual(hundred.hash, twenty.hash);
 });

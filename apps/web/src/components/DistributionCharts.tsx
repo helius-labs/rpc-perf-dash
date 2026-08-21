@@ -322,7 +322,7 @@ export function DensityChart({ series }: ChartProps) {
 
 const BOX_ROW_H = 46;
 const BOX_TOP = 30; // headroom above the first row
-const BOX_LABEL_X = 3; // provider names left-aligned in the gutter (avoids clipping long names like "QuickNode" off the left edge)
+const BOX_LABEL_X = 3; // provider names left-aligned in the gutter (avoids clipping long names like "Quicknode" off the left edge)
 
 interface BoxHover {
   pIdx: number;

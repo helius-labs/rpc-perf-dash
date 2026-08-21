@@ -23,7 +23,7 @@ DB schema, infra, and fixes. Methodology and scoring behavior is documented in
   Additive — read scoring semantics are unchanged, so no read-methodology
   redeploy is required.
 - Send targets: the **5 benchmarked read providers** (Helius, Alchemy, Triton,
-  QuickNode, Chainstack). We measure plain JSON-RPC `sendTransaction` on each
+  Quicknode, Chainstack). We measure plain JSON-RPC `sendTransaction` on each
   provider's standard endpoint — **no tips, no relays, no premium send paths** —
   an apples-to-apples landing comparison. Sends reuse the already-seeded read
   URLs, so there are **no new worker secrets**.
@@ -38,10 +38,10 @@ DB schema, infra, and fixes. Methodology and scoring behavior is documented in
 ## 1.1.0 — 2026-07-23
 
 - Added Chainstack to the benchmarked panel (now five providers: Helius,
-  Triton, Alchemy, QuickNode, Chainstack). Verified live against a Chainstack
+  Triton, Alchemy, Quicknode, Chainstack). Verified live against a Chainstack
   mainnet endpoint across all ~45 emitted methods: `simulateBundle` and
   `getTransactionsForAddress` aren't served (Jito extension / custom indexer
-  API, same as the existing QuickNode exclusions), and `getTokenLargestAccounts`
+  API, same as the existing Quicknode exclusions), and `getTokenLargestAccounts`
   is restricted to dedicated nodes on the shared tier. Every other method is
   fully supported.
 - Bumped `METHODOLOGY_VERSION` to 4: adding Chainstack changes
@@ -57,7 +57,7 @@ DB schema, infra, and fixes. Methodology and scoring behavior is documented in
 First public release.
 
 - Majority-consensus correctness across the benchmarked panel (Helius, Triton,
-  Alchemy, QuickNode), with honeypot spot-checks as the anti-gaming backstop.
+  Alchemy, Quicknode), with honeypot spot-checks as the anti-gaming backstop.
 - ~45 read methods with per-method projection and equivalence rules.
 - Commit-reveal challenge protocol with a 30s TTL and honeypot spot-checks.
 - Per-region, per-egress vantages; filterable leaderboard scoring latency, win

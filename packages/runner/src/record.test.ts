@@ -194,7 +194,7 @@ test("gTFA: the 2 remaining voters agreeing → both correct (was no_consensus)"
   const rows = runPanel(GTFA_PANEL, "getTransactionsForAddress", GTFA_SIGS_BUCKET, {
     helius: GTFA_ANSWER,
     alchemy: GTFA_ANSWER,
-    // Triton dropped the method; QuickNode's variant is non-comparable;
+    // Triton dropped the method; Quicknode's variant is non-comparable;
     // Chainstack never served it. All three are declared unsupported.
     triton: methodNotFoundBody(),
     quicknode: GTFA_ANSWER,

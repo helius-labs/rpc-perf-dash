@@ -50,7 +50,7 @@ const state = {
 };
 
 // Secret-bearing env values to scrub from captured lines. Provider URLs can
-// embed keys in the PATH (QuickNode/Alchemy style), so value-based matching
+// embed keys in the PATH (Quicknode/Alchemy style), so value-based matching
 // is required — `api-key=` pattern regexes alone would miss them. Unset/empty
 // vars are skipped (the CF container env carries only a subset of these).
 const SECRET_ENV_VARS = [

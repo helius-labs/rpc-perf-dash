@@ -252,7 +252,7 @@ const ENDPOINTS: EndpointSpec[] = [
     response: `{
   "meta": {
     "a": "helius", "b": "quicknode",
-    "a_name": "Helius", "b_name": "QuickNode",
+    "a_name": "Helius", "b_name": "Quicknode",
     "a_slug": "helius", "b_slug": "quicknode",
     "method": "getTransaction",
     "connection_mode": "cold",

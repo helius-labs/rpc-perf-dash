@@ -1,7 +1,7 @@
 /**
  * simulateBundle — Archetype F (simulation, byte-equal). Jito extension.
  *
- * NOT served by QuickNode (declared unsupported in providers.ts) → 3-voter
+ * NOT served by Quicknode (declared unsupported in providers.ts) → 3-voter
  * panel (Helius, Triton, Alchemy). Simulates a one-transaction bundle (the same
  * Memo tx as simulateTransaction). simulateBundle's config flags vary by
  * provider; we request `skipSigVerify` + `replaceRecentBlockhash` and build the

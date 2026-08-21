@@ -54,7 +54,7 @@ test("blendRegionScalar: empty map → null", () => {
 });
 
 test("blendRegionScalar: region weighting sinks a low-weight-region specialist", () => {
-  // The mechanism behind the reported inversion (Alchemy vs QuickNode on
+  // The mechanism behind the reported inversion (Alchemy vs Quicknode on
   // getTransaction). A wins big ONLY in na-west (weight 0.05); B wins steadily in
   // the two 0.35-weighted regions. Region-weighting must rank B above A, even
   // though A's single-region win rate (1.0) dwarfs any of B's.

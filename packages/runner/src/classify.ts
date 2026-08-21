@@ -92,7 +92,7 @@ export function categorizeFailure(input: CategorizeFailureInput): CategorizeFail
 
   // Tier-method-unsupported is a known disclosed limitation, not a real
   // failure — distinguish it from other JSON-RPC errors so dashboards don't
-  // surface e.g. QuickNode's missing simulateBundle as a generic "rpc_error".
+  // surface e.g. Quicknode's missing simulateBundle as a generic "rpc_error".
   if (input.exclusion_reason === "tier_method_unsupported") {
     return { failure_category: "tier_unsupported", failure_detail: null };
   }
