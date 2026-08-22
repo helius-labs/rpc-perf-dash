@@ -64,7 +64,7 @@ export interface ProviderRow {
    * In the consensus model, a benchmarked provider listing a method here is
    * treated as a non-voter for that method (its response is a reliability
    * failure, not a correctness vote against the rest of the panel). E.g.
-   * QuickNode and Chainstack don't serve simulateBundle → 3 voters instead of
+   * Quicknode and Chainstack don't serve simulateBundle → 3 voters instead of
    * 5 on that method, and their samples are scored on reliability only.
    *
    * Use sparingly — only when the failure is a tier-level "method not
@@ -189,7 +189,7 @@ export const PROVIDERS: readonly ProviderRow[] = [
     // Alchemy returns -32600 "Unsupported method: getStakeMinimumDelegation on
     // SOLANA_MAINNET"; the other four serve it and agree
     // on value:1. Declaring it unsupported drops Alchemy from that method's
-    // panel (4 voters: Helius, Triton, QuickNode, Chainstack) instead of
+    // panel (4 voters: Helius, Triton, Quicknode, Chainstack) instead of
     // scoring its error body as `incorrect`.
     unsupported_methods: ["getStakeMinimumDelegation"],
     // Send path: plain JSON-RPC sendTransaction on the standard read endpoint, no tip.
@@ -198,7 +198,7 @@ export const PROVIDERS: readonly ProviderRow[] = [
   },
   {
     id: "quicknode",
-    name: "QuickNode",
+    name: "Quicknode",
     benchmarked: true,
     utility: false,
     tier_name: "quicknode_discover",
@@ -208,12 +208,12 @@ export const PROVIDERS: readonly ProviderRow[] = [
     data_centers: [{ locations: "undisclosed" }],
     pricing: { monthly_cost_usd: 0 },
     anti_gaming_flags: [],
-    // simulateBundle is a Jito extension; QuickNode's Discover tier returns
-    // -32601 (Method not found) for it. Declaring it unsupported drops QuickNode
+    // simulateBundle is a Jito extension; Quicknode's Discover tier returns
+    // -32601 (Method not found) for it. Declaring it unsupported drops Quicknode
     // from that method's panel (3 voters: Helius, Triton, Alchemy) instead of
     // penalizing it on reliability.
     //
-    // getTransactionsForAddress: QuickNode serves a NON-COMPARABLE variant,
+    // getTransactionsForAddress: Quicknode serves a NON-COMPARABLE variant,
     // not an error: bare-array result instead of the
     // {data, paginationToken} envelope; always full transaction details
     // (ignores transactionDetails: "signatures"); ignores filters.slot.lte
@@ -223,7 +223,7 @@ export const PROVIDERS: readonly ProviderRow[] = [
     // non-voter by construction.
     unsupported_methods: ["simulateBundle", "getTransactionsForAddress"],
     website: "https://www.quicknode.com",
-    notes: "QuickNode endpoint URL embeds the key.",
+    notes: "Quicknode endpoint URL embeds the key.",
     // Send path: plain JSON-RPC sendTransaction on the standard read endpoint
     // (URL embeds the key), no tip — same call as every other provider.
     sends: true,

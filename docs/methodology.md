@@ -69,27 +69,27 @@ separately:
 | No clear majority (e.g. a 2–2 tie) | Skipped — too close to call |
 | A clear majority agrees | That group is **correct**; anyone who disagrees is **wrong** |
 
-**Who votes.** The panel is **Helius, Triton, Alchemy, QuickNode, and
+**Who votes.** The panel is **Helius, Triton, Alchemy, Quicknode, and
 Chainstack**, five providers on most methods. If a provider's plan doesn't offer
 a method, it isn't counted for or against on that method.
 
 Some methods have fewer voters, because a panel provider either doesn't offer
 the method or returns it in a format we can't compare against the others:
 
-- `simulateBundle` — three voters (Helius, Triton, Alchemy). Neither QuickNode
+- `simulateBundle` — three voters (Helius, Triton, Alchemy). Neither Quicknode
   nor Chainstack serve it: it's a Jito bundle-simulation extension, and neither
   runs Jito-enabled infra on this tier.
 - `getTransactionsForAddress` — **two** voters (Helius, Alchemy). It's a custom
-  indexer-backed method, not standard Solana JSON-RPC: QuickNode serves a
+  indexer-backed method, not standard Solana JSON-RPC: Quicknode serves a
   non-comparable variant, Chainstack (a standard core RPC node) doesn't serve it
   at all, and Triton — which did serve it compatibly — dropped it in August 2026
   and now returns "Method not found" for it while every other method on the same
   endpoint stays healthy.
-- `getStakeMinimumDelegation` — four voters (Helius, Triton, QuickNode,
+- `getStakeMinimumDelegation` — four voters (Helius, Triton, Quicknode,
   Chainstack). Alchemy returns "unsupported method"; it's a standard method
   everyone else on the panel serves.
 - `getTokenLargestAccounts` — four voters (Helius, Triton, Alchemy,
-  QuickNode). Chainstack's shared tier restricts it to dedicated nodes only.
+  Quicknode). Chainstack's shared tier restricts it to dedicated nodes only.
 
 On `simulateBundle`, the remaining three-voter method, two providers agreeing is
 enough to settle the answer (the third is then the odd one out and scored
@@ -117,7 +117,7 @@ reproducer who runs the full generator/worker/DB stack (this repo's "Option
 B") but deliberately configures fewer than all five provider env vars — fully
 supported, see the README — still gets these fixed thresholds, not ones
 recomputed from their smaller subset. Concretely: a reproducer running only
-Helius+Triton+QuickNode for `getStakeMinimumDelegation` (omitting Chainstack)
+Helius+Triton+Quicknode for `getStakeMinimumDelegation` (omitting Chainstack)
 only ever gets 3 actual votes, but the thresholds are still derived from the
 full 4-voter structural panel, so the relaxed 2-of-3 rule never kicks in —
 those 3 votes must agree unanimously, and a 2-1 split among them is rejected
@@ -279,7 +279,7 @@ similarity threshold, a slot tolerance, or a well-formedness check.
 
 `getTransactionsForAddress` is a non-standard method — an
 indexer-backed address-history API now served comparably by Helius and Alchemy
-only (QuickNode's variant is non-comparable, Chainstack doesn't serve it, and
+only (Quicknode's variant is non-comparable, Chainstack doesn't serve it, and
 Triton dropped it in August 2026; see the consensus section, including the
 caveat that comes with a two-voter panel). Two things differ from its standard
 sibling `getSignaturesForAddress`:
@@ -408,7 +408,7 @@ untouched.
 
 ### Targets
 The **5 benchmarked read RPC providers** — **Helius**, **Alchemy**, **Triton**,
-**QuickNode**, **Chainstack** (send-target id === provider id, each once). We send
+**Quicknode**, **Chainstack** (send-target id === provider id, each once). We send
 **plain JSON-RPC `sendTransaction`** to every provider's **standard endpoint** —
 the identical call for all five, **no tips, no relays, no premium/staked/Jito send
 paths**. The only per-tick lever is the shared adaptive **priority fee** (below),

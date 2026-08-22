@@ -61,7 +61,7 @@ export type Method =
   // Hybrid value (value-majority byte-equal + freshness liveness fallback):
   | "getFeeForMessage"
   // Custom indexer-backed address-history method (Helius/Triton/Alchemy;
-  // QuickNode serves a non-comparable variant → 3-voter panel). Slot-pinned
+  // Quicknode serves a non-comparable variant → 3-voter panel). Slot-pinned
   // challenges, strict byte-equal — Archetype A:
   | "getTransactionsForAddress";
 
@@ -341,7 +341,7 @@ export type ExclusionReason =
    * ProviderRow.unsupported_methods). Sample drops from both correctness and
    * reliability denominators — penalizing a benchmarked provider for a
    * tier-level "method not available" would be double-counting against a
-   * known, disclosed limitation. Example: QuickNode on simulateBundle.
+   * known, disclosed limitation. Example: Quicknode on simulateBundle.
    */
   | "tier_method_unsupported"
   /**

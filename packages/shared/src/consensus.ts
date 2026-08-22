@@ -34,7 +34,7 @@
  *                        providers is treated as decisive.
  *   n=2, split 2-0     → ambiguous under the default floors. On methods whose
  *                        STRUCTURAL panel is only 2 voters (e.g.
- *                        getTransactionsForAddress, where QuickNode, Chainstack
+ *                        getTransactionsForAddress, where Quicknode, Chainstack
  *                        and Triton are all declared unsupported) the caller
  *                        lowers BOTH floors to 2 and this becomes consensus
  *                        with no dissenters — a pairwise agreement check rather
