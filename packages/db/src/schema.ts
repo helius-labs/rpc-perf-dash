@@ -277,7 +277,7 @@ export const samples = pgTable(
   },
   (t) => ({
     // samples_lookup_idx (provider-leading) and samples_dash_idx
-    // (connection_mode-leading) were REMOVED in migration 0003. Both dated from
+    // (connection_mode-leading) were REMOVED on 2026-08-31. Both dated from
     // when the dashboard read raw samples; it reads `rollups` now, and by
     // 2026-08-31 they were serving 15 index scans per partition LIFETIME between
     // them while costing ~890 MB/day of space and of per-INSERT maintenance.

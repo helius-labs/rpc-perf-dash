@@ -5,10 +5,9 @@
  * rollups grain='1d', not raw samples).
  *
  * There is NO archive table. `samples_archived` existed to hold a 30-day tail of
- * rows that still had a `raw_response`, and it was removed on 2026-08-31 (see
- * migration 0003) because it was 84% of a 2.18 TB database while having zero
- * readers — nothing in apps/ or packages/ ever SELECTed it. Two things made it
- * that expensive:
+ * rows that still had a `raw_response`, and it was removed on 2026-08-31 because
+ * it was 84% of a 2.18 TB database while having zero readers — nothing in apps/
+ * or packages/ ever SELECTed it. Two things made it that expensive:
  *
  *   1. It inherited the `raw_response` sizing problem: ~19k honeypot getBlock
  *      rows/day at ~1.8 MB stored each, ~99.75% of which had passed. record.ts
