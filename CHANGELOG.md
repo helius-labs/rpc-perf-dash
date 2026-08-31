@@ -27,8 +27,10 @@ DB schema, infra, and fixes. Methodology and scoring behavior is documented in
   correctness series changes shape twice within version 4 — a step there is a
   rule change, not a provider regression. Documented in
   `docs/methodology.md` § Consensus and on the methodology page.
-- Deploy: generator + workers (no DB migration, no web-only path — the panel
-  size is compiled into `@rpcbench/shared`).
+- Deploy: generator + workers + web (no DB migration). The panel size is
+  compiled into `@rpcbench/shared`, so the generator and every worker lane must
+  ship for scoring to change; web carries the methodology-page and changelog
+  copy and auto-deploys on merge to `main`.
 
 ## 1.2.1 — 2026-08-20
 

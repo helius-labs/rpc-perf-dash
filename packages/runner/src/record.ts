@@ -652,13 +652,17 @@ function safeParse(s: string): unknown {
 }
 
 /**
- * Tier-unsupported rows are flagged on EVERY challenge by construction, and a
- * provider serving a non-comparable variant of a method (Quicknode on
- * getTransactionsForAddress) returns real data — potentially multi-MB —
- * rather than simulateBundle's tiny -32601 error body. The verbatim body has
- * no scoring value (the provider isn't in the panel for the method), so keep
- * only a debuggability prefix. Small bodies (error envelopes) still parse and
- * store whole.
+ * Tier-unsupported rows are flagged on EVERY challenge by construction, and
+ * not all of them carry a tiny -32601 error body: a provider that serves a
+ * NON-COMPARABLE variant of a method returns real data, potentially multi-MB.
+ * The verbatim body has no scoring value either way (the provider isn't in the
+ * panel for the method), so keep only a debuggability prefix. Small bodies
+ * (error envelopes) still parse and store whole.
+ *
+ * No provider is in the non-comparable case today — Quicknode was, on
+ * getTransactionsForAddress, until its variant became byte-comparable in
+ * August 2026 — so this is a standing guard, not dead code: the next
+ * divergent variant must not be able to write multi-MB rows per challenge.
  */
 const TIER_UNSUPPORTED_RAW_PREFIX_CHARS = 2048;
 

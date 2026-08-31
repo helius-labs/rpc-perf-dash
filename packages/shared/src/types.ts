@@ -60,9 +60,9 @@ export type Method =
   | "getLargestAccounts"
   // Hybrid value (value-majority byte-equal + freshness liveness fallback):
   | "getFeeForMessage"
-  // Custom indexer-backed address-history method (Helius/Triton/Alchemy;
-  // Quicknode serves a non-comparable variant → 3-voter panel). Slot-pinned
-  // challenges, strict byte-equal — Archetype A:
+  // Custom indexer-backed address-history method (Helius/Alchemy/Quicknode;
+  // Triton dropped it and Chainstack never served it → 3-voter panel).
+  // Slot-pinned challenges, strict byte-equal — Archetype A:
   | "getTransactionsForAddress";
 
 /**
