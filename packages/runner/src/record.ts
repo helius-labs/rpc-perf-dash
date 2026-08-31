@@ -450,7 +450,7 @@ function buildRowsForMode(
         keepRaw && single.body
           ? exclusion_reason === "tier_method_unsupported"
             ? truncatedTierUnsupportedRaw(single.body)
-            : safeParse(single.body)
+            : cappedRaw(single.body)
           : null,
     });
   }
@@ -675,11 +675,54 @@ function safeParse(s: string): unknown {
  */
 const TIER_UNSUPPORTED_RAW_PREFIX_CHARS = 2048;
 
+/**
+ * UNIVERSAL ceiling on a stored raw_response, applied to every retained body
+ * regardless of method or exclusion_reason. This is the structural half of
+ * bounding DB size, and it is the guard that was missing when the database
+ * reached 2.18 TB on 2026-08-31.
+ *
+ * The lesson from that incident: `keepRaw` is a bound on the NUMBER of rows
+ * that carry a body, and every version of it was correct on its own terms —
+ * but a bound on row count says nothing about bytes, and a getBlock body is
+ * ~1.8 MB stored / ~3.4 MB raw. ~19k retained getBlock rows/day was ~34 GB/day.
+ * Any future change — a new method with large responses, a widened keepRaw
+ * predicate, a provider that starts echoing more data — reopens that hole if
+ * the only defense is a row predicate.
+ *
+ * 32 KiB is ~500x smaller than a getBlock body and still far more than any
+ * forensic read needs: what we actually inspect on a correctness dispute is the
+ * divergent field, and the full body is already summarized by response_hash.
+ * Bodies at or under the cap are stored verbatim, so every error envelope,
+ * getBalance, getTransaction, and getSignaturesForAddress response (the p99 of
+ * which is ~11 KB) is completely unaffected.
+ *
+ * Worst case after this cap: 32 KiB x every sample the fleet writes. At ~5M
+ * samples/day that would be 160 GB/day IF every row were retained — so the cap
+ * bounds the blast radius, it does not replace keepRaw. The two together are
+ * what make the ceiling real: keepRaw holds retention to ~31k rows/day, the cap
+ * holds each of those to 32 KiB, so the product is ~1 GB/day worst case.
+ */
+const RAW_RESPONSE_MAX_CHARS = 32 * 1024;
+
 function truncatedTierUnsupportedRaw(s: string): unknown {
   if (s.length <= TIER_UNSUPPORTED_RAW_PREFIX_CHARS) return safeParse(s);
   return {
     truncated: true,
     original_length: s.length,
     prefix: s.slice(0, TIER_UNSUPPORTED_RAW_PREFIX_CHARS),
+  };
+}
+
+/**
+ * Apply the universal cap. Kept separate from truncatedTierUnsupportedRaw so
+ * the tier-unsupported case keeps its much tighter 2 KiB prefix — this is the
+ * backstop for everything else.
+ */
+export function cappedRaw(s: string): unknown {
+  if (s.length <= RAW_RESPONSE_MAX_CHARS) return safeParse(s);
+  return {
+    truncated: true,
+    original_length: s.length,
+    prefix: s.slice(0, RAW_RESPONSE_MAX_CHARS),
   };
 }

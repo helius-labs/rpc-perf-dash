@@ -28,6 +28,12 @@ import type { DbClient } from "@rpcbench/db";
 
 const REFERENCE_TTL = "6 hours";
 const CONTROL_RETENTION = "31 days";
+// `eligibility` is WRITE-ONLY — see pruneControlTables. It is an audit trail of
+// gate decisions, never a read path, so it does not need the 31-day dashboard
+// window that `challenges` does. It accrues ~865k rows/day (~275 MB/day), which
+// at 31 days was 8.3 GB of a table nothing SELECTs. 3 days keeps enough tail to
+// answer "why was this provider gated yesterday" for ~600 MB.
+const ELIGIBILITY_RETENTION = "3 days";
 
 const TRIM_BATCH = 5_000;
 const DELETE_BATCH = 10_000;
@@ -101,13 +107,17 @@ export async function pruneControlTables(db: DbClient): Promise<number> {
   // eligibility accumulates a fresh row-set per heavy-rollup tick (~288/day)
   // keyed on window_end; it is write-only (the dashboard derives gates inline
   // via eligibilityFloors, never SELECTing it), so anything past the retention
-  // window is safe to drop.
+  // window is safe to drop. Verified 2026-08-31: the only index scans on this
+  // table come from this DELETE itself. It gets its OWN, much shorter retention
+  // (ELIGIBILITY_RETENTION) rather than sharing CONTROL_RETENTION with
+  // `challenges` — challenges is read by /challenges and /runs at up to 31 days,
+  // eligibility is read by nothing.
   for (let i = 0; i < MAX_BATCHES_PER_RUN; i++) {
     const res = await db.execute(sql`
       DELETE FROM eligibility
       WHERE ctid IN (
         SELECT ctid FROM eligibility
-        WHERE window_end < now() - ${sql.raw(`interval '${CONTROL_RETENTION}'`)}
+        WHERE window_end < now() - ${sql.raw(`interval '${ELIGIBILITY_RETENTION}'`)}
         LIMIT ${DELETE_BATCH}
       )
       RETURNING 1

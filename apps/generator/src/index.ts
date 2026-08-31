@@ -723,7 +723,19 @@ async function main() {
   const STORAGE_WATCHDOG_INTERVAL_MS = 2 * 60_000;
   const SAMPLES_STALE_SECS = 180;
   const LONG_TXN_SECS = 300;
-  const DB_SIZE_WARN_BYTES = 150 * 1024 ** 3; // 150 GB — well under prior 1.24 TB blowup
+  // Thresholds recalibrated 2026-08-31 against a ~40 GB steady state (was 150 GB,
+  // a number chosen only as "well under the prior 1.24 TB blowup"). WARN is the
+  // "look at this soon" line; ERROR is the "something is structurally wrong" line.
+  const DB_SIZE_WARN_BYTES = 80 * 1024 ** 3;
+  const DB_SIZE_ERROR_BYTES = 150 * 1024 ** 3;
+  // The RATE alarm, and the most important one here. A cumulative-total
+  // threshold is a LAGGING indicator whenever retention is longer than a day:
+  // the 2026-08-31 incident sat at a 30-day equilibrium, so the database was not
+  // "growing" at all by the time it was 2.18 TB — the config that doomed it had
+  // been correct-looking for a month. Today's partition size is the LEADING
+  // indicator: it goes wrong within hours of a bad write rule shipping. At a
+  // ~3 GB/day steady state, 8 GB is a ~2.5x deviation.
+  const PARTITION_DAY_WARN_BYTES = 8 * 1024 ** 3;
   setInterval(() => {
     (async () => {
       const s = await firstRow<{
@@ -731,6 +743,8 @@ async function main() {
         long_txn_secs: number;
         lock_waiters: number;
         db_bytes: number;
+        today_partition_bytes: number;
+        top_relations: string | null;
       }>(
         db,
         sql`
@@ -742,7 +756,32 @@ async function main() {
              WHERE datname = current_database() AND state <> 'idle' AND xact_start IS NOT NULL) AS long_txn_secs,
           (SELECT count(*)::int FROM pg_stat_activity
              WHERE datname = current_database() AND wait_event_type = 'Lock') AS lock_waiters,
-          pg_database_size(current_database())::bigint AS db_bytes
+          pg_database_size(current_database())::bigint AS db_bytes,
+          -- Today's samples partition: the leading indicator (see the constants above).
+          (SELECT COALESCE(pg_total_relation_size(c.oid), 0)::bigint
+             FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+             WHERE n.nspname = 'public'
+               AND c.relname = 'samples_' || to_char(current_date, 'YYYYMMDD')) AS today_partition_bytes,
+          -- Name the culprit. The 2026-08-31 alert said only "database size
+          -- 2183.6 GB exceeds 150 GB", which told nobody WHICH table or column,
+          -- so diagnosis took a full session of manual pg_class spelunking. Emit
+          -- the top consumers (with their TOAST share, since TOAST was 98% of the
+          -- problem and is invisible in a plain table-size listing) so the next
+          -- alert diagnoses itself.
+          (SELECT string_agg(x.line, ', ' ORDER BY x.total DESC)
+             FROM (
+               SELECT c.relname
+                        || ' ' || pg_size_pretty(pg_total_relation_size(c.oid))
+                        || CASE WHEN c.reltoastrelid <> 0
+                                  AND pg_total_relation_size(c.reltoastrelid) > 0
+                                THEN ' (toast ' || pg_size_pretty(pg_total_relation_size(c.reltoastrelid)) || ')'
+                                ELSE '' END AS line,
+                      pg_total_relation_size(c.oid) AS total
+               FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+               WHERE n.nspname = 'public' AND c.relkind IN ('r', 'm')
+               ORDER BY pg_total_relation_size(c.oid) DESC
+               LIMIT 3
+             ) x) AS top_relations
       `,
       );
       if (!s) return;
@@ -758,10 +797,27 @@ async function main() {
             `${s.lock_waiters} session(s) waiting on locks — possible convoy forming.`,
         );
       }
-      if (s.db_bytes > DB_SIZE_WARN_BYTES) {
+      const gb = (b: number) => `${(b / 1024 ** 3).toFixed(1)} GB`;
+      // Rate check first: it fires earlier and is the more actionable signal.
+      if (s.today_partition_bytes > PARTITION_DAY_WARN_BYTES) {
+        console.error(
+          `[storage-watchdog] TODAY's samples partition is ${gb(s.today_partition_bytes)}, over the ` +
+            `${gb(PARTITION_DAY_WARN_BYTES)} daily budget — a write rule is retaining more BYTES per row than expected ` +
+            `(check raw_response: \`SELECT method, is_honeypot, count(*), pg_size_pretty(sum(pg_column_size(raw_response))) ` +
+            `FROM samples_${new Date().toISOString().slice(0, 10).replace(/-/g, "")} GROUP BY 1,2 ORDER BY 4 DESC\`). ` +
+            `Do NOT wait for the total-size alarm: with multi-day retention it lags by the full retention window. ` +
+            `Top relations: ${s.top_relations ?? "n/a"}`,
+        );
+      }
+      if (s.db_bytes > DB_SIZE_ERROR_BYTES) {
+        console.error(
+          `[storage-watchdog] database size ${gb(s.db_bytes)} exceeds the ${gb(DB_SIZE_ERROR_BYTES)} ERROR line — ` +
+            `retention or a per-row byte budget is broken. Top relations: ${s.top_relations ?? "n/a"}`,
+        );
+      } else if (s.db_bytes > DB_SIZE_WARN_BYTES) {
         console.warn(
-          `[storage-watchdog] database size ${(s.db_bytes / 1024 ** 3).toFixed(1)} GB exceeds ` +
-            `${(DB_SIZE_WARN_BYTES / 1024 ** 3).toFixed(0)} GB — check retention/reclaim before it degrades recovery.`,
+          `[storage-watchdog] database size ${gb(s.db_bytes)} exceeds ${gb(DB_SIZE_WARN_BYTES)} — ` +
+            `check retention/reclaim before it degrades recovery. Top relations: ${s.top_relations ?? "n/a"}`,
         );
       }
     })().catch((err) => console.error("[storage-watchdog]", (err as Error).message));
