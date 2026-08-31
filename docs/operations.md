@@ -407,17 +407,47 @@ Full per-provider raw detail lives in `samples` for the **7-day** live window (`
 
 ```sql
 -- Only needed on a database bootstrapped before 2026-08-31. Safe to re-run.
--- Run the two DROP INDEXes AFTER the generator carrying the new partitions.ts is
--- live; the old code referenced 'samples_archived'::regclass outside its
--- EXCEPTION handler at startup, so dropping the table under old code crashloops
--- the fleet. lock_timeout matters: this DDL takes ACCESS EXCLUSIVE on `samples`,
--- and queueing that lock convoys every insert behind it.
+-- Run AFTER the generator carrying the new partitions.ts is live; the old code
+-- referenced 'samples_archived'::regclass outside its EXCEPTION handler at
+-- startup, so dropping the table under old code crashloops the fleet.
 SET lock_timeout = '5s';
 DROP TABLE IF EXISTS samples_archived;   -- cosmetic once partitions are gone (empty parent)
+RESET lock_timeout;
+```
+
+**The two index drops need the write stream paused — budget a maintenance window.**
+
+```sql
+SET lock_timeout = '5s';
 DROP INDEX IF EXISTS samples_lookup_idx; -- ~726 MB/day
 DROP INDEX IF EXISTS samples_dash_idx;   -- ~164 MB/day
 RESET lock_timeout;
 ```
+
+Both are PARTITIONED indexes, so a DROP needs `ACCESS EXCLUSIVE` on the `samples`
+parent **and** every partition. Under live traffic that lock never becomes
+available, and the escape hatches don't apply:
+
+- **`DROP INDEX CONCURRENTLY` is not an option** — Postgres rejects it outright:
+  `cannot drop partitioned index "samples_lookup_idx" concurrently`.
+- **Retrying with a short `lock_timeout` does not eventually win.** Tried
+  2026-08-31: one attempt at 5s and 14 attempts at 2s per index, all
+  `canceling statement due to lock timeout`. With ~24 vantages inserting
+  continuously the parent is never lock-free for even 2s.
+- **Do not raise `lock_timeout` past 4s.** `INSERT_LOCK_TIMEOUT` on the write path
+  (`packages/db/src/samples.ts`) is 5s, so a longer queued `ACCESS EXCLUSIVE`
+  request starts erroring live sample inserts — and a queued exclusive request
+  blocks every insert behind it regardless (the convoy that took the fleet down
+  for ~18h).
+
+So: scale the generator to 0 (`ECS`, us-east-2), let assignments drain ~30s so
+worker inserts stop, run the two DROPs, scale back to 2. Cheapest time to do this
+is folded into a generator deploy you were doing anyway, since the fleet is
+already quiescing. Costs a 1-2 minute gap in the sample stream.
+
+**It is not urgent.** Leaving them costs ~890 MB/day, i.e. ~6.2 GB standing at
+7-day retention — a ~40 GB steady state instead of ~34 GB — plus the per-INSERT
+index maintenance. Never worth an unplanned outage.
 
 **Order is still load-bearing even without a migration:** the old `partitions.ts` referenced `'samples_archived'::regclass` OUTSIDE its `EXCEPTION` handler, and `ensurePartitions` is awaited at startup in `index.ts`, so dropping the table while the OLD generator is live crashloops the whole fleet. Deploy the generator first, then run the cleanup SQL above. Because the cleanup is not a migration, the normal `pnpm db:migrate` → generator → workers order in CLAUDE.md still holds for everything else.
 
