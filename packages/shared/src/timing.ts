@@ -23,8 +23,24 @@ import type { TLSSocket } from "node:tls";
 /**
  * Methodology version. Each bump forks rollup + leaderboard tables so
  * historical leaderboards stay coherent — no re-scoring. Bump it when scoring,
- * projection, eligibility, or consensus semantics change (see
- * docs/operations.md § Methodology versioning).
+ * projection, eligibility, or consensus semantics change *fleet-wide*.
+ *
+ * Deliberate carve-out: a change confined to ONE method's voter panel — a
+ * provider starting or stopping serving it, which shifts only that method's
+ * consensusFloorsForMethod() — does NOT bump. A bump empties every board until
+ * fresh rollups accumulate, which is too blunt a price for one method's rule
+ * changing, and the alternative (bumping per panel change) would have forked
+ * history twice in August 2026 alone. Precedent: Triton dropping
+ * getTransactionsForAddress (2026-08-20) and Quicknode rejoining it
+ * (2026-08-31) both held at 4. The cost is that such a method's correctness
+ * series changes shape mid-version; that is paid down by documenting the date
+ * and the rule change in docs/methodology.md § Consensus, CHANGELOG.md, and
+ * the /changelog page, so a step reads as a rule change and not a provider
+ * regression.
+ *
+ * Adding or removing a provider from the panel as a whole DOES bump — it moves
+ * many methods at once (v4 was Chainstack joining). See
+ * docs/methodology.md § Consensus.
  */
 export const METHODOLOGY_VERSION = 4 as const;
 
