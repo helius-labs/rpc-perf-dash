@@ -1,16 +1,16 @@
 /**
  * getTransactionsForAddress method handlers.
  *
- * Custom (non-standard) address-history method, now served compatibly by
- * Helius and Alchemy only. Quicknode serves a non-comparable variant
- * (bare-array result, always-full details, slot filter ignored), Chainstack
- * doesn't serve it, and Triton dropped it (-32601 as of 2026-08-20) — see the
- * `unsupported_methods` comments in packages/shared/src/providers.ts. The panel
- * is therefore 2 voters, and consensusFloorsForMethod() relaxes BOTH consensus
- * floors to 2: correctness here is a pairwise byte-equal agreement check
- * between two independent providers, not a majority vote, and a 1-1
- * disagreement stays `no_consensus` because nothing can break the tie. Weaker
- * than the ≥3-voter methods and flagged as such on the methodology page.
+ * Custom (non-standard) address-history method, served compatibly by Helius,
+ * Alchemy and Quicknode. Chainstack doesn't serve it and Triton dropped it
+ * (-32601, still true on a 2026-08-31 re-probe) — see the
+ * `unsupported_methods` comments in packages/shared/src/providers.ts.
+ * Quicknode's variant was non-comparable (bare array, always-full details,
+ * slot filter ignored) until Aug 2026; re-verified 2026-08-31 as byte-equal
+ * with Helius and Alchemy across both buckets, so it votes again. The panel is
+ * therefore 3 voters, and consensusFloorsForMethod() gives
+ * { minGroup: 2, minVoters: 3 }: all three must answer, and a 2-1 split is
+ * decided in the pair's favour with the lone deviator attributed.
  *
  * Bucketing (2, both slot-pinned):
  *   sigs__desc__pinned__l1000 — transactionDetails: "signatures", limit 1000

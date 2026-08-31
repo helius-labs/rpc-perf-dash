@@ -5,6 +5,31 @@ Product releases for the RPC Benchmark Dashboard, following
 DB schema, infra, and fixes. Methodology and scoring behavior is documented in
 [`docs/methodology.md`](docs/methodology.md).
 
+## 1.2.1 — 2026-08-31
+
+- **Quicknode votes on `getTransactionsForAddress` again.** Its variant had
+  been declared `unsupported_methods` because it was non-comparable by
+  construction: a bare-array result instead of the `{data, paginationToken}`
+  envelope, always-full details (ignoring `transactionDetails: "signatures"`),
+  `filters.slot.lte` ignored, string `commitment` rejected with -32602, and
+  `maxSupportedTransactionVersion` required even in signatures mode. Re-probed
+  live 2026-08-31: every one of those five defects is gone, and its responses
+  are byte-equal with Helius and Alchemy across 12 challenges × both buckets ×
+  cold+warm (72 samples, zero divergence). Removing the declaration restores a
+  3-voter panel.
+- This is the second panel change for the method inside a month: Triton
+  dropped it on 2026-08-20 (-32601, still true), which had taken it down to
+  2 voters and the relaxed `{ minGroup: 2, minVoters: 2 }` pairwise-agreement
+  floors. It's now back to `{ minGroup: 2, minVoters: 3 }` — all three must
+  answer, and a 2-1 split is decided with the deviator attributed.
+- `METHODOLOGY_VERSION` stays at **4**, as it did for the 2026-08-20 change, so
+  history is preserved rather than reset. Consequence: this method's
+  correctness series changes shape twice within version 4 — a step there is a
+  rule change, not a provider regression. Documented in
+  `docs/methodology.md` § Consensus and on the methodology page.
+- Deploy: generator + workers (no DB migration, no web-only path — the panel
+  size is compiled into `@rpcbench/shared`).
+
 ## 1.2.0 — 2026-07-28
 
 - Added a **transaction-sending ("sends") archetype** and a new **Sends**

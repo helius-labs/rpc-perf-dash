@@ -28,18 +28,18 @@
  *   n=3, split 2-1     → ambiguous under the default floor (largest=2 < 3).
  *                        On methods whose STRUCTURAL panel is 3 voters
  *                        (a provider is declared unsupported_methods, e.g.
- *                        simulateBundle), the caller lowers `minGroup` to 2 and
+ *                        simulateBundle and getTransactionsForAddress), the
+ *                        caller lowers `minGroup` to 2 and
  *                        this becomes consensus with one dissenter — two
  *                        byte-equal agreements out of three independent
  *                        providers is treated as decisive.
  *   n=2, split 2-0     → ambiguous under the default floors. On methods whose
- *                        STRUCTURAL panel is only 2 voters (e.g.
- *                        getTransactionsForAddress, where Quicknode, Chainstack
- *                        and Triton are all declared unsupported) the caller
- *                        lowers BOTH floors to 2 and this becomes consensus
- *                        with no dissenters — a pairwise agreement check rather
- *                        than a majority vote. See consensusFloorsForMethod()
- *                        in providers.ts and docs/methodology.md.
+ *                        STRUCTURAL panel is only 2 voters the caller lowers
+ *                        BOTH floors to 2 and this becomes consensus with no
+ *                        dissenters — a pairwise agreement check rather than a
+ *                        majority vote. No method is in that regime today. See
+ *                        consensusFloorsForMethod() in providers.ts and
+ *                        docs/methodology.md.
  *   n=2, split 1-1     → ambiguous even at minGroup=2 (no strict majority) —
  *                        a 2-voter panel can never attribute a deviation.
  *   n<2                → ambiguous (too few voters; e.g. ≥3 timeouts)
