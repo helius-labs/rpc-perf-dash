@@ -1,18 +1,38 @@
 /**
- * Daily partition cron for `samples` and `samples_archived`.
+ * Daily partition cron for `samples` and `landing_tx_results`.
  *
  * `samples` retention: 7 days (raw rows; the 30-day dashboard view is served by
  * rollups grain='1d', not raw samples).
- * `samples_archived` retention: 30 days.
  *
- * Before a `samples_YYYYMMDD` partition is dropped, this cron copies its rows
- * that still have a `raw_response` into the matching `samples_archived_YYYYMMDD`
- * partition (the INSERT below filters `WHERE raw_response IS NOT NULL`). Since
- * `record.ts` keeps `raw_response` only for flagged + honeypot samples, the
- * 90-day archive holds exactly those — NOT the old representative 1% normal
- * sample (that 1% archival was dropped to bound DB growth). The public
- * `/raw?challenge=<id>` view still shows full per-provider detail for the live
- * 30-day window from `samples`.
+ * There is NO archive table. `samples_archived` existed to hold a 30-day tail of
+ * rows that still had a `raw_response`, and it was removed on 2026-08-31 (see
+ * migration 0003) because it was 84% of a 2.18 TB database while having zero
+ * readers — nothing in apps/ or packages/ ever SELECTed it. Two things made it
+ * that expensive:
+ *
+ *   1. It inherited the `raw_response` sizing problem: ~19k honeypot getBlock
+ *      rows/day at ~1.8 MB stored each, ~99.75% of which had passed. record.ts
+ *      now keeps raw only for correctness failures + honeypot MISSES, so the
+ *      forensic tail is ~115 MB/day instead of ~34 GB/day.
+ *
+ *   2. Its `INSERT ... SELECT ... ON CONFLICT DO NOTHING` copy was idempotent in
+ *      ROWS but not in BYTES. A re-run re-TOASTed every 1.8 MB body before
+ *      discovering the row already existed, and those chunks died on arrival.
+ *      Measured on 2026-08-31: the archive's TOAST relations showed exactly 2.00
+ *      inserts per live chunk and ~51% page utilization, against 1.02 and ~98%
+ *      for the same rows in `samples`. Autovacuum reclaimed the dead chunks into
+ *      free space the relation never gave back, so the archive cost exactly 2x
+ *      what its own data was worth. The copy re-ran because the `DROP TABLE` at
+ *      the tail of the same DO block could fail into the EXCEPTION handler,
+ *      leaving the partition in place for the next tick to redo.
+ *
+ * If a forensic tail longer than 7 days is ever wanted again, do NOT reintroduce
+ * a full-row copy: keep a narrow projection (challenge_id, provider_id, method,
+ * response_hash, error_code) and leave the bodies in the 7-day window, or the
+ * byte problem comes straight back.
+ *
+ * Dropping a daily partition reclaims its space physically and immediately (no
+ * VACUUM needed) — this is the primary storage bound.
  */
 import { sql } from "drizzle-orm";
 import type { DbClient } from "@rpcbench/db";
@@ -20,11 +40,8 @@ import type { DbClient } from "@rpcbench/db";
 // Raw per-sample rows are the bulk of DB size. The 30-day dashboard view is
 // served entirely by rollups grain='1d' (1-day granularity at the 30-day edge), NOT by
 // raw samples, so we keep only a short raw window for /raw + recent detail and
-// drop the rest early. Dropping a daily partition reclaims its space physically
-// and immediately (no VACUUM needed) — this is the primary storage bound.
+// drop the rest early.
 const SAMPLES_RETENTION_DAYS = 7;
-// samples_archived holds only flagged + honeypot rows (tiny), kept for 30d.
-const ARCHIVE_RETENTION_DAYS = 30;
 // Send-archetype raw table (migration 0002). landing_tx_results mirrors samples
 // (the /sends board reads from send_rollups, not raw rows).
 const LANDING_RETENTION_DAYS = 7;
@@ -33,20 +50,16 @@ const LANDING_RETENTION_DAYS = 7;
 // there is what triggered the outage).
 const PARTITION_LEAD_DAYS = 4;
 // Partition DDL takes ACCESS EXCLUSIVE on the parent. A short lock_timeout means
-// that if a slow insert is holding the table, the CREATE gives up and retries
+// that if a slow insert is holding the table, the CREATE/DROP gives up and retries
 // next tick instead of QUEUEING the ACCESS EXCLUSIVE request — which would block
 // every subsequent insert behind it (the lock convoy that froze the fleet).
 const PARTITION_LOCK_TIMEOUT = "3s";
 
 export async function ensurePartitions(db: DbClient): Promise<void> {
-  // Extend partitions forward for both tables (today, tomorrow, day-after).
+  // Extend partitions forward for both tables (today through the lead window).
   // DO blocks use raw SQL — postgres-js can't infer types for integer params
   // bound inside plpgsql contexts.
-  for (const table of [
-    "samples",
-    "samples_archived",
-    "landing_tx_results",
-  ] as const) {
+  for (const table of ["samples", "landing_tx_results"] as const) {
     for (let i = 0; i <= PARTITION_LEAD_DAYS; i++) {
       await db.execute(
         sql.raw(`
@@ -70,99 +83,10 @@ export async function ensurePartitions(db: DbClient): Promise<void> {
     }
   }
 
-  // For each `samples_YYYYMMDD` partition that is about to be dropped, copy
-  // archive-rule rows into the matching archive partition first.
-  await db.execute(
-    sql.raw(`
-      DO $do$
-      DECLARE
-        r record;
-        cols text;
-        cutoff date := current_date - ${SAMPLES_RETENTION_DAYS};
-      BEGIN
-        -- Explicit column list = the columns samples_archived actually has,
-        -- in attnum order. NEVER use 'INSERT ... SELECT *' here: it maps by
-        -- position and silently breaks whenever 'samples' gains a column the
-        -- archive lacks (e.g. migration 0006 added failure_category/
-        -- failure_detail to samples only). Listing samples_archived's columns
-        -- is position-safe and drift-proof: samples-only columns are simply
-        -- not archived.
-        SELECT string_agg(quote_ident(attname), ', ' ORDER BY attnum)
-          INTO cols
-        FROM pg_attribute
-        WHERE attrelid = 'samples_archived'::regclass
-          AND attnum > 0
-          AND NOT attisdropped;
-
-        FOR r IN
-          SELECT child.relname AS pname,
-                 to_date(substring(child.relname FROM 9 FOR 8), 'YYYYMMDD') AS pday
-          FROM pg_inherits
-          JOIN pg_class parent ON parent.oid = pg_inherits.inhparent
-          JOIN pg_class child  ON child.oid  = pg_inherits.inhrelid
-          WHERE parent.relname = 'samples'
-            AND child.relname ~ '^samples_[0-9]{8}$'
-            AND to_date(substring(child.relname FROM 9 FOR 8), 'YYYYMMDD') < cutoff
-        LOOP
-          -- Archival is best-effort housekeeping and MUST NOT be able to crash
-          -- the generator: this runs awaited at startup (index.ts) before the
-          -- dispatch/heartbeat loops, so any throw here takes the whole fleet
-          -- down. A partition that can't be archived (e.g. historical rows that
-          -- violate a since-tightened CHECK like samples_egress_chk) is logged
-          -- and LEFT IN PLACE — never dropped on a failed copy — and retried on
-          -- the next cron tick. A fatal archive error here would otherwise
-          -- crashloop the generator.
-          BEGIN
-            EXECUTE format(
-              'CREATE TABLE IF NOT EXISTS samples_archived_%s PARTITION OF samples_archived FOR VALUES FROM (%L) TO (%L)',
-              to_char(r.pday, 'YYYYMMDD'),
-              r.pday::timestamptz,
-              (r.pday + 1)::timestamptz
-            );
-            EXECUTE format(
-              'INSERT INTO samples_archived_%s (%s)
-               SELECT %s FROM %I WHERE raw_response IS NOT NULL
-               ON CONFLICT DO NOTHING',
-              to_char(r.pday, 'YYYYMMDD'),
-              cols, cols,
-              r.pname
-            );
-            EXECUTE format('DROP TABLE IF EXISTS %I', r.pname);
-          EXCEPTION WHEN OTHERS THEN
-            RAISE WARNING '[partitions] archive of % failed, leaving partition in place: %', r.pname, SQLERRM;
-          END;
-        END LOOP;
-      END $do$;
-    `),
-  );
-
-  // Prune samples_archived partitions older than 90 days.
-  await db.execute(
-    sql.raw(`
-      DO $do$
-      DECLARE
-        r record;
-        cutoff date := current_date - ${ARCHIVE_RETENTION_DAYS};
-      BEGIN
-        FOR r IN
-          SELECT child.relname AS pname
-          FROM pg_inherits
-          JOIN pg_class parent ON parent.oid = pg_inherits.inhparent
-          JOIN pg_class child  ON child.oid  = pg_inherits.inhrelid
-          WHERE parent.relname = 'samples_archived'
-            AND child.relname ~ '^samples_archived_[0-9]{8}$'
-            AND to_date(substring(child.relname FROM 18 FOR 8), 'YYYYMMDD') < cutoff
-        LOOP
-          EXECUTE format('DROP TABLE IF EXISTS %I', r.pname);
-        END LOOP;
-      END $do$;
-    `),
-  );
-
-  // Prune the send-archetype raw partitions past their retention. Append-only
-  // (no archive step), partitioned by started_at with `<table>_YYYYMMDD` naming,
-  // so a plain drop reclaims space immediately.
+  // Drop partitions past retention. Append-only tables partitioned daily with
+  // `<table>_YYYYMMDD` naming, so a plain drop reclaims space immediately.
   for (const [table, retentionDays] of [
+    ["samples", SAMPLES_RETENTION_DAYS],
     ["landing_tx_results", LANDING_RETENTION_DAYS],
   ] as const) {
     const prefixLen = `${table}_`.length + 1; // 1-indexed substring start of YYYYMMDD
@@ -182,7 +106,20 @@ export async function ensurePartitions(db: DbClient): Promise<void> {
               AND child.relname ~ '^${table}_[0-9]{8}$'
               AND to_date(substring(child.relname FROM ${prefixLen} FOR 8), 'YYYYMMDD') < cutoff
           LOOP
-            EXECUTE format('DROP TABLE IF EXISTS %I', r.pname);
+            -- Per-partition savepoint + short lock_timeout. A DROP of a partition
+            -- needs ACCESS EXCLUSIVE on the PARENT, so without the timeout a busy
+            -- parent would queue that request and stall every subsequent insert
+            -- behind it. Retention housekeeping must also never be able to crash
+            -- the generator: ensurePartitions is awaited at startup in index.ts,
+            -- before the dispatch/heartbeat loops, so a throw here takes the whole
+            -- fleet down. A partition that can't be dropped is logged, LEFT IN
+            -- PLACE, and retried on the next tick.
+            BEGIN
+              PERFORM set_config('lock_timeout', '${PARTITION_LOCK_TIMEOUT}', true);
+              EXECUTE format('DROP TABLE IF EXISTS %I', r.pname);
+            EXCEPTION WHEN OTHERS THEN
+              RAISE WARNING '[partitions] drop of % failed, leaving partition in place: %', r.pname, SQLERRM;
+            END;
           END LOOP;
         END $do$;
       `),

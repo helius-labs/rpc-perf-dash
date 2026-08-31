@@ -372,26 +372,39 @@ function buildRowsForMode(
       reference_response_for_shape: input.is_honeypot ? input.reference_response : undefined,
     });
 
-    // raw_response retention is deliberately bounded to rows with real forensic
-    // value: honeypots + correctness_failures (a provider returned a
-    // verifiably-wrong answer against a VALID consensus — the rows we actually
-    // inspect on /raw). We do NOT keep raw for no_consensus / reliability_failure
-    // / freshness / tier exclusions.
+    // raw_response retention is bounded to rows with real forensic value:
+    // correctness_failures (a provider returned a verifiably-wrong answer against
+    // a VALID consensus) plus honeypot rows that DID NOT pass. We do NOT keep raw
+    // for no_consensus / reliability_failure / freshness / tier exclusions, and —
+    // as of 2026-08-31 — not for honeypot rows that came back `correct` either.
     //
-    // Why this matters for DB size: the previous rule (keep raw for ANY
-    // non-"correct" sample) is UNBOUNDED under a provider outage — when panel
-    // members are down, ~100% of samples become no_consensus/reliability failures,
-    // so their full getBlock/getTransaction bodies were all retained and ballooned
-    // the DB toward TB scale (which strained the pageserver → the 2026-07-01
-    // brick). Keying on correctness_failure keeps raw volume proportional to real
-    // correctness DISPUTES, which stay rare regardless of provider health: a check
-    // that can't reach consensus yields no_consensus, NOT correctness_failure. The
-    // detail we'd ever inspect for the dropped reasons is already captured in
-    // error_code / http_status / failure_category / exclusion_reason.
+    // Why this matters for DB size. Two successive versions of this rule were both
+    // unbounded, for different reasons:
     //
-    // Consequence: samples_archived (which copies WHERE raw_response IS NOT NULL)
-    // holds honeypot + correctness_failure rows only — see partitions.ts.
-    const keepRaw = input.is_honeypot || exclusion_reason === "correctness_failure";
+    //   1. "keep raw for ANY non-correct sample" was unbounded under a provider
+    //      OUTAGE — when panel members are down ~100% of samples become
+    //      no_consensus/reliability failures, so every full getBlock body was
+    //      retained. Keying on correctness_failure fixed that: a check that can't
+    //      reach consensus yields no_consensus, NOT correctness_failure, so raw
+    //      volume tracks real correctness DISPUTES, which stay rare regardless of
+    //      provider health.
+    //
+    //   2. `input.is_honeypot` alone was still unbounded in BYTES. It bounds the
+    //      row COUNT but not the size of a row, and a getBlock body is ~1.8 MB
+    //      stored. At ~19k honeypot getBlock rows/day that is ~34 GB/day, and
+    //      99.75% of those rows are `correct` — measured 19,083 of 19,130 on
+    //      2026-08-30. That single predicate was ~99% of a 2.18 TB database, for
+    //      rows that by definition agreed with the pre-seeded known answer. The
+    //      forensic tail we actually inspect is the honeypot MISSES (3 rows that
+    //      day), which this rule keeps in full.
+    //
+    // The detail we'd ever inspect for the dropped rows is already captured in
+    // response_hash / error_code / http_status / failure_category /
+    // exclusion_reason — and for a passing honeypot, response_hash matching
+    // challenges.reference_hash IS the whole finding.
+    const keepRaw =
+      exclusion_reason === "correctness_failure" ||
+      (input.is_honeypot && correctness !== "correct");
     const freshnessLag: bigint | null =
       provider_tip_slot === null ? null : panelMedianTip - provider_tip_slot;
 

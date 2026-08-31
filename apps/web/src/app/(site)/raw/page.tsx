@@ -59,7 +59,10 @@ interface SampleRow {
   status: string;
   http_status: number | null;
   correctness: string;
-  raw_response: unknown;
+  /** Presence flag only — see the SELECT: the payload itself is never rendered,
+   *  and detoasting ~30 x ~3.4 MB getBlock bodies per pageview to print
+   *  "yes"/"no" was pure waste. */
+  has_raw: boolean;
 }
 
 /** Consensus log row (per challenge × vantage × mode). */
@@ -161,7 +164,8 @@ export default async function RawPage({
 
     if (challenge) {
       const sRows = await db().execute(sql`
-        SELECT provider_id, region, egress_path, connection_mode, latency_ms, status, http_status, correctness, raw_response
+        SELECT provider_id, region, egress_path, connection_mode, latency_ms, status, http_status, correctness,
+               raw_response IS NOT NULL AS has_raw
         FROM samples WHERE challenge_id = ${id}::uuid
         ORDER BY provider_id, connection_mode
       `);
@@ -446,7 +450,7 @@ function PerProviderSamples({ samples }: { samples: SampleRow[] }) {
                       <td>{s.status}</td>
                       <td className="prov-num">{s.http_status ?? "—"}</td>
                       <td>{s.correctness}</td>
-                      <td>{s.raw_response ? "yes" : "no"}</td>
+                      <td>{s.has_raw ? "yes" : "no"}</td>
                     </tr>
                   ))}
                 </tbody>

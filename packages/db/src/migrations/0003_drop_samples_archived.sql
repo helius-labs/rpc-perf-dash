@@ -1,0 +1,39 @@
+-- ════════════════════════════════════════════════════════════════════════
+-- 0003 — drop samples_archived
+-- ════════════════════════════════════════════════════════════════════════
+--
+-- samples_archived held a 30-day tail of every sample that still had a
+-- raw_response. On 2026-08-31 it was 1837 GB of a 2184 GB database (84%) and
+-- had ZERO readers — no SELECT against it exists anywhere in apps/ or
+-- packages/. Measured breakdown of one 90 GB day (samples_archived_20260806,
+-- 116k rows): 99.4% of the bytes were getBlock raw_response at ~1.84 MB
+-- stored per row, and 19,083 of the 19,130 honeypot getBlock rows that day
+-- (99.75%) had correctness='correct'.
+--
+-- It also carried a 2x write amplification of its own. The archival copy used
+-- INSERT ... SELECT ... ON CONFLICT DO NOTHING, which is idempotent in ROWS
+-- but not in BYTES: a re-run re-TOASTs each 1.8 MB body before discovering the
+-- conflict, and those chunks are dead immediately. pg_stat showed exactly 2.00
+-- inserts per live TOAST chunk and ~51% page utilization on every archive
+-- partition, against 1.02 and ~98% for the same rows in `samples`.
+--
+-- Retention was never the bug — it was working exactly as coded (the oldest
+-- partition was always precisely current_date - 30). The bound was on TIME and
+-- ROW COUNT, never on BYTES PER ROW.
+--
+-- Paired changes that must ship WITH this migration:
+--   * apps/generator/src/partitions.ts — archive create/copy/prune path removed.
+--     This is load-bearing: the old code did 'samples_archived'::regclass
+--     OUTSIDE its EXCEPTION handler, and ensurePartitions is awaited at startup
+--     in index.ts, so running the OLD generator against a dropped table
+--     crashloops the entire fleet. Deploy the generator BEFORE applying this.
+--   * packages/runner/src/record.ts — keepRaw no longer retains raw for
+--     honeypot rows that PASSED (~34 GB/day -> ~115 MB/day).
+--
+-- Reclaim is physical and immediate; no VACUUM or pg_repack needed. Neon's
+-- BILLED storage still lags by the history/PITR retention window.
+--
+-- Irreversible: the archived rows are gone. The 7-day `samples` window remains
+-- the forensic surface, and /raw reads from `samples`.
+
+DROP TABLE IF EXISTS samples_archived;
