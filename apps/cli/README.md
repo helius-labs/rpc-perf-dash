@@ -68,8 +68,11 @@ you need:
   3), inherited from the benchmarked roster:
   - **At exactly 3 endpoints**, most methods require **unanimity** — a 2‑1
     disagreement is dropped (`no_consensus`) and *not* attributed to the
-    dissenter. Three methods (`simulateBundle`, `getTransactionsForAddress`,
-    `getStakeMinimumDelegation`) instead attribute a 2‑1 dissent.
+    dissenter. Two methods (`simulateBundle`, `getTransactionsForAddress`)
+    instead attribute a 2‑1 dissent: those are the ones whose benchmarked
+    roster is only 3 providers, so `minGroup` relaxes to 2. Methods with a
+    4-provider roster (`getStakeMinimumDelegation`, `getTokenLargestAccounts`)
+    keep `minGroup: 3` and drop a 2‑1.
   - **Use ≥5 endpoints** for uniform, robust dissent detection.
 
 The header line tells you which regime is active every run.

@@ -165,8 +165,10 @@ export const PROVIDERS: readonly ProviderRow[] = [
     // against a 3-voter floor, so every gTFA challenge fleet-wide resolved
     // `no_consensus` ("only 2 usable voter(s); need >= 3") — the method went
     // dark on the boards. Declaring it unsupported drops Triton from the
-    // method's panel (2 voters: Helius, Alchemy) and, via
-    // consensusFloorsForMethod() below, relaxes both consensus floors to 2.
+    // method's panel. Re-probed 2026-08-31: still -32601, still unsupported.
+    // The panel is 3 voters (Helius, Alchemy, Quicknode — Quicknode's variant
+    // became comparable in Aug 2026, see its entry below), so
+    // consensusFloorsForMethod() gives { minGroup: 2, minVoters: 3 }.
     unsupported_methods: ["getTransactionsForAddress"],
     website: "https://triton.one",
     // Send path: plain JSON-RPC sendTransaction on the standard read endpoint, no tip.
@@ -213,15 +215,23 @@ export const PROVIDERS: readonly ProviderRow[] = [
     // from that method's panel (3 voters: Helius, Triton, Alchemy) instead of
     // penalizing it on reliability.
     //
-    // getTransactionsForAddress: Quicknode serves a NON-COMPARABLE variant,
-    // not an error: bare-array result instead of the
-    // {data, paginationToken} envelope; always full transaction details
-    // (ignores transactionDetails: "signatures"); ignores filters.slot.lte
-    // (returns tip-slot entries past the pin); rejects string commitment with
-    // -32602; requires maxSupportedTransactionVersion even in signatures
-    // mode. Its responses can never byte-match the panel's, so it's a
-    // non-voter by construction.
-    unsupported_methods: ["simulateBundle", "getTransactionsForAddress"],
+    // getTransactionsForAddress: Quicknode USED to serve a non-comparable
+    // variant (bare-array result instead of the {data, paginationToken}
+    // envelope; always-full details, ignoring transactionDetails:
+    // "signatures"; filters.slot.lte ignored, returning tip-slot entries past
+    // the pin; string commitment rejected with -32602;
+    // maxSupportedTransactionVersion required even in signatures mode) and was
+    // declared unsupported for it. Re-probed live 2026-08-31: every one of
+    // those five defects is gone — Quicknode now returns the envelope, honors
+    // both detail modes, honors the slot pin (max returned slot == pin, zero
+    // entries past it), accepts string commitment, and needs no
+    // maxSupportedTransactionVersion in signatures mode. Verified byte-equal
+    // with Helius and Alchemy across 12 challenges x both buckets x cold+warm
+    // (72 samples, one projection hash per challenge, zero divergence), so it
+    // is a real voter again. This restores gTFA to a 3-voter panel and, via
+    // consensusFloorsForMethod() below, tightens minVoters back to 3 while
+    // minGroup stays 2 (a 2-1 split is decided and the deviator attributed).
+    unsupported_methods: ["simulateBundle"],
     website: "https://www.quicknode.com",
     notes: "Quicknode endpoint URL embeds the key.",
     // Send path: plain JSON-RPC sendTransaction on the standard read endpoint
@@ -326,16 +336,18 @@ export function structuralPanelSize(method: Method): number {
  *                agreement group that is also a strict majority.
  *   panel = 3  → { minGroup: 2, minVoters: 3 }  all three must answer, and a
  *                2-1 split is decided in the pair's favour (the lone deviator
- *                is attributed). e.g. simulateBundle.
+ *                is attributed). e.g. simulateBundle and
+ *                getTransactionsForAddress (Helius, Alchemy, Quicknode —
+ *                Triton and Chainstack don't serve it).
  *   panel ≤ 2  → { minGroup: 2, minVoters: 2 }  a pairwise agreement check:
  *                both voters must answer and agree, and a 1-1 split stays
  *                `no_consensus` because there is nothing to break the tie.
- *                e.g. getTransactionsForAddress (only Helius and Alchemy still
- *                serve it comparably). Weaker than a majority vote — two
- *                providers agreeing on the same wrong answer is
- *                indistinguishable from correct — and documented as such in
- *                docs/methodology.md; the alternative is scoring the method not
- *                at all.
+ *                Weaker than a majority vote — two providers agreeing on the
+ *                same wrong answer is indistinguishable from correct — and
+ *                documented as such in docs/methodology.md; the alternative is
+ *                scoring such a method not at all. No method is currently in
+ *                this regime (getTransactionsForAddress was, between Triton
+ *                dropping it in Aug 2026 and Quicknode becoming comparable).
  *
  * Deliberately keyed off the full static registry, not CONFIGURED_BENCHMARKED():
  * this backs both the worker/generator path (env-configured, registry ids) and

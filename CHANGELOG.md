@@ -5,6 +5,51 @@ Product releases for the RPC Benchmark Dashboard, following
 DB schema, infra, and fixes. Methodology and scoring behavior is documented in
 [`docs/methodology.md`](docs/methodology.md).
 
+## 1.2.2 — 2026-08-31
+
+- **Quicknode votes on `getTransactionsForAddress` again.** Its variant had
+  been declared `unsupported_methods` because it was non-comparable by
+  construction: a bare-array result instead of the `{data, paginationToken}`
+  envelope, always-full details (ignoring `transactionDetails: "signatures"`),
+  `filters.slot.lte` ignored, string `commitment` rejected with -32602, and
+  `maxSupportedTransactionVersion` required even in signatures mode. Re-probed
+  live 2026-08-31: every one of those five defects is gone, and its responses
+  are byte-equal with Helius and Alchemy across 12 challenges × both buckets ×
+  cold+warm (72 samples, zero divergence). Removing the declaration restores a
+  3-voter panel.
+- Second panel change for the method inside a month, after Triton's drop in
+  1.2.1 below took it to 2 voters. The floors go back from the relaxed
+  `{ minGroup: 2, minVoters: 2 }` pairwise-agreement pair to
+  `{ minGroup: 2, minVoters: 3 }` — all three must answer, and a 2-1 split is
+  decided with the deviator attributed.
+- `METHODOLOGY_VERSION` stays at **4**, as it did for the 2026-08-20 change, so
+  history is preserved rather than reset. Consequence: this method's
+  correctness series changes shape twice within version 4 — a step there is a
+  rule change, not a provider regression. Documented in
+  `docs/methodology.md` § Consensus and on the methodology page.
+- Deploy: generator + workers + web (no DB migration). The panel size is
+  compiled into `@rpcbench/shared`, so the generator and every worker lane must
+  ship for scoring to change; web carries the methodology-page and changelog
+  copy and auto-deploys on merge to `main`.
+
+## 1.2.1 — 2026-08-20
+
+- **Triton dropped `getTransactionsForAddress`.** Its endpoint began returning
+  -32601 "Method not found" for the method, 100% of calls, while every other
+  method on the same endpoint stayed healthy (verified by direct probe and
+  against the fleet: all retained samples `rpc_error`, zero `correct`).
+  Declaring it `unsupported_methods` scores Triton on reliability there rather
+  than marking it wrong on a method its tier no longer serves.
+- Left undeclared, its error body scored as a `correctness_failure` AND held
+  the panel at 2 usable voters against a 3-voter floor, so every gTFA challenge
+  fleet-wide resolved `no_consensus` — the method went dark on the boards.
+- Took the panel to 2 voters (Helius, Alchemy), relaxing both floors to
+  `{ minGroup: 2, minVoters: 2 }`: a pairwise byte-equal agreement check with
+  no tie-breaker, weaker than a majority vote and documented as such. That
+  regime lasted eleven days, until 1.2.2 above.
+- `METHODOLOGY_VERSION` held at 4 — see the carve-out in
+  `packages/shared/src/timing.ts`.
+
 ## 1.2.0 — 2026-07-28
 
 - Added a **transaction-sending ("sends") archetype** and a new **Sends**

@@ -915,13 +915,13 @@ export const METHODS: readonly MethodSpec[] = [
     match:
       "Byte-equal. \"The newest ≤limit txs at or before the pin\" is an immutable answer: the finalized-semantics tip drift that forces getSignaturesForAddress into a Jaccard tolerance lives at the tip, which the pin excludes. Yields a byte-match across signatures-mode and full-mode probes.",
     voters:
-      "2 voters · Helius, Alchemy (Quicknode serves a non-comparable variant; Chainstack never served it; Triton dropped it in Aug 2026 → all three tier_method_unsupported)",
+      "3 voters · Helius, Alchemy, Quicknode (Chainstack never served it; Triton dropped it in Aug 2026 → both tier_method_unsupported)",
     notes: [
       "Custom indexer-backed method (not in the standard Solana JSON-RPC set). Params stick to the cross-provider common subset: no Helius-only tokenTransfer filter, no processed commitment, full-mode limit under Alchemy's cap.",
-      "Quicknode's variant returns a bare array (no {data, paginationToken} envelope), always-full details, and ignores the slot filter — non-comparable by construction, so it's a non-voter rather than penalized.",
+      "Quicknode's variant used to be non-comparable — a bare array instead of the {data, paginationToken} envelope, always-full details, the slot filter ignored, string commitment rejected — so it was a non-voter. Re-probed live 2026-08-31: all of that is fixed, and its responses are byte-equal with Helius and Alchemy across both buckets. It votes again, restoring a 3-voter panel.",
       "Chainstack returns -32601 Method not found (confirmed live) — it's a standard Solana core RPC node, and this is a proprietary indexer API, not part of the standard method set.",
       "Triton served this compatibly and then dropped it: the endpoint returns -32601 Method not found for this method while every other method on it stays healthy (verified live 2026-08-20). It's now a non-voter here rather than being scored wrong on a method its tier no longer serves.",
-      "Weakest correctness signal on the board: with 2 voters this is a pairwise byte-equal agreement check, not a majority vote — both must answer and agree, a 1-1 disagreement is thrown out as no_consensus (nothing can break the tie), and two providers agreeing on the same wrong answer is indistinguishable from correct. Read this method's correctness column with that caveat; latency, reliability and freshness are unaffected.",
+      "Panel changed twice in Aug 2026: Triton's drop took it to 2 voters (a pairwise agreement check, no tie-breaker), then Quicknode becoming comparable restored 3 voters and the ordinary 2-of-3 rule. Both changes landed under methodology version 4, so this method's correctness series changes shape twice within one version — read a step there as a rule change, not a provider regression.",
       "The non-high-activity address filter is load-bearing: vote-authority addresses diverge massively across providers' indexers (vote-tx indexing differs), and filtering them is what makes byte-equal consensus possible.",
     ],
   },

@@ -37,6 +37,18 @@ const TAG_COLORS = {
 
 const ENTRIES: Entry[] = [
   {
+    date: "2026-08-31",
+    tag: "providers",
+    title: "Quicknode rejoins the getTransactionsForAddress panel",
+    body: "Quicknode's getTransactionsForAddress used to return a non-comparable shape (bare array instead of the {data, paginationToken} envelope, always-full details, slot pin ignored), so it couldn't vote. Re-probed live: all of that is fixed, and its answers are byte-equal with Helius and Alchemy across both buckets. The method goes from 2 voters back to 3 (Helius, Alchemy, Quicknode) — all three must answer and a 2-1 split is now decided with the deviator attributed. Second panel change for this method in August, after Triton dropped it on 2026-08-20. METHODOLOGY_VERSION stays at 4, so history is preserved: read a step in this method's correctness series as a rule change, not a provider regression.",
+  },
+  {
+    date: "2026-08-20",
+    tag: "providers",
+    title: "Triton dropped getTransactionsForAddress",
+    body: "Triton's endpoint began returning -32601 Method not found for getTransactionsForAddress, 100% of calls, while every other method on it stayed healthy. It's now declared unsupported for that method — scored on reliability, not marked wrong on a method its tier no longer serves. That took the panel to 2 voters and, for eleven days, made correctness there a pairwise byte-equal agreement check with no tie-breaker.",
+  },
+  {
     date: "2026-07-28",
     tag: "release",
     title: "1.2.0 — transaction-sending benchmark",

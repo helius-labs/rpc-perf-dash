@@ -128,20 +128,23 @@ test("3-voter method → minGroup relaxed to 2, all three must answer", () => {
   assert.deepEqual(consensusFloorsForMethod("simulateBundle"), { minGroup: 2, minVoters: 3 });
 });
 
+// Quicknode's variant became byte-comparable in Aug 2026 (verified 2026-08-31),
+// restoring this to a 3-voter panel: Helius, Alchemy, Quicknode. Triton
+// (-32601) and Chainstack (never served it) stay unsupported.
+test("getTransactionsForAddress is a 3-voter panel again", () => {
+  assert.equal(structuralPanelSize("getTransactionsForAddress"), 3);
+  assert.deepEqual(consensusFloorsForMethod("getTransactionsForAddress"), {
+    minGroup: 2,
+    minVoters: 3,
+  });
+});
+
 test("every emitted method's floors are >= 2 (nothing is decidable by one voter)", () => {
   for (const m of EMITTED_METHODS) {
     const f = consensusFloorsForMethod(m);
     assert.ok(f.minVoters >= 2, `${m} minVoters=${f.minVoters}`);
     assert.ok(f.minGroup >= 2, `${m} minGroup=${f.minGroup}`);
   }
-});
-
-test("2-voter method (getTransactionsForAddress) → both floors relaxed to 2", () => {
-  assert.equal(structuralPanelSize("getTransactionsForAddress"), 2);
-  assert.deepEqual(consensusFloorsForMethod("getTransactionsForAddress"), {
-    minGroup: 2,
-    minVoters: 2,
-  });
 });
 
 test("consensus reference comes from the majority group", () => {

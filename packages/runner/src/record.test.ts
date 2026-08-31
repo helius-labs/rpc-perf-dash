@@ -190,21 +190,22 @@ const GTFA_ANSWER = gtfaBody([
   { signature: "sigB", slot: 91 },
 ]);
 
-test("gTFA: the 2 remaining voters agreeing → both correct (was no_consensus)", () => {
+test("gTFA: the 3 voters agreeing → all correct", () => {
   const rows = runPanel(GTFA_PANEL, "getTransactionsForAddress", GTFA_SIGS_BUCKET, {
     helius: GTFA_ANSWER,
     alchemy: GTFA_ANSWER,
-    // Triton dropped the method; Quicknode's variant is non-comparable;
-    // Chainstack never served it. All three are declared unsupported.
-    triton: methodNotFoundBody(),
+    // Quicknode's variant became comparable in Aug 2026 — it votes again.
     quicknode: GTFA_ANSWER,
+    // Triton dropped the method; Chainstack never served it. Both are
+    // declared unsupported.
+    triton: methodNotFoundBody(),
     chainstack: methodNotFoundBody(),
   }, GTFA_TIPS);
 
-  assert.equal(rows.helius!.correctness, "correct");
-  assert.equal(rows.helius!.exclusion_reason, null);
-  assert.equal(rows.alchemy!.correctness, "correct");
-  assert.equal(rows.alchemy!.exclusion_reason, null);
+  for (const id of ["helius", "alchemy", "quicknode"]) {
+    assert.equal(rows[id]!.correctness, "correct", id);
+    assert.equal(rows[id]!.exclusion_reason, null, id);
+  }
 });
 
 test("gTFA: Triton's -32601 is tier_method_unsupported, not a correctness failure", () => {
@@ -216,28 +217,44 @@ test("gTFA: Triton's -32601 is tier_method_unsupported, not a correctness failur
     chainstack: methodNotFoundBody(),
   }, GTFA_TIPS);
 
-  for (const id of ["triton", "quicknode", "chainstack"]) {
+  for (const id of ["triton", "chainstack"]) {
     assert.equal(rows[id]!.correctness, "ambiguous", id);
     assert.equal(rows[id]!.exclusion_reason, "tier_method_unsupported", id);
   }
 });
 
-test("gTFA: the 2 voters disagreeing → no_consensus for both (no tie-breaker)", () => {
+test("gTFA: a 2-1 split is decided and the deviator attributed (minGroup=2)", () => {
   const rows = runPanel(GTFA_PANEL, "getTransactionsForAddress", GTFA_SIGS_BUCKET, {
     helius: GTFA_ANSWER,
+    quicknode: GTFA_ANSWER,
     alchemy: gtfaBody([{ signature: "sigA", slot: 90 }]),
     triton: methodNotFoundBody(),
-    quicknode: GTFA_ANSWER,
     chainstack: methodNotFoundBody(),
   }, GTFA_TIPS);
 
-  for (const id of ["helius", "alchemy"]) {
+  for (const id of ["helius", "quicknode"]) {
+    assert.equal(rows[id]!.correctness, "correct", id);
+    assert.equal(rows[id]!.exclusion_reason, null, id);
+  }
+  assert.equal(rows.alchemy!.correctness, "incorrect");
+});
+
+test("gTFA: a three-way split → no_consensus for all (largest group is 1)", () => {
+  const rows = runPanel(GTFA_PANEL, "getTransactionsForAddress", GTFA_SIGS_BUCKET, {
+    helius: GTFA_ANSWER,
+    alchemy: gtfaBody([{ signature: "sigA", slot: 90 }]),
+    quicknode: gtfaBody([{ signature: "sigB", slot: 91 }]),
+    triton: methodNotFoundBody(),
+    chainstack: methodNotFoundBody(),
+  }, GTFA_TIPS);
+
+  for (const id of ["helius", "alchemy", "quicknode"]) {
     assert.equal(rows[id]!.correctness, "ambiguous", id);
     assert.equal(rows[id]!.exclusion_reason, "no_consensus", id);
   }
 });
 
-test("gTFA: one voter timing out → no_consensus (a lone voter never decides)", () => {
+test("gTFA: one voter timing out → no_consensus (minVoters=3, all three must answer)", () => {
   const fanoutResults: ProviderCallResult[] = GTFA_PANEL.map((id) => {
     const s: SingleResult =
       id === "alchemy"

@@ -192,9 +192,9 @@ function decideForMode(
     if (isUnsupported) unsupported.add(r.provider_id);
 
     // Tier-unsupported providers can never vote, so skip projection entirely —
-    // a provider serving a non-comparable variant (getTransactionsForAddress on
-    // Quicknode) returns real data, potentially multi-MB, and parsing it per
-    // mode per vantage buys nothing. The stub's `outcome` is never consulted:
+    // a provider serving a non-comparable variant of a heavy method returns
+    // real data, potentially multi-MB, and parsing it per mode per vantage
+    // buys nothing. The stub's `outcome` is never consulted:
     // decideProviderOutcome returns `tier_method_unsupported` before reading it.
     const attempt: ProjectAttempt = isUnsupported
       ? {
@@ -235,10 +235,10 @@ function decideForMode(
 
   // Per-method consensus floors, derived from the method's structural panel
   // size (benchmarked providers whose tier serves it). A 3-voter panel (e.g.
-  // simulateBundle) relaxes minGroup to 2 so a 2-1 split can attribute the
-  // lone deviator instead of demanding unanimity; a 2-voter panel (e.g.
-  // getTransactionsForAddress, after Triton dropped it) relaxes minVoters to 2
-  // as well, or the method can never be scored at all. See
+  // simulateBundle, getTransactionsForAddress) relaxes minGroup to 2 so a 2-1
+  // split can attribute the lone deviator instead of demanding unanimity; a
+  // 2-voter panel would relax minVoters to 2 as well, or the method could
+  // never be scored at all (no method is in that regime today). See
   // consensusFloorsForMethod() for the full table and the trade-offs,
   // including why it's keyed off the static registry rather than the
   // per-run configured subset.
@@ -652,13 +652,17 @@ function safeParse(s: string): unknown {
 }
 
 /**
- * Tier-unsupported rows are flagged on EVERY challenge by construction, and a
- * provider serving a non-comparable variant of a method (Quicknode on
- * getTransactionsForAddress) returns real data — potentially multi-MB —
- * rather than simulateBundle's tiny -32601 error body. The verbatim body has
- * no scoring value (the provider isn't in the panel for the method), so keep
- * only a debuggability prefix. Small bodies (error envelopes) still parse and
- * store whole.
+ * Tier-unsupported rows are flagged on EVERY challenge by construction, and
+ * not all of them carry a tiny -32601 error body: a provider that serves a
+ * NON-COMPARABLE variant of a method returns real data, potentially multi-MB.
+ * The verbatim body has no scoring value either way (the provider isn't in the
+ * panel for the method), so keep only a debuggability prefix. Small bodies
+ * (error envelopes) still parse and store whole.
+ *
+ * No provider is in the non-comparable case today — Quicknode was, on
+ * getTransactionsForAddress, until its variant became byte-comparable in
+ * August 2026 — so this is a standing guard, not dead code: the next
+ * divergent variant must not be able to write multi-MB rows per challenge.
  */
 const TIER_UNSUPPORTED_RAW_PREFIX_CHARS = 2048;
 
