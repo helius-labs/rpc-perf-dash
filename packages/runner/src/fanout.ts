@@ -90,8 +90,8 @@ export interface SingleResult {
  * (branding a merely rate-limited provider as returning wrong answers on ~100%
  * of calls) AND — because raw is retained for correctness_failure — kept the
  * response body for EVERY 429. Under a sustained provider rate-limit that is
- * unbounded raw growth: the DB-brick footgun (see docs/operations.md § Archive
- * contents).
+ * unbounded raw growth: the DB-brick footgun (see docs/operations.md
+ * § Raw-response retention).
  */
 function fromHttpResponse(
   latency_ms: number,

@@ -446,8 +446,28 @@ is folded into a generator deploy you were doing anyway, since the fleet is
 already quiescing. Costs a 1-2 minute gap in the sample stream.
 
 **It is not urgent.** Leaving them costs ~890 MB/day, i.e. ~6.2 GB standing at
-7-day retention — a ~40 GB steady state instead of ~34 GB — plus the per-INSERT
-index maintenance. Never worth an unplanned outage.
+7-day retention, plus the per-INSERT index maintenance. Never worth an unplanned
+outage.
+
+**Steady-state figures (measured on prod 2026-08-31, right after the deploy).**
+Today's `samples` partition grew at **3.25 GB/day** — heap ~1.5 GB, indexes
+~1.0 GB, TOAST ~0.1 GB. So:
+
+| | per day | 7-day `samples` | + control/rollup tables | total DB |
+|---|---|---|---|---|
+| as deployed | 3.25 GB | ~23 GB | ~23 GB | **~46 GB** |
+| after the two index drops | ~2.3 GB | ~16 GB | ~23 GB | **~39 GB** |
+
+Do **not** derive a per-day budget by dividing the total DB figure by 7 — over
+half of it is `challenges` / `challenge_assignments` / `rollups`, which are not
+in the daily partition at all. The daily budget is the measured 3.25 GB/day, and
+`PARTITION_DAY_WARN_BYTES` (8 GB) is ~2.5x that.
+
+**Expect the per-day check to fire on the deploy day itself.** It measures
+*today's* partition, and on 2026-08-31 that partition had already accumulated
+~35 GB of TOAST under the old rules before the fix went live. It self-resolves at
+the next 00:00 UTC boundary, when the first partition written entirely under the
+new rules starts clean.
 
 **Order is still load-bearing even without a migration:** the old `partitions.ts` referenced `'samples_archived'::regclass` OUTSIDE its `EXCEPTION` handler, and `ensurePartitions` is awaited at startup in `index.ts`, so dropping the table while the OLD generator is live crashloops the whole fleet. Deploy the generator first, then run the cleanup SQL above. Because the cleanup is not a migration, the normal `pnpm db:migrate` → generator → workers order in CLAUDE.md still holds for everything else.
 

@@ -723,18 +723,36 @@ async function main() {
   const STORAGE_WATCHDOG_INTERVAL_MS = 2 * 60_000;
   const SAMPLES_STALE_SECS = 180;
   const LONG_TXN_SECS = 300;
-  // Thresholds recalibrated 2026-08-31 against a ~40 GB steady state (was 150 GB,
-  // a number chosen only as "well under the prior 1.24 TB blowup"). WARN is the
-  // "look at this soon" line; ERROR is the "something is structurally wrong" line.
+  // NOTE ON REACH: everything below only WRITES TO THE LOG. There is no
+  // CloudWatch MetricFilter on "[storage-watchdog]" and no SNS subscriber —
+  // infra/cdk/lib/alerts-stack.ts carries HighCpu and TaskShortfall only. So
+  // these are signals for someone already reading logs, NOT pages. Do not
+  // describe them as alarms; if paging is ever wanted, add a MetricFilter onto
+  // the existing SNS topic (~10 lines) and say so here.
+  //
+  // Thresholds recalibrated 2026-08-31 against a MEASURED steady state (the old
+  // 150 GB was chosen only as "well under the prior 1.24 TB blowup"). WARN is
+  // "look at this soon"; ERROR is "something is structurally wrong".
   const DB_SIZE_WARN_BYTES = 80 * 1024 ** 3;
   const DB_SIZE_ERROR_BYTES = 150 * 1024 ** 3;
-  // The RATE alarm, and the most important one here. A cumulative-total
-  // threshold is a LAGGING indicator whenever retention is longer than a day:
-  // the 2026-08-31 incident sat at a 30-day equilibrium, so the database was not
+  // The RATE signal, and the most useful one here. A cumulative-total threshold
+  // is a LAGGING indicator whenever retention is longer than a day: the
+  // 2026-08-31 incident sat at a 30-day equilibrium, so the database was not
   // "growing" at all by the time it was 2.18 TB — the config that doomed it had
-  // been correct-looking for a month. Today's partition size is the LEADING
-  // indicator: it goes wrong within hours of a bad write rule shipping. At a
-  // ~3 GB/day steady state, 8 GB is a ~2.5x deviation.
+  // looked correct for a month. Today's partition size is the LEADING indicator:
+  // it goes wrong within hours of a bad write rule shipping.
+  //
+  // Sizing, measured on prod immediately after the 2026-08-31 deploy: today's
+  // partition grew at 3.25 GB/day (heap ~1.5 + indexes ~1.0 + toast ~0.1), so
+  // 8 GB is ~2.5x. Two adjustments to keep in mind before changing it:
+  //   * Dropping samples_lookup_idx / samples_dash_idx takes ~0.9 GB/day off,
+  //     making the ratio ~3.5x. Fine — the threshold does not need lowering.
+  //   * keepRaw retains honeypot rows where correctness <> 'correct', which
+  //     includes `ambiguous` (no_consensus / operational_error), not just real
+  //     misses. Under a fleet-wide provider outage nearly every honeypot can go
+  //     ambiguous: ~19k rows/day x the 32 KiB cap is ~0.6 GB/day on top. That is
+  //     the cap doing its job — bounded, ~4 GB/day worst case, still ~2x under
+  //     this threshold — but it is why the budget is not set tighter than 8 GB.
   const PARTITION_DAY_WARN_BYTES = 8 * 1024 ** 3;
   setInterval(() => {
     (async () => {
@@ -744,6 +762,7 @@ async function main() {
         lock_waiters: number;
         db_bytes: number;
         today_partition_bytes: number;
+        today_partition_name: string;
         top_relations: string | null;
       }>(
         db,
@@ -758,10 +777,19 @@ async function main() {
              WHERE datname = current_database() AND wait_event_type = 'Lock') AS lock_waiters,
           pg_database_size(current_database())::bigint AS db_bytes,
           -- Today's samples partition: the leading indicator (see the constants above).
-          (SELECT COALESCE(pg_total_relation_size(c.oid), 0)::bigint
+          -- COALESCE wraps the SUBQUERY, not the inner expression: a missing
+          -- partition makes the subquery return NO ROW (so NULL), and NULL fails
+          -- every greater-than comparison silently — which would no-op this check in
+          -- exactly the case where partition creation had failed.
+          COALESCE((SELECT pg_total_relation_size(c.oid)::bigint
              FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
              WHERE n.nspname = 'public'
-               AND c.relname = 'samples_' || to_char(current_date, 'YYYYMMDD')) AS today_partition_bytes,
+               AND c.relname = 'samples_' || to_char(current_date, 'YYYYMMDD')), 0) AS today_partition_bytes,
+          -- Return the partition NAME from SQL too. The diagnostic query pasted
+          -- into the log below must reference the same partition this row
+          -- measured; deriving it in JS from new Date() only agrees while the DB
+          -- timezone is UTC.
+          'samples_' || to_char(current_date, 'YYYYMMDD') AS today_partition_name,
           -- Name the culprit. The 2026-08-31 alert said only "database size
           -- 2183.6 GB exceeds 150 GB", which told nobody WHICH table or column,
           -- so diagnosis took a full session of manual pg_class spelunking. Emit
@@ -804,8 +832,8 @@ async function main() {
           `[storage-watchdog] TODAY's samples partition is ${gb(s.today_partition_bytes)}, over the ` +
             `${gb(PARTITION_DAY_WARN_BYTES)} daily budget — a write rule is retaining more BYTES per row than expected ` +
             `(check raw_response: \`SELECT method, is_honeypot, count(*), pg_size_pretty(sum(pg_column_size(raw_response))) ` +
-            `FROM samples_${new Date().toISOString().slice(0, 10).replace(/-/g, "")} GROUP BY 1,2 ORDER BY 4 DESC\`). ` +
-            `Do NOT wait for the total-size alarm: with multi-day retention it lags by the full retention window. ` +
+            `FROM ${s.today_partition_name} GROUP BY 1,2 ORDER BY 4 DESC\`). ` +
+            `Do NOT wait for the total-size check: with multi-day retention it lags by the full retention window. ` +
             `Top relations: ${s.top_relations ?? "n/a"}`,
         );
       }

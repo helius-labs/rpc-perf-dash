@@ -14,8 +14,8 @@
  *   2. pruneControlTables — caps the unbounded control-plane tables at 31 days
  *      (one day past the dashboard's 720h max window). Deleting a challenge
  *      cascades (ON DELETE CASCADE) to challenge_assignments and consensus_log.
- *      `samples` is NOT a FK child (it keeps its own 30d partition retention),
- *      so it is untouched here.
+ *      `samples` is NOT a FK child (it keeps its own 7d partition retention —
+ *      see partitions.ts SAMPLES_RETENTION_DAYS), so it is untouched here.
  *
  * Both loop a `ctid IN (SELECT ctid ... LIMIT n)` batch until a batch comes
  * back empty — Postgres DELETE/UPDATE don't take a LIMIT directly, and the ctid
