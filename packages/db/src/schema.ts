@@ -276,22 +276,17 @@ export const samples = pgTable(
     raw_response: jsonb("raw_response"),
   },
   (t) => ({
-    by_lookup: index("samples_lookup_idx").on(
-      t.provider_id,
-      t.method,
-      t.worker_provider,
-      t.region,
-      t.connection_mode,
-      t.started_at,
-    ),
+    // samples_lookup_idx (provider-leading) and samples_dash_idx
+    // (connection_mode-leading) were REMOVED on 2026-08-31. Both dated from
+    // when the dashboard read raw samples; it reads `rollups` now, and by
+    // 2026-08-31 they were serving 15 index scans per partition LIFETIME between
+    // them while costing ~890 MB/day of space and of per-INSERT maintenance.
+    // Don't reintroduce a wide index here without checking idx_scan first — the
+    // live read paths are challenge_id and started_at, below.
     by_challenge: index("samples_challenge_idx").on(t.challenge_id),
-    // Dashboard read path: aggregates ACROSS providers, so it filters
-    // (connection_mode, method, started_at) without provider_id — the lookup
-    // index above (provider_id-leading) can't serve it. See 0001_initial.sql.
-    by_dash: index("samples_dash_idx").on(t.connection_mode, t.method, t.started_at),
-    // /status + fleet-health aggregates filter `started_at` alone (no
-    // connection_mode/method/provider equality), which neither index above can
-    // serve — bare started_at range index for those. See 0001_initial.sql.
+    // /raw, /challenges, /status and fleet-health aggregates. started_at alone
+    // serves both the bare time-range scans and health.ts's
+    // (started_at + provider_id IN (...)) aggregate. See 0001_initial.sql.
     by_started_at: index("samples_started_at_idx").on(t.started_at),
   }),
 );

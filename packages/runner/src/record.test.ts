@@ -11,6 +11,9 @@
  *   Fix 2 — BorshIoError serialization skew normalizes away → the dissenter agrees.
  *   Fix 3 — quota/rate-limit body → operational_error (no-fault).
  *
+ * Plus the raw_response storage bound (2026-08-31): a passing honeypot must NOT
+ * retain a body, a failing one must, and every retained body must be capped.
+ *
  * Plus the reduced-panel regime: getTransactionsForAddress is down to two
  * structural voters (Helius, Alchemy), so both consensus floors relax to 2 and
  * the two of them agreeing scores the method instead of every challenge dying
@@ -20,7 +23,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { getTransactionsForAddress } from "@rpcbench/methods";
 import type { Method } from "@rpcbench/shared";
-import { buildSampleRows, type BuildSampleRowsInput } from "./record.js";
+import { buildSampleRows, cappedRaw, type BuildSampleRowsInput } from "./record.js";
 import type { ProviderCallResult, SingleResult } from "./fanout.js";
 
 const PANEL = ["helius", "triton", "alchemy", "quicknode"] as const;
@@ -104,6 +107,98 @@ function runPanel(
 // The three panel members that agree share value 1000 @ slot 100.
 const AGREE = { triton: balanceBody(100, 1000), alchemy: balanceBody(100, 1000), quicknode: balanceBody(100, 1000) };
 const AGREE_TIPS = { helius: 100n, triton: 100n, alchemy: 100n, quicknode: 100n };
+
+/** `runPanel` with honeypot wiring — the caller supplies the pre-seeded
+ *  reference hash that the honeypot classifier scores against. */
+function runHoneypot(
+  method: Method,
+  bucket: string,
+  bodies: Record<string, string>,
+  tips: Record<string, bigint>,
+  reference_hash: Buffer,
+) {
+  const fanoutResults: ProviderCallResult[] = PANEL.map((id) => {
+    const single = ok(bodies[id]!);
+    return { provider_id: id, endpoint_used: `https://${id}`, cold: single, warm: single };
+  });
+  const input: BuildSampleRowsInput = {
+    challenge_id: "t",
+    method,
+    bucket,
+    worker_provider: "aws",
+    region: "us-east-1",
+    worker_id: "w1",
+    egress_path: "direct",
+    reference_hash,
+    reference_tip_slot: 100n,
+    is_honeypot: true,
+    archive: false,
+    fanoutResults,
+    provider_tip_slots: new Map(PANEL.map((id) => [id, tips[id]!])),
+    startedAt: new Date(0),
+  };
+  const { rows } = buildSampleRows(input);
+  const byProvider: Record<string, (typeof rows)[number]> = {};
+  for (const r of rows) if (r.connection_mode === "cold") byProvider[r.provider_id] = r;
+  return byProvider;
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// raw_response storage bound (see RAW_RESPONSE_MAX_CHARS in record.ts)
+// ────────────────────────────────────────────────────────────────────────
+
+test("cap: a body at or under the ceiling is stored verbatim", () => {
+  const body = balanceBody(100, 1000);
+  assert.ok(body.length < 32 * 1024);
+  assert.deepEqual(cappedRaw(body), JSON.parse(body));
+});
+
+test("cap: an oversized body is truncated, and records what it truncated", () => {
+  const huge = result({ context: { slot: 100 }, value: 1000, pad: "x".repeat(5_000_000) });
+  const capped = cappedRaw(huge) as { truncated: boolean; original_length: number; prefix: string };
+  assert.equal(capped.truncated, true);
+  assert.equal(capped.original_length, huge.length);
+  assert.equal(capped.prefix.length, 32 * 1024);
+  // The whole point: what we store is bounded no matter how big the response is.
+  assert.ok(JSON.stringify(capped).length < 40 * 1024, "stored payload must stay ~32 KiB");
+});
+
+test("honeypot that PASSES retains NO raw_response (the 2.18 TB regression)", () => {
+  // Two passes: the first, against a deliberately-wrong reference, surfaces the
+  // real projection hash on the row; the second uses it so the honeypot passes.
+  const bodies = { helius: balanceBody(100, 1000), ...AGREE };
+  const wrong = runHoneypot("getBalance", "wallet", bodies, AGREE_TIPS, Buffer.alloc(32, 1));
+  assert.equal(wrong.helius!.correctness, "incorrect");
+  assert.notEqual(wrong.helius!.raw_response, null, "a honeypot MISS must keep its body");
+
+  const trueHash = Buffer.from(wrong.helius!.response_hash as Uint8Array);
+  const passing = runHoneypot("getBalance", "wallet", bodies, AGREE_TIPS, trueHash);
+  assert.equal(passing.helius!.correctness, "correct");
+  assert.equal(
+    passing.helius!.raw_response,
+    null,
+    "a PASSING honeypot must not store its body — this predicate was ~99% of a 2.18 TB database",
+  );
+});
+
+test("cap: a retained honeypot MISS with a multi-MB body is still bounded", () => {
+  // A honeypot miss is exactly the row we DO keep, so it is the row that must
+  // prove the cap holds end-to-end through buildSampleRows.
+  const huge = result({ context: { slot: 100 }, value: 999, pad: "x".repeat(5_000_000) });
+  const rows = runHoneypot(
+    "getBalance",
+    "wallet",
+    { helius: huge, ...AGREE },
+    AGREE_TIPS,
+    Buffer.alloc(32, 1),
+  );
+  const stored = rows.helius!.raw_response;
+  assert.notEqual(stored, null, "a miss must keep a body");
+  assert.ok(
+    JSON.stringify(stored).length < 40 * 1024,
+    `stored raw_response was ${JSON.stringify(stored).length} bytes — the cap is not applied`,
+  );
+});
 
 test("Fix 1: divergent value at a NEWER slot → freshness_ahead (no-fault, excluded)", () => {
   const rows = run("getBalance", "wallet", { helius: balanceBody(102, 2000), ...AGREE }, AGREE_TIPS);

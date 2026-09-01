@@ -1,7 +1,7 @@
 -- 0001_initial.sql — full baseline schema.
 --
 -- Owned by hand because Drizzle does not support native partitioning, the
--- partitioned `samples` / `samples_archived` tables, the worker-facing view, or
+-- partitioned `samples` table, the worker-facing view, or
 -- the CHECK constraints below. Apply via `pnpm db:migrate` (which runs
 -- migrate.ts). Every statement is idempotent (IF NOT EXISTS / OR REPLACE) so a
 -- re-run is a no-op.
@@ -227,10 +227,15 @@ CREATE TABLE IF NOT EXISTS samples (
   )
 ) PARTITION BY RANGE (started_at);
 
-CREATE INDEX IF NOT EXISTS samples_lookup_idx
-  ON samples (provider_id, method, worker_provider, region, connection_mode, started_at);
+-- NOTE: this baseline deliberately does NOT create a provider-leading
+-- (provider_id, method, worker_provider, region, connection_mode, started_at)
+-- index or a (connection_mode, method, started_at) one. Both existed until
+-- 2026-08-31 and were dropped: they date from when the dashboard read raw
+-- samples (it reads `rollups` now), and across a partition's 7-day lifetime they
+-- served 11 and 4 index scans while challenge_id and started_at served 590,858
+-- and 78,287 — for ~890 MB/day of space and of per-INSERT maintenance. Check
+-- pg_stat_user_indexes.idx_scan before adding a wide index here.
 CREATE INDEX IF NOT EXISTS samples_challenge_idx ON samples (challenge_id);
-CREATE INDEX IF NOT EXISTS samples_dash_idx ON samples (connection_mode, method, started_at);
 CREATE INDEX IF NOT EXISTS samples_failure_category_idx
   ON samples (provider_id, failure_category, started_at DESC) WHERE failure_category IS NOT NULL;
 -- Create the honeypot partial index before the plain started_at index: both
@@ -239,50 +244,18 @@ CREATE INDEX IF NOT EXISTS samples_failure_category_idx
 CREATE INDEX IF NOT EXISTS samples_honeypot_idx ON samples (started_at) WHERE is_honeypot;
 CREATE INDEX IF NOT EXISTS samples_started_at_idx ON samples (started_at);
 
--- ════════════════════════════════════════════════════════════════════════
--- Archive — samples_archived (partitioned daily by started_at)
---
--- Holds sampled/retained rows past the live-partition horizon. No volatile
--- CHECK constraints (they'd block re-inserting historical vocabulary), and no
--- failure_category/failure_detail columns.
--- ════════════════════════════════════════════════════════════════════════
+-- NOTE: there is no `samples_archived` table. One existed until 2026-08-31,
+-- holding a 30-day tail of every row with a non-null raw_response. It was
+-- removed because it had ZERO readers (no SELECT against it anywhere in apps/ or
+-- packages/) while being 1837 GB of a 2184 GB database, and because its
+-- `INSERT ... SELECT ... ON CONFLICT DO NOTHING` copy was idempotent in ROWS but
+-- not in BYTES — a re-run re-TOASTed each ~1.8 MB body before discovering the
+-- conflict, giving exactly 2.00 inserts per live TOAST chunk and ~51% page
+-- utilization. The 7-day `samples` window is the forensic surface; /raw reads it.
+-- If a longer tail is ever wanted, store a narrow projection (challenge_id,
+-- provider_id, method, response_hash, error_code) — never a full-row copy.
 
-CREATE TABLE IF NOT EXISTS samples_archived (
-  challenge_id         uuid NOT NULL,
-  method               text NOT NULL,
-  provider_id          text NOT NULL,
-  region               text NOT NULL,
-  worker_id            text NOT NULL,
-  egress_path          text NOT NULL,
-  endpoint_used        text NOT NULL,
-  bucket               text NOT NULL,
-  connection_mode      text NOT NULL,
-  started_at           timestamptz NOT NULL,
-  latency_ms           integer NOT NULL,
-  status               text NOT NULL,
-  error_code           text,
-  http_status          smallint,
-  response_hash        bytea NOT NULL,
-  provider_tip_slot    bigint,
-  reference_tip_slot   bigint,
-  response_slot        bigint,
-  freshness_lag        bigint,
-  correctness          text NOT NULL,
-  exclusion_reason     text,
-  methodology_version  smallint NOT NULL,
-  is_honeypot          boolean NOT NULL DEFAULT false,
-  raw_response         jsonb,
-  worker_provider      text NOT NULL DEFAULT 'aws'
-) PARTITION BY RANGE (started_at);
-
-CREATE INDEX IF NOT EXISTS samples_archived_provider_id_method_region_connection_mode__idx
-  ON samples_archived (provider_id, method, region, connection_mode, started_at);
-CREATE INDEX IF NOT EXISTS samples_archived_challenge_id_idx
-  ON samples_archived (challenge_id);
-CREATE INDEX IF NOT EXISTS samples_archived_started_at_idx
-  ON samples_archived (started_at) WHERE is_honeypot;
-
--- Bootstrap partitions: today + tomorrow for both partitioned tables. The
+-- Bootstrap partitions: today + tomorrow. The
 -- generator's daily partition cron extends the window forward and drops old
 -- partitions past retention.
 DO $$
@@ -292,10 +265,6 @@ BEGIN
   FOR d IN SELECT generate_series(current_date, current_date + 1, interval '1 day')::date LOOP
     EXECUTE format(
       'CREATE TABLE IF NOT EXISTS samples_%s PARTITION OF samples FOR VALUES FROM (%L) TO (%L)',
-      to_char(d, 'YYYYMMDD'), d::timestamptz, (d + 1)::timestamptz
-    );
-    EXECUTE format(
-      'CREATE TABLE IF NOT EXISTS samples_archived_%s PARTITION OF samples_archived FOR VALUES FROM (%L) TO (%L)',
       to_char(d, 'YYYYMMDD'), d::timestamptz, (d + 1)::timestamptz
     );
   END LOOP;
