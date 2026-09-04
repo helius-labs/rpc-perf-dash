@@ -315,7 +315,12 @@ export default async function ProviderPage({ params }: { params: Promise<{ id: s
       {/* Hero — rank · name · score in big type, with the live stat strip. */}
       <div className="idx-row-prov">
         <span className="idx-rank">{String(rank).padStart(2, "0")}</span>
-        <span className="idx-name">{provider.name}</span>
+        {/* The page's only <h1>. Kept to the bare provider name: the hero is
+            clamp(48px, 7vw, 82px) in a 3-column baseline-aligned grid, so a longer
+            heading wraps and breaks the rank/score alignment. The <title> already
+            leads with the same name. Tailwind preflight resets h1 to inherited
+            font + zero margin, so this renders identically to the old <span>. */}
+        <h1 className="idx-name">{provider.name}</h1>
         <span className="idx-score">{thisRanked ? row!.total.toFixed(1) : "—"}</span>
       </div>
       <div className="prov-stat-strip">
