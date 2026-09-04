@@ -30,6 +30,32 @@ const config: NextConfig = {
   // basePath, so _next/static is covered too. The raw origin now serves only
   // at rpc-perf-dash.vercel.app/benchmarks (root 404s — expected).
   basePath: "/benchmarks",
+  // Next 15 STREAMS generateMetadata output into the <body> and lets React hoist
+  // it into <head> client-side. Fine for Googlebot (it renders JS), broken for
+  // raw-HTML consumers that don't — Screaming Frog, AhrefsBot, SemrushBot,
+  // GPTBot, ClaudeBot — which then ignore the canonical and robots directives
+  // entirely. (Next's built-in allowlist in shared/lib/router/utils/html-bots.ts
+  // already covers Bingbot/LinkedIn/Twitter/Slack/Discord/Facebook; SEO and AI
+  // crawlers are the gap.) A crawl found <title>/<link rel=canonical>/<meta
+  // description>/<meta robots> in the BODY on / and all five /provider/* pages —
+  // 6 of the 10 indexable URLs. Every force-dynamic route is exposed:
+  // /methodology, /challenges and /status only land in <head> because their
+  // metadata happens to resolve before the first flush, which is a race.
+  //
+  // `/.*/` widens the blocking-render allowlist to every request, so the tags are
+  // always in <head>. Cheap here: no generateMetadata in this app touches the DB
+  // (they await params/searchParams and format strings), so the added wait is
+  // roughly one microtask. The page body still streams through its Suspense
+  // boundaries unchanged. Reach is dynamically-rendered responses only — the
+  // build-time export worker reads `.source` off the already-stringified value
+  // and falls back to the default, which is harmless because a non-streaming
+  // prerender puts the tags in <head> anyway (why /sends and /changelog are fine).
+  //
+  // CAVEAT if PPR is ever enabled: build/index.js feeds this same regex into the
+  // route's `bypassFor`, but only when isRoutePPREnabled. PPR is off today, so
+  // this is inert. Turn PPR on and `.*` would make EVERY request bypass the PPR
+  // cache — narrow this to an explicit crawler list at that point.
+  htmlLimitedBots: /.*/,
   reactStrictMode: true,
   typedRoutes: true,
   transpilePackages: ["@rpcbench/db", "@rpcbench/shared", "@rpcbench/methods"],
