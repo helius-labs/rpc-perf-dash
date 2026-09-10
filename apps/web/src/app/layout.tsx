@@ -34,9 +34,25 @@ export const viewport: Viewport = {
 // insights/*` path (no CORS, first-party → fewer ad-blocker hits). next.config's
 // external rewrite maps that path to the root collector server-side. Only set on
 // Vercel — locally there's no collector, so leave the package defaults.
+//
+// `endpoint` alone is NOT enough, and its absence was silently costing every
+// pageview: Vercel injects a build-time client config
+// (REACT_APP_VERCEL_OBSERVABILITY_CLIENT_CONFIG) carrying per-project OBFUSCATED
+// collector paths — viewEndpoint/eventEndpoint/sessionEndpoint like
+// `/ad2fbf5bf24a631b/view`, randomized to dodge ad blockers. loadProps() merges
+// that config UNDERNEATH our explicit props, so those three keys survive, and
+// the collector script prefers a `<type>Endpoint` over the generic `endpoint`.
+// Net effect: the beacon POSTed to `https://www.helius.dev/ad2fbf5bf24a631b/view`
+// — a root path the proxy doesn't forward → 404 → zero recorded pageviews from
+// the day the /benchmarks proxy went live (verified in-browser: script.js loads
+// 200, `window.vai` set, then a 404 on the view beacon). So override all three
+// explicitly; the generic `endpoint` still covers identify/group.
 const analyticsProps = process.env.VERCEL
   ? {
       scriptSrc: "/benchmarks/_vercel/insights/script.js",
+      viewEndpoint: "/benchmarks/_vercel/insights/view",
+      eventEndpoint: "/benchmarks/_vercel/insights/event",
+      sessionEndpoint: "/benchmarks/_vercel/insights/session",
       endpoint: "/benchmarks/_vercel/insights",
     }
   : {};
