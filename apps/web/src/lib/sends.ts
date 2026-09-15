@@ -549,3 +549,44 @@ export const fetchSendTableData = unstable_cache(
   ["send-table"],
   { revalidate: CACHE_TTL_S },
 );
+
+// ── Snapshot support ───────────────────────────────────────────────────────
+
+/** The bucket bounds the board's numbers actually cover. */
+export interface SendWindow {
+  /** Start of the most recent rolled-up bucket, ISO-8601. */
+  window_start: string;
+  /** Exclusive end of that bucket (start + grain), ISO-8601. */
+  window_end: string;
+}
+
+/**
+ * The window `fetchSendBoard` scored over. That function pins
+ * `window_start = max(window_start)` in its `latest` CTE and then discards the
+ * timestamp, so a caller that needs to STAMP the numbers (the snapshot script,
+ * `/api/sends`) has no way to say what period they describe. This re-runs just
+ * the max() — index-backed on (grain, scenario, methodology_version,
+ * window_start), so it's a cheap second query rather than a reshape of the
+ * board's return type across all six of its callers.
+ *
+ * Returns null when the grain has no rows at all (fresh DB, or a methodology
+ * bump that hasn't rolled up yet) — callers must not stamp a date in that case.
+ */
+export const fetchSendWindow = unstable_cache(
+  async (grain: "1h" | "1d" = "1d"): Promise<SendWindow | null> => {
+    const rows = (await db().execute(sql`
+      SELECT max(window_start) AS w
+      FROM send_leaderboard_agg
+      WHERE grain = ${grain} AND methodology_version = ${SEND_METHODOLOGY_VERSION}
+    `)) as unknown as { w: string | Date | null }[];
+
+    const raw = rows[0]?.w;
+    if (raw == null) return null;
+    const start = raw instanceof Date ? raw : new Date(raw);
+    if (Number.isNaN(start.getTime())) return null;
+    const end = new Date(start.getTime() + (grain === "1d" ? 86_400_000 : 3_600_000));
+    return { window_start: start.toISOString(), window_end: end.toISOString() };
+  },
+  ["send-window"],
+  { revalidate: CACHE_TTL_S },
+);
