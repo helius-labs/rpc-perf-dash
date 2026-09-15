@@ -18,9 +18,10 @@
 import type { SendsLeaderboardRow } from "@/components/SendsLeaderboard";
 
 export interface SendsSnapshot {
-  /** Data date (UTC, from the API's window_end) — NOT the generation date. */
+  /** The day the rows cover (UTC, from the API's window_start) — NOT the
+   *  generation date, and NOT window_end, which is the exclusive bound. */
   asOf: string;
-  /** Rollup grain the rows were scored over. */
+  /** Rollup grain the rows were scored over — a COMPLETED bucket. */
   grain: "1h" | "1d";
   rows: SendsLeaderboardRow[];
 }

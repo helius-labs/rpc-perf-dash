@@ -5,14 +5,19 @@
  *   pnpm snapshot:sends --write      # overwrites the file in place
  *
  * The embed at /embed/sends-snapshot renders that file and nothing else, so
- * publishing a new snapshot is: run this, review the diff, open a PR. The
- * `asOf` stamp comes from the API's `window_end` (the data's own bucket bound),
- * never from this machine's clock — a snapshot generated today from a board
- * that last rolled up on Friday must date itself Friday, or the card claims
- * currency it doesn't have.
+ * publishing a new snapshot is: run this, review the diff, open a PR.
+ *
+ * Two rules keep the date honest, and both live in the request below:
+ *   - `complete=1` — the board's default newest bucket is the CURRENT day,
+ *     still filling. Publishing it would date a partial day as if it were a
+ *     whole one.
+ *   - `asOf` comes from `window_start`, the day the bucket covers. `window_end`
+ *     is the EXCLUSIVE bound (Sep 14's bucket ends Sep 15), so stamping from it
+ *     dates every snapshot a day late.
  */
 
 const SITE = process.env.SNAPSHOT_SITE_URL ?? "https://www.helius.dev/benchmarks";
+const GRAINS = ["1h", "1d"];
 const GRAIN = process.env.SNAPSHOT_GRAIN ?? "1d";
 const WRITE = process.argv.includes("--write");
 
@@ -26,7 +31,12 @@ function fail(msg) {
   process.exit(1);
 }
 
-const url = `${SITE}/api/sends?grain=${encodeURIComponent(GRAIN)}`;
+// The API coerces an unknown grain to 1d, but this script writes the raw value
+// into a `grain: "1h" | "1d"` field — so a typo would silently pair 1d numbers
+// with a label that doesn't typecheck. Reject it here instead.
+if (!GRAINS.includes(GRAIN)) fail(`SNAPSHOT_GRAIN must be one of ${GRAINS.join(" | ")}`);
+
+const url = `${SITE}/api/sends?grain=${encodeURIComponent(GRAIN)}&complete=1`;
 const res = await fetch(url).catch((e) => fail(`fetch ${url} — ${e.message}`));
 if (!res.ok) fail(`${url} returned ${res.status}`);
 const body = await res.json();
@@ -35,9 +45,14 @@ if (!Array.isArray(body.rows) || body.rows.length === 0) fail("no rows in respon
 // Refuse to stamp a date the API didn't give us. A snapshot with a wrong date
 // is worse than no snapshot: the whole point of the static card is that the
 // numbers and the date on it describe the same period.
-if (!body.window_end) fail("response has no window_end — deploy the API change first");
+if (!body.window_start) fail("response has no window_start — deploy the API change first");
+// Belt and braces on top of complete=1: never publish a bucket that hasn't
+// ended, whatever the server thought.
+if (new Date(body.window_end).getTime() > Date.now()) {
+  fail(`bucket ending ${body.window_end} is still filling — nothing to publish yet`);
+}
 
-const asOf = body.window_end.slice(0, 10);
+const asOf = body.window_start.slice(0, 10);
 const rows = body.rows.map((x) => ({
   rank: x.rank,
   send_target: x.send_target,
@@ -82,9 +97,10 @@ const file = `/**
 import type { SendsLeaderboardRow } from "@/components/SendsLeaderboard";
 
 export interface SendsSnapshot {
-  /** Data date (UTC, from the API's window_end) — NOT the generation date. */
+  /** The day the rows cover (UTC, from the API's window_start) — NOT the
+   *  generation date, and NOT window_end, which is the exclusive bound. */
   asOf: string;
-  /** Rollup grain the rows were scored over. */
+  /** Rollup grain the rows were scored over — a COMPLETED bucket. */
   grain: "1h" | "1d";
   rows: SendsLeaderboardRow[];
 }

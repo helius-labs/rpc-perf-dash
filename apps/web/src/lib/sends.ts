@@ -72,18 +72,67 @@ interface AggRow {
   cu_requested_avg: number | null;
 }
 
+/** The bucket bounds the board's numbers actually cover. */
+export interface SendWindow {
+  /** Start of the scored bucket, ISO-8601. */
+  window_start: string;
+  /** Exclusive end of that bucket (start + grain), ISO-8601. */
+  window_end: string;
+}
+
+/** A scored board plus the bucket it was scored over. */
+export interface SendBoardAt {
+  /** null when the grain has no qualifying bucket (fresh DB, methodology bump,
+   *  or `completeOnly` before the first full bucket exists). `rows` is [] then. */
+  window: SendWindow | null;
+  rows: SendBoardRow[];
+}
+
 /**
- * Fetch + score the send board for a grain, optionally filtered to one scenario.
- * Aggregates each target over its most-recent window across geos.
+ * Resolve ONE bucket, then load + score it.
+ *
+ * The bucket is resolved once and passed into both queries below. They used to
+ * run a `max(window_start)` CTE each — against DIFFERENT tables
+ * (send_leaderboard_agg for the scored axes, send_rollups for the outcome
+ * counts) — so in the gap between the rollup fold and the leaderboard fold they
+ * could disagree, pairing one bucket's rows with another's outcome counts.
+ *
+ * `completeOnly` picks the newest bucket that has FINISHED rather than the
+ * newest that exists. The 1d fold re-folds the last 30 days every tick
+ * (`runSendHeavyRollups`), so `max(window_start)` is always the current,
+ * still-filling day — right for the live board, wrong for anything that
+ * publishes a dated figure, which would otherwise stamp a partial day with
+ * tomorrow's date.
  */
-export const fetchSendBoard = unstable_cache(
-  async (grain: "1h" | "1d" = "1d", scenario?: string): Promise<SendBoardRow[]> => {
+const loadSendBoard = unstable_cache(
+  async (
+    grain: "1h" | "1d",
+    scenario: string | undefined,
+    completeOnly: boolean,
+  ): Promise<SendBoardAt> => {
+    const grainInterval = sql.raw(grain === "1d" ? "interval '1 day'" : "interval '1 hour'");
+    const winRows = (await db().execute(sql`
+      SELECT max(window_start) AS w
+      FROM send_leaderboard_agg
+      WHERE grain = ${grain} AND methodology_version = ${SEND_METHODOLOGY_VERSION}
+        ${completeOnly ? sql`AND window_start + ${grainInterval} <= now()` : sql``}
+    `)) as unknown as { w: string | Date | null }[];
+
+    const rawWindow = winRows[0]?.w ?? null;
+    if (rawWindow == null) return { window: null, rows: [] };
+    const start = rawWindow instanceof Date ? rawWindow : new Date(rawWindow);
+    if (Number.isNaN(start.getTime())) return { window: null, rows: [] };
+    // Both queries below bind `window.window_start` (ISO text) with an explicit
+    // ::timestamptz rather than the Date — an untyped Date parameter leaves PG
+    // to infer the type of `window_start = $n` and the compare fails.
+    const window: SendWindow = {
+      window_start: start.toISOString(),
+      window_end: new Date(
+        start.getTime() + (grain === "1d" ? 86_400_000 : 3_600_000),
+      ).toISOString(),
+    };
+
     const rows = (await db().execute(sql`
-      WITH latest AS (
-        SELECT max(window_start) AS w
-        FROM send_leaderboard_agg
-        WHERE grain = ${grain} AND methodology_version = ${SEND_METHODOLOGY_VERSION}
-      )
       SELECT
         send_target, scenario, geo,
         sum(sample_count_total)::int AS sample_count_total,
@@ -92,32 +141,27 @@ export const fetchSendBoard = unstable_cache(
         avg(slot_latency_p95)::float AS slot_latency_p95,
         avg(priority_fee_avg)::bigint AS priority_fee_avg,
         avg(cu_requested_avg)::float AS cu_requested_avg
-      FROM send_leaderboard_agg, latest
+      FROM send_leaderboard_agg
       WHERE grain = ${grain}
         AND methodology_version = ${SEND_METHODOLOGY_VERSION}
-        AND window_start = latest.w
+        AND window_start = ${window.window_start}::timestamptz
         ${scenario ? sql`AND scenario = ${scenario}` : sql``}
       GROUP BY send_target, scenario, geo
     `)) as unknown as AggRow[];
 
     // Outcome breakdown (per target) from send_rollups — send_leaderboard_agg
     // doesn't carry the per-outcome counts, so pull them here for the "why not
-    // 100%?" tooltip + the expanded row.
+    // 100%?" tooltip + the expanded row. Same `start` as the rows above.
     const countRows = (await db().execute(sql`
-      WITH latest AS (
-        SELECT max(window_start) AS w
-        FROM send_rollups
-        WHERE grain = ${grain} AND methodology_version = ${SEND_METHODOLOGY_VERSION}
-      )
       SELECT send_target,
              sum(landed_count)::int AS landed,
              sum(reverted_count)::int AS reverted,
              sum(not_landed_count)::int AS not_landed,
              sum(submit_error_count)::int AS submit_error
-      FROM send_rollups, latest
+      FROM send_rollups
       WHERE grain = ${grain}
         AND methodology_version = ${SEND_METHODOLOGY_VERSION}
-        AND window_start = latest.w
+        AND window_start = ${window.window_start}::timestamptz
         ${scenario ? sql`AND scenario = ${scenario}` : sql``}
       GROUP BY send_target
     `)) as unknown as {
@@ -231,7 +275,7 @@ export const fetchSendBoard = unstable_cache(
 
     const scored = scoreSends(metrics);
     scored.sort((a, b) => b.total - a.total);
-    return scored.map((s, i) => {
+    const ranked = scored.map((s, i) => {
       const e = extras.get(s.send_target)!;
       return {
         rank: i + 1,
@@ -250,10 +294,35 @@ export const fetchSendBoard = unstable_cache(
         per_geo: e.per_geo,
       };
     });
+    return { window, rows: ranked };
   },
-  ["send-board"],
+  ["send-board-at"],
   { revalidate: CACHE_TTL_S },
 );
+
+/**
+ * The live board: the most recent bucket, still-filling day included. That's
+ * what /sends and /api/sends should show — a live board that withheld today
+ * would lag reality by up to a day.
+ */
+export async function fetchSendBoard(
+  grain: "1h" | "1d" = "1d",
+  scenario?: string,
+): Promise<SendBoardRow[]> {
+  return (await loadSendBoard(grain, scenario, false)).rows;
+}
+
+/**
+ * The most recent COMPLETE bucket, with the window it covers — for anything
+ * that publishes a dated figure (the snapshot embed via `/api/sends?complete=1`).
+ * Returns `{ window: null, rows: [] }` until one full bucket exists.
+ */
+export async function fetchSendBoardComplete(
+  grain: "1h" | "1d" = "1d",
+  scenario?: string,
+): Promise<SendBoardAt> {
+  return loadSendBoard(grain, scenario, true);
+}
 
 export { DEFAULT_SEND_WEIGHTS };
 export type { SendScoringWeights };
@@ -547,46 +616,5 @@ export const fetchSendTableData = unstable_cache(
     };
   },
   ["send-table"],
-  { revalidate: CACHE_TTL_S },
-);
-
-// ── Snapshot support ───────────────────────────────────────────────────────
-
-/** The bucket bounds the board's numbers actually cover. */
-export interface SendWindow {
-  /** Start of the most recent rolled-up bucket, ISO-8601. */
-  window_start: string;
-  /** Exclusive end of that bucket (start + grain), ISO-8601. */
-  window_end: string;
-}
-
-/**
- * The window `fetchSendBoard` scored over. That function pins
- * `window_start = max(window_start)` in its `latest` CTE and then discards the
- * timestamp, so a caller that needs to STAMP the numbers (the snapshot script,
- * `/api/sends`) has no way to say what period they describe. This re-runs just
- * the max() — index-backed on (grain, scenario, methodology_version,
- * window_start), so it's a cheap second query rather than a reshape of the
- * board's return type across all six of its callers.
- *
- * Returns null when the grain has no rows at all (fresh DB, or a methodology
- * bump that hasn't rolled up yet) — callers must not stamp a date in that case.
- */
-export const fetchSendWindow = unstable_cache(
-  async (grain: "1h" | "1d" = "1d"): Promise<SendWindow | null> => {
-    const rows = (await db().execute(sql`
-      SELECT max(window_start) AS w
-      FROM send_leaderboard_agg
-      WHERE grain = ${grain} AND methodology_version = ${SEND_METHODOLOGY_VERSION}
-    `)) as unknown as { w: string | Date | null }[];
-
-    const raw = rows[0]?.w;
-    if (raw == null) return null;
-    const start = raw instanceof Date ? raw : new Date(raw);
-    if (Number.isNaN(start.getTime())) return null;
-    const end = new Date(start.getTime() + (grain === "1d" ? 86_400_000 : 3_600_000));
-    return { window_start: start.toISOString(), window_end: end.toISOString() };
-  },
-  ["send-window"],
   { revalidate: CACHE_TTL_S },
 );

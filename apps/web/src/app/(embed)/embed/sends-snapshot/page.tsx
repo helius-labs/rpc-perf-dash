@@ -39,10 +39,18 @@ export default function EmbedSendsSnapshotPage() {
 
   // No rows, or a date we can't render, means no publishable snapshot — say so
   // rather than showing a headless list of numbers with nothing dating them.
+  //
+  // This renders on whatever external page has already embedded the widget, so
+  // it stays neutral: no build commands, no internal tooling names. (To fix it:
+  // `pnpm snapshot:sends --write`, then deploy.)
   if (rows.length === 0 || !stamped) {
     return (
       <div className="badge" style={{ display: "block", padding: 12 }}>
-        Snapshot not yet published — run <code>pnpm snapshot:sends --write</code> and deploy.
+        No published snapshot yet — see the{" "}
+        <Link href={"/sends" as Route} target="_top">
+          live results
+        </Link>
+        .
       </div>
     );
   }
