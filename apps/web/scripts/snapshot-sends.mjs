@@ -68,17 +68,17 @@ const rows = body.rows.map((x) => ({
 const lit = (v) => JSON.stringify(v);
 const rowLines = rows
   .map(
-    (x) => `  {
-    rank: ${x.rank},
-    send_target: ${lit(x.send_target)},
-    total: ${x.total},
-    landing_rate: ${x.landing_rate},
-    slot_latency_p50: ${x.slot_latency_p50},
-    slot_latency_p95: ${x.slot_latency_p95},
-    cost_lamports: ${x.cost_lamports},
-    sample_count_total: ${x.sample_count_total},
-    outcomes: { landed: ${x.outcomes.landed}, reverted: ${x.outcomes.reverted}, not_landed: ${x.outcomes.not_landed}, submit_error: ${x.outcomes.submit_error} },
-  },`,
+    (x) => `    {
+      rank: ${x.rank},
+      send_target: ${lit(x.send_target)},
+      total: ${x.total},
+      landing_rate: ${x.landing_rate},
+      slot_latency_p50: ${x.slot_latency_p50},
+      slot_latency_p95: ${x.slot_latency_p95},
+      cost_lamports: ${x.cost_lamports},
+      sample_count_total: ${x.sample_count_total},
+      outcomes: { landed: ${x.outcomes.landed}, reverted: ${x.outcomes.reverted}, not_landed: ${x.outcomes.not_landed}, submit_error: ${x.outcomes.submit_error} },
+    },`,
   )
   .join("\n");
 
