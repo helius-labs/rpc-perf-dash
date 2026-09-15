@@ -17,7 +17,13 @@
 import { BASE_PATH } from "./basePath";
 
 /** The widget routes under /embed — keep in sync with app/(embed)/embed/*. */
-export type EmbedWidget = "chart" | "latency-table" | "leaderboard" | "score";
+export type EmbedWidget =
+  | "chart"
+  | "latency-table"
+  | "leaderboard"
+  | "score"
+  /** Static, dated send board — takes no params (see its page.tsx). */
+  | "sends-snapshot";
 
 /**
  * Client-side origin for an embed URL, e.g. "https://www.helius.dev/benchmarks".

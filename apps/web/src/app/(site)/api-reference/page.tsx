@@ -437,6 +437,14 @@ const WIDGETS: WidgetSpec[] = [
     ],
     exampleQuery: "",
   },
+  {
+    id: "sends-snapshot",
+    title: "Send board — dated snapshot",
+    blurb:
+      "The transaction-landing standings frozen at a published date, for pages that can't take a board that reorders on its own. Static: it renders a checked-in file, takes no parameters, and does not change until a new snapshot is published. The card carries its own as-of date and links to the live board — use /embed/leaderboard instead if you want live numbers.",
+    params: [],
+    exampleQuery: "",
+  },
 ];
 
 const widgets: EmbedWidget[] = WIDGETS.map((w) => ({ ...w, slug: slugify(`embed/${w.id}`) }));

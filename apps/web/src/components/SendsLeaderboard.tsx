@@ -26,6 +26,26 @@ import {
 import { targetLabel } from "@/lib/sendLabels";
 import type { SendBoardRow } from "@/lib/sends";
 
+/**
+ * What this list actually renders. Narrower than `SendBoardRow` (no `scenario`,
+ * `priority_fee_avg` or `per_geo` — those feed <SendsBoard>'s client re-scoring,
+ * not the row markup), so a frozen snapshot can satisfy it without carrying the
+ * whole board shape. `SendBoardRow` structurally satisfies it, so /sends passes
+ * its rows through unchanged.
+ */
+export type SendsLeaderboardRow = Pick<
+  SendBoardRow,
+  | "rank"
+  | "send_target"
+  | "total"
+  | "landing_rate"
+  | "slot_latency_p50"
+  | "slot_latency_p95"
+  | "cost_lamports"
+  | "sample_count_total"
+  | "outcomes"
+>;
+
 const fmt = (v: number | null): string => (v == null ? "—" : Math.round(v).toLocaleString());
 
 /** One labeled cell in the expanded detail strip (RPC idx-ds style). */
@@ -38,7 +58,7 @@ function DS({ label, children }: { label: string; children: React.ReactNode }) {
   );
 }
 
-function Row({ r, index, isOpen, toggle }: { r: SendBoardRow; index: number; isOpen: boolean; toggle: (id: string) => void }) {
+function Row({ r, index, isOpen, toggle }: { r: SendsLeaderboardRow; index: number; isOpen: boolean; toggle: (id: string) => void }) {
   const isLeader = index === 0;
   const leaderColor = isLeader ? brandColorFor(r.send_target) : null;
   const tierColor = scoreColor(r.total);
@@ -171,7 +191,7 @@ function Row({ r, index, isOpen, toggle }: { r: SendBoardRow; index: number; isO
   );
 }
 
-export function SendsLeaderboard({ rows }: { rows: SendBoardRow[] }) {
+export function SendsLeaderboard({ rows }: { rows: SendsLeaderboardRow[] }) {
   // First row expanded on load, like the RPC board.
   const [open, setOpen] = useState<Set<string>>(() => {
     const first = rows[0]?.send_target;
