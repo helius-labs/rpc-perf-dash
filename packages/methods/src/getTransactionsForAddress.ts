@@ -79,7 +79,7 @@ export interface GtfaParams {
     /** Full mode only. */
     encoding?: "json";
     /** Full mode only. */
-    maxSupportedTransactionVersion?: 0;
+    maxSupportedTransactionVersion?: 1;
   };
 }
 
@@ -187,7 +187,7 @@ function optionsForBucket(bucket: string, pin: number): GtfaParams["options"] {
       commitment: "finalized",
       filters: { slot: { lte: pin } },
       encoding: "json",
-      maxSupportedTransactionVersion: 0,
+      maxSupportedTransactionVersion: 1,
     };
   }
   return {
