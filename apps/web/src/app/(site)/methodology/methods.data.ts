@@ -195,6 +195,7 @@ export const METHODS: readonly MethodSpec[] = [
       "The panel itself is the reference, so enumeration methods get full correctness scoring via majority consensus across the panel.",
       "Classic SPL Token is filtered to the 165-byte base size; Token-2022 gets no dataSize filter (its extension accounts run larger than 165 bytes and are deliberately included). Cross-provider comparability comes from the memcmp anchor plus the [0,64) mint+owner slice, not from size-filtering.",
       "Stake is anchored by a validator vote account; the [0,156) slice keeps the authorities + delegated voter and drops the mutable stake amount, activation/deactivation epochs, and credits.",
+      "Alchemy rejects every Token-2022 query with -32600 \"Too many accounts requested\", so it is dropped from the Token-2022 buckets as unsupported (4 voters there, not penalized); SPL Token and Stake keep the full panel.",
     ],
   },
   {

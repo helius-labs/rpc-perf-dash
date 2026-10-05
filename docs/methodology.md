@@ -93,6 +93,9 @@ the method or returns it in a format we can't compare against the others:
   everyone else on the panel serves.
 - `getTokenLargestAccounts` — four voters (Helius, Triton, Alchemy,
   Quicknode). Chainstack's shared tier restricts it to dedicated nodes only.
+- `getProgramAccounts`, Token-2022 buckets only — four voters (Helius, Triton,
+  Quicknode, Chainstack). Alchemy rejects every Token-2022 query with "Too many
+  accounts requested". SPL Token and Stake buckets keep all five voters.
 
 On the two three-voter methods (`simulateBundle` and
 `getTransactionsForAddress`), two providers agreeing is enough to settle the
@@ -307,8 +310,9 @@ them is what makes byte-equal agreement possible.
 
 ### Transaction versions
 
-`getBlock` tests request `maxSupportedTransactionVersion: 1`, so blocks
-containing v1 transactions are returned in full. The projection (signatures +
+`getBlock` and `getTransactionsForAddress` (`full` mode) tests request
+`maxSupportedTransactionVersion: 1`, so blocks and address histories containing
+v1 transactions are returned in full. The projection (signatures +
 `meta.err/fee/preBalances/postBalances`) is identical for v0, v1 and legacy
 transactions, so the version doesn't change what's compared.
 `getTransaction` tests still request version 0 and only sample legacy and v0
@@ -320,7 +324,9 @@ rejected nearly every recent block with `-32015`. The recent buckets
 (`tip_minus_5`, `last_hour`, `last_24h`) recorded ~0.5% correct for *every*
 provider over that window. Rankings were unaffected because all providers failed
 the same way, but absolute `getBlock` correctness and recent-block latency for
-that period are not meaningful. Archival and honeypot buckets were unaffected.
+that period are not meaningful. Archival and honeypot buckets were unaffected. `getTransactionsForAddress`
+`full` mode had the same problem until 2026-10-05: ~17% of its tests failed on
+all three voters.
 Over the same window, challenge derivation for the account-sourced methods
 (`getAccountInfo`, `getBalance`, `getTokenAccountsByOwner`, …) mostly failed, so
 those methods ran on very few samples.

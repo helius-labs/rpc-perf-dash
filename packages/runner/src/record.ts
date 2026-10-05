@@ -34,6 +34,7 @@ import {
   METHODOLOGY_VERSION,
   byteEqualHash,
   consensusFloorsForMethod,
+  isTierUnsupported,
   decideConsensus,
   describeVotes,
   type CanonicalProjection,
@@ -188,7 +189,7 @@ function decideForMode(
   for (const r of input.fanoutResults) {
     const single = mode === "cold" ? r.cold : r.warm;
     const cfg = BENCHMARKED_PROVIDERS.find((p) => p.id === r.provider_id);
-    const isUnsupported = cfg?.unsupported_methods?.includes(method) ?? false;
+    const isUnsupported = isTierUnsupported(cfg, method, input.bucket);
     if (isUnsupported) unsupported.add(r.provider_id);
 
     // Tier-unsupported providers can never vote, so skip projection entirely —

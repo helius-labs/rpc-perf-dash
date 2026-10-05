@@ -73,6 +73,16 @@ export interface ProviderRow {
    */
   unsupported_methods?: readonly Method[];
 
+  /**
+   * Bucket-scoped variant of `unsupported_methods`: bucket-name PREFIXES, per
+   * method, that this provider's tier rejects even though it serves the method
+   * in general. Same consequence — non-voter, `tier_method_unsupported`, not
+   * penalized — but only for matching buckets. Panel size (and so consensus
+   * floors) stays method-level; only declare this where the reduced panel is
+   * still ≥ 4, so the floors are unchanged.
+   */
+  unsupported_buckets?: Partial<Record<Method, readonly string[]>>;
+
   notes?: string;
 
   /**
@@ -194,6 +204,11 @@ export const PROVIDERS: readonly ProviderRow[] = [
     // panel (4 voters: Helius, Triton, Quicknode, Chainstack) instead of
     // scoring its error body as `incorrect`.
     unsupported_methods: ["getStakeMinimumDelegation"],
+    // Alchemy rejects every Token-2022 getProgramAccounts (by mint or by
+    // owner, any result size) with -32600 "Too many accounts requested (Large
+    // number of pubkeys)" — a program-size cap, not a timeout. Drops Alchemy
+    // from the t22 buckets only (4 voters there; SPL + Stake keep all 5).
+    unsupported_buckets: { getProgramAccounts: ["t22__"] },
     // Send path: plain JSON-RPC sendTransaction on the standard read endpoint, no tip.
     sends: true,
     send_endpoints: [{ name: "alchemy", url: "env:ALCHEMY_URL", protocol: "jsonrpc" }],
@@ -311,6 +326,21 @@ export const PROVIDERS: readonly ProviderRow[] = [
 
 export const BENCHMARKED_PROVIDERS = PROVIDERS.filter((p) => p.benchmarked);
 export const UTILITY_PROVIDER = PROVIDERS.find((p) => p.utility);
+
+/**
+ * True if the provider's tier structurally can't serve this method/bucket —
+ * either the whole method (`unsupported_methods`) or a bucket prefix
+ * (`unsupported_buckets`).
+ */
+export function isTierUnsupported(
+  provider: Pick<ProviderRow, "unsupported_methods" | "unsupported_buckets"> | undefined,
+  method: Method,
+  bucket: string,
+): boolean {
+  if (!provider) return false;
+  if (provider.unsupported_methods?.includes(method)) return true;
+  return provider.unsupported_buckets?.[method]?.some((prefix) => bucket.startsWith(prefix)) ?? false;
+}
 
 /**
  * Structural voter-panel size for a method: how many of the full benchmarked

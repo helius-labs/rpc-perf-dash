@@ -9,7 +9,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { decideConsensus, type Voter } from "./consensus.js";
-import { consensusFloorsForMethod, structuralPanelSize } from "./providers.js";
+import { PROVIDERS, consensusFloorsForMethod, isTierUnsupported, structuralPanelSize } from "./providers.js";
 import { EMITTED_METHODS } from "./types.js";
 import { score, DEFAULT_WEIGHTS, type ProviderMetrics } from "./scoring.js";
 
@@ -113,6 +113,16 @@ test("n=1 with minVoters=2 → ambiguous (a lone voter never decides)", () => {
 test("full-panel method → default floors (3/3)", () => {
   assert.equal(structuralPanelSize("getTransaction"), 5);
   assert.deepEqual(consensusFloorsForMethod("getTransaction"), { minGroup: 3, minVoters: 3 });
+});
+
+test("bucket-scoped tier exclusion: Alchemy out of Token-2022 gPA only", () => {
+  const alchemy = PROVIDERS.find((p) => p.id === "alchemy");
+  assert.equal(isTierUnsupported(alchemy, "getProgramAccounts", "t22__by_mint__small"), true);
+  assert.equal(isTierUnsupported(alchemy, "getProgramAccounts", "spl__by_mint__small"), false);
+  assert.equal(isTierUnsupported(alchemy, "getStakeMinimumDelegation", "any"), true);
+  // Panel stays method-level: gPA keeps the 5-voter floors, which the 4-voter
+  // t22 buckets share anyway.
+  assert.deepEqual(consensusFloorsForMethod("getProgramAccounts"), { minGroup: 3, minVoters: 3 });
 });
 
 test("4-voter method → default floors (3/3)", () => {
