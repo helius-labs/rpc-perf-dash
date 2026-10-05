@@ -305,6 +305,28 @@ a transaction in range), restricted to **non-high-activity** addresses —
 programs and vote authorities index differently across providers, so excluding
 them is what makes byte-equal agreement possible.
 
+### Transaction versions
+
+`getBlock` tests request `maxSupportedTransactionVersion: 1`, so blocks
+containing v1 transactions are returned in full. The projection (signatures +
+`meta.err/fee/preBalances/postBalances`) is identical for v0, v1 and legacy
+transactions, so the version doesn't change what's compared.
+`getTransaction` tests still request version 0 and only sample legacy and v0
+transactions.
+
+**Data gap, until 2026-10-05.** Before then, `getBlock` requested version 0. Once
+v1 transactions appeared on mainnet (on or before 2026-09-28), every provider
+rejected nearly every recent block with `-32015`. The recent buckets
+(`tip_minus_5`, `last_hour`, `last_24h`) recorded ~0.5% correct for *every*
+provider over that window. Rankings were unaffected because all providers failed
+the same way, but absolute `getBlock` correctness and recent-block latency for
+that period are not meaningful. Archival and honeypot buckets were unaffected.
+Over the same window, challenge derivation for the account-sourced methods
+(`getAccountInfo`, `getBalance`, `getTokenAccountsByOwner`, …) mostly failed, so
+those methods ran on very few samples.
+`METHODOLOGY_VERSION` stays at 4. No valid recent-block measurements existed to
+keep comparable.
+
 ## Test ages & archival depth
 
 Most tests draw from live, recent chain state (the last seconds to hours). The

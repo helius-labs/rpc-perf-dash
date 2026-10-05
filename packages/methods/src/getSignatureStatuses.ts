@@ -70,7 +70,7 @@ export async function deriveSignatureStatusesChallenge(
       {
         transactionDetails: "signatures",
         commitment: "finalized",
-        maxSupportedTransactionVersion: 0,
+        maxSupportedTransactionVersion: 1,
         rewards: false,
       },
     ]);
