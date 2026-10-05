@@ -95,7 +95,7 @@ interface BlockProbe {
       message: { instructions: Array<{ programIdIndex: number }>; accountKeys?: string[] };
     };
     meta: { logMessages?: string[] } | null;
-    version?: 0 | "legacy";
+    version?: 0 | 1 | "legacy";
   }>;
 }
 
@@ -119,7 +119,7 @@ export async function deriveTransactionChallenge(
     try {
       block = await ctx.utility.call<BlockProbe>("getBlock", [
         Number(ageSlot),
-        { encoding: "json", transactionDetails: "full", maxSupportedTransactionVersion: 0, rewards: false },
+        { encoding: "json", transactionDetails: "full", maxSupportedTransactionVersion: 1, rewards: false },
       ]);
     } catch {
       return null;
@@ -132,12 +132,12 @@ export async function deriveTransactionChallenge(
     const found = await withArchivalSlotRetries(tip, async (s) => {
       const probe = await ctx.utility.call<{ signatures?: string[] }>("getBlock", [
         Number(s),
-        { encoding: "json", transactionDetails: "signatures", maxSupportedTransactionVersion: 0, rewards: false },
+        { encoding: "json", transactionDetails: "signatures", maxSupportedTransactionVersion: 1, rewards: false },
       ]);
       if (!probe?.signatures?.length) return null;
       return ctx.utility.call<BlockProbe>(
         "getBlock",
-        [Number(s), { encoding: "json", transactionDetails: "full", maxSupportedTransactionVersion: 0, rewards: false }],
+        [Number(s), { encoding: "json", transactionDetails: "full", maxSupportedTransactionVersion: 1, rewards: false }],
         { timeoutMs: ARCHIVAL_UTILITY_TIMEOUT_MS },
       );
     });
@@ -160,6 +160,9 @@ export async function deriveTransactionChallenge(
     const txComplexity: "simple" | "program_heavy" = programIds.size >= 3 ? "program_heavy" : "simple";
     if (txComplexity !== complexity) continue;
 
+    // Scored params pin maxSupportedTransactionVersion: 0, so a v1 tx would
+    // error on every provider — never pick one.
+    if (tx.version !== 0 && tx.version !== "legacy") continue;
     const txVersion: "legacy" | "versioned" = tx.version === 0 ? "versioned" : "legacy";
     if (txVersion !== version) continue;
 

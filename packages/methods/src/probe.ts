@@ -34,7 +34,7 @@ export async function recentBlock(ctx: ChallengeContext): Promise<RecentBlock | 
       {
         encoding: "json",
         transactionDetails: "accounts",
-        maxSupportedTransactionVersion: 0,
+        maxSupportedTransactionVersion: 1,
         rewards: false,
         commitment: "confirmed",
       },

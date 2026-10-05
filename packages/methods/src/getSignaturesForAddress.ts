@@ -172,7 +172,7 @@ async function deriveArchivalSigsChallenge(
   const found = await withArchivalSlotRetries(tip, async (slot) => {
     const block = await ctx.utility.call<BlockKeysProbe>(
       "getBlock",
-      [Number(slot), { encoding: "json", transactionDetails: "accounts", maxSupportedTransactionVersion: 0, rewards: false }],
+      [Number(slot), { encoding: "json", transactionDetails: "accounts", maxSupportedTransactionVersion: 1, rewards: false }],
       { timeoutMs: ARCHIVAL_UTILITY_TIMEOUT_MS },
     );
     // One pre-check call per candidate tx, few candidates per draw — keeps
@@ -239,7 +239,7 @@ async function deriveTipAnchoredSigsChallenge(
   try {
     block = await ctx.utility.call<BlockKeysProbe>("getBlock", [
       Number(probeSlot),
-      { encoding: "json", transactionDetails: "accounts", maxSupportedTransactionVersion: 0, rewards: false },
+      { encoding: "json", transactionDetails: "accounts", maxSupportedTransactionVersion: 1, rewards: false },
     ]);
   } catch {
     return null;

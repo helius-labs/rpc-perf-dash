@@ -140,7 +140,7 @@ export async function deriveBlockChallenge(
   const probeBand = async (s: bigint): Promise<bigint | null> => {
     const probe = await ctx.utility.call<{ signatures?: string[] }>("getBlock", [
       Number(s),
-      { encoding: "json", transactionDetails: "signatures", maxSupportedTransactionVersion: 0, rewards: false, commitment: "confirmed" },
+      { encoding: "json", transactionDetails: "signatures", maxSupportedTransactionVersion: 1, rewards: false, commitment: "confirmed" },
     ]);
     const isHigh = (probe?.signatures?.length ?? 0) >= 1500;
     if (txband === "high" && !isHigh) return null;

@@ -219,7 +219,7 @@ export async function deriveGtfaChallenge(
       {
         encoding: "json",
         transactionDetails: "accounts",
-        maxSupportedTransactionVersion: 0,
+        maxSupportedTransactionVersion: 1,
         rewards: false,
       },
     ]);
