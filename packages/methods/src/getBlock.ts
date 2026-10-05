@@ -58,7 +58,7 @@ export interface GetBlockParams {
     /** Randomized per challenge between "full" and "accounts" — projection
      * is invariant across both. See deriveBlockChallenge. */
     transactionDetails: "full" | "accounts";
-    maxSupportedTransactionVersion: 0;
+    maxSupportedTransactionVersion: 1;
     rewards: false;
     commitment: "confirmed";
   };
@@ -179,7 +179,7 @@ export async function deriveBlockChallenge(
       options: {
         encoding: "json",
         transactionDetails,
-        maxSupportedTransactionVersion: 0,
+        maxSupportedTransactionVersion: 1,
         rewards: false,
         commitment: "confirmed",
       },
