@@ -79,7 +79,7 @@ interface FunnelRow {
  * Hourly, and `sampled` comes from the leaderboard precompute
  * (leaderboard_agg, grain '1h', pooled '__all__' rows = every sample once)
  * rather than raw `samples`. A 24h scan of raw samples is ~6M rows / ~1.8 GB,
- * which can't finish inside the web read cap (WEB_STATEMENT_TIMEOUT in
+ * which can't finish inside the web read cap (WEB_FAST_TIMEOUT_MS in
  * lib/db.ts). The precompute is ~65k rows for the same answer, at hourly
  * grain and up to one rollup tick (5 min) behind. Dispatched and claimed stay
  * on their own tables (~210k / ~640k rows a day, both indexed on the time
