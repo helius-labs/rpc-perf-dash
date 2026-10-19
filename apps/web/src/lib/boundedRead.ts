@@ -15,10 +15,11 @@ import { singleFlight } from "./singleFlight";
  *
  * Three limits keep the slow lane from making things worse:
  * - Request budget: `remainingMs()` is the time left in the current request
- *   (undefined = no request scope). Both lanes are clipped to it, a read that
- *   starts with too little left fails at once, and the slow lane is only
- *   tried when at least `fastMs` remains. Sequential reads in one request
- *   therefore can't add up past the function's duration limit.
+ *   (undefined = no request scope). The fast lane is clipped to it, a read
+ *   that starts with too little left fails at once, the slow lane is only
+ *   tried when at least `fastMs` remains, and a request waits for the slow
+ *   lane at most what it has left. Sequential reads in one request therefore
+ *   can't add up past the function's duration limit.
  * - Lane full: past `maxSlow`, a read fails with its fast-lane timeout instead
  *   of queueing.
  * - Give-up: a query whose slow-lane run also timed out isn't escalated again
@@ -91,22 +92,26 @@ export function createBoundedReader<Q, R>(
   const remaining = () => opts.remainingMs?.() ?? Number.POSITIVE_INFINITY;
   const gaveUp = (key: string) => (gaveUpUntil.get(key) ?? 0) > now();
 
-  /** The shared slow-lane run for `key`. Its timeout is set by whichever
-   *  request starts it; a request that joins it waits at most its own
-   *  remaining budget (`waitMs`) and then fails with `onBudget`. */
-  const slowLane = (query: Q, key: string, timeoutMs: number, waitMs: number, onBudget: () => Error) => {
+  /** The shared slow-lane run for `key`. It always gets the full `slowMs`,
+   *  whichever request starts it, so a request with little budget can't cut
+   *  the run short for everyone or trigger the give-up. Each request waits at
+   *  most its own remaining budget (`waitMs`) and then fails with `onBudget`.
+   *  If it leaves early the run keeps going (bounded by `maxSlow`), so the next
+   *  request can join it and get the result into the cache. */
+  const slowLane = (query: Q, key: string, waitMs: number, onBudget: () => Error) => {
     const flight = singleFlight(`slow:${key}`, async () => {
       if (slowInUse >= opts.maxSlow) throw new SlowLaneFull();
       slowInUse++;
       const started = now();
       try {
-        const result = await run(query, timeoutMs);
+        const result = await run(query, opts.slowMs);
         // It fit the fast budget this time (warm cache, quieter DB): stop
         // routing it to the slow lane.
         if (now() - started < opts.fastMs) knownSlow.delete(key);
         else touch(knownSlow, key, true, opts.knownSlowLimit);
         return result;
       } catch (err) {
+        // A full-length run timed out: the query really is a runaway.
         if (isStatementTimeout(err)) {
           knownSlow.delete(key);
           touch(gaveUpUntil, key, now() + opts.giveUpMs, opts.knownSlowLimit);
@@ -133,7 +138,7 @@ export function createBoundedReader<Q, R>(
 
     if (knownSlow.has(key) && !gaveUp(key) && rem0 >= opts.fastMs) {
       try {
-        return await slowLane(query, key, Math.min(opts.slowMs, rem0), rem0, () => new ReadBudgetExhausted());
+        return await slowLane(query, key, rem0, () => new ReadBudgetExhausted());
       } catch (err) {
         if (!(err instanceof SlowLaneFull)) throw err;
         // Lane busy: fall through and take the fast attempt instead.
@@ -151,7 +156,7 @@ export function createBoundedReader<Q, R>(
       // last slow-lane run also timed out.
       if (rem1 < opts.fastMs || gaveUp(key)) throw err;
       try {
-        return await slowLane(query, key, Math.min(opts.slowMs, rem1), rem1, () => err as Error);
+        return await slowLane(query, key, rem1, () => err as Error);
       } catch (slowErr) {
         throw slowErr instanceof SlowLaneFull ? err : slowErr;
       }

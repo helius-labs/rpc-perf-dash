@@ -127,11 +127,30 @@ test("concurrent identical slow reads share one slow-lane run", async () => {
   assert.equal(f.calls.filter((c) => c.timeoutMs === 200).length, 1);
 });
 
-test("request budget: both lanes are clipped to the time left", async () => {
+test("request budget: the fast lane is clipped, the slow run keeps its full timeout", async () => {
   const f = fakeDb({ s: 50 });
   const read = createBoundedReader(f.run, (q) => q, { ...opts, remainingMs: () => 120 });
-  await read("s");
-  assert.deepEqual(f.calls.map((c) => c.timeoutMs), [20, 120]);
+  assert.equal(await read("s"), "rows:s");
+  assert.deepEqual(f.calls.map((c) => c.timeoutMs), [20, 200]);
+});
+
+test("a budget-limited request leaves early without cutting the run short or giving up", async () => {
+  const f = fakeDb({ s: 100 });
+  let deadline: number | undefined = Date.now() + 50;
+  const read = createBoundedReader(f.run, (q) => q, {
+    ...opts,
+    remainingMs: () => (deadline === undefined ? undefined : deadline - Date.now()),
+  });
+  // ~30ms left after the fast attempt: it escalates, then gives up waiting.
+  await assert.rejects(read("s"), (e) => isStatementTimeout(e));
+  assert.deepEqual(f.calls.map((c) => c.timeoutMs), [20, 200]); // full slow timeout
+  await new Promise((r) => setTimeout(r, 120)); // the run finishes on its own
+  // A fresh request uses the slow lane again (no give-up was recorded) and
+  // goes straight to it, since the finished run marked the query known-slow.
+  deadline = undefined;
+  f.calls.length = 0;
+  assert.equal(await read("s"), "rows:s");
+  assert.deepEqual(f.calls.map((c) => c.timeoutMs), [200]);
 });
 
 test("request budget: no slow retry when less than fastMs is left", async () => {

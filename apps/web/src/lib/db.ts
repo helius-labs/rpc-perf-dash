@@ -27,8 +27,9 @@ function client(): DbClient {
  * again for WEB_SLOW_GIVE_UP_MS.
  *
  * Every read in one server render also shares a WEB_REQUEST_READ_BUDGET_MS
- * budget, anchored at the request's first read, and both lanes are clipped to
- * what's left. Pages that read sequentially (the home board's stale fallback
+ * budget, anchored at the request's first read. The fast lane is clipped to
+ * what's left and a read waits for the slow lane at most that long (the shared
+ * slow-lane run itself always gets the full WEB_SLOW_TIMEOUT_MS). Pages that read sequentially (the home board's stale fallback
  * chain) can't add 15s + 40s per step past the function duration limit. The
  * anchor is a React `cache()` memo, which is per request inside a server render
  * and not memoized elsewhere (route handlers, cron), so reads there get only the
