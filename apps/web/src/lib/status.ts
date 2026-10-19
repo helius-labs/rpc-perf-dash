@@ -3,6 +3,7 @@ import { unstable_cache } from "next/cache";
 import { WORKER_PROVIDER_LABELS } from "@rpcbench/shared";
 import { db } from "@/lib/db";
 import { singleFlight } from "@/lib/singleFlight";
+import type { TimelineRow } from "@/lib/statusTimeline";
 
 /**
  * Pipeline health for the /status page. The live funnel and cloud matrix are
@@ -47,13 +48,6 @@ export interface CloudRow {
   lastSampleIso: string | null;
 }
 
-export interface TimelinePoint {
-  label: string;
-  dispatched: number;
-  claimed: number;
-  sampled: number;
-}
-
 export interface PipelineStatus {
   overall: StageState;
   stages: PipelineStage[];
@@ -83,18 +77,19 @@ interface FunnelRow {
  * both update-heavy, so the scans hit the heap) on every cache miss, which cold
  * ran past the web read lanes (lib/db.ts). `sampled` is counted from `samples`
  * by the same job, so the series no longer depends on the leaderboard rollup.
- * Values run up to one generator tick (60s) behind, plus this 60s cache.
+ * The open hour is counted up to ~1 min behind now, plus this 60s cache.
  *
- * An hour with no row reads as 0, as an empty hour did before. If the window
- * has no rows at all (the table exists but the generator job isn't running
- * yet), this throws so the section shows "temporarily unavailable" instead of a
- * flat-zero chart that would read as a dead pipeline.
+ * Each row carries computed_at and whether it is counted to the end of the
+ * hour; timelineView (lib/statusTimeline.ts) uses them at render time to draw
+ * uncounted or stalled hours as no-data rather than as empty hours. If the
+ * window has no rows at all (the table exists but the generator job isn't
+ * running yet), this throws so the section shows "temporarily unavailable".
  */
-async function fetchTimelineImpl(): Promise<TimelinePoint[]> {
+async function fetchTimelineImpl(): Promise<TimelineRow[]> {
   return singleFlight("statusTimeline", fetchTimelineQuery);
 }
 
-async function fetchTimelineQuery(): Promise<TimelinePoint[]> {
+async function fetchTimelineQuery(): Promise<TimelineRow[]> {
   const rows = (await db().execute(sql`
     WITH b AS (
       SELECT generate_series(
@@ -106,15 +101,30 @@ async function fetchTimelineQuery(): Promise<TimelinePoint[]> {
       coalesce(t.dispatched, 0) AS dispatched,
       coalesce(t.claimed, 0)    AS claimed,
       coalesce(t.sampled, 0)    AS sampled,
-      t.hour_start IS NOT NULL  AS counted
+      (extract(epoch from t.computed_at) * 1000)::float8           AS computed_ms,
+      coalesce(t.counted_to >= b.ts + interval '1 hour', false)    AS complete
     FROM b
     LEFT JOIN status_timeline_hourly t ON t.hour_start = b.ts
     ORDER BY b.ts
-  `)) as unknown as Array<TimelinePoint & { counted: boolean }>;
-  if (!rows.some((r) => r.counted)) {
+  `)) as unknown as Array<{
+    label: string;
+    dispatched: number;
+    claimed: number;
+    sampled: number;
+    computed_ms: number | null;
+    complete: boolean;
+  }>;
+  if (rows.every((r) => r.computed_ms == null)) {
     throw new Error("status_timeline_hourly has no rows for the last 24h; is the generator's status-timeline job running?");
   }
-  return rows.map(({ label, dispatched, claimed, sampled }) => ({ label, dispatched, claimed, sampled }));
+  return rows.map((r) => ({
+    label: r.label,
+    dispatched: r.dispatched,
+    claimed: r.claimed,
+    sampled: r.sampled,
+    computedMs: r.computed_ms == null ? null : Number(r.computed_ms),
+    complete: r.complete,
+  }));
 }
 
 /**

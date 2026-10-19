@@ -27,7 +27,11 @@ import {
 } from "./heartbeat.js";
 import { ensurePartitions } from "./partitions.js";
 import { runMaintenance } from "./maintenance.js";
-import { runStatusTimeline, STATUS_TIMELINE_INTERVAL_MS } from "./statusTimeline.js";
+import {
+  runStatusTimeline,
+  STATUS_TIMELINE_INTERVAL_MS,
+  STATUS_TIMELINE_STARTUP_DELAY_MS,
+} from "./statusTimeline.js";
 import { runSendTick } from "./send/tick.js";
 import { runConfirmPoll, heartbeatConfirm } from "./send/confirm.js";
 import { runSendRollup5m, runSendHeavyRollups, runSendLeaderboard } from "./send-rollup.js";
@@ -999,10 +1003,12 @@ async function main() {
   runMaintenanceJob();
 
   // /status "Throughput · 24h" counts — own interval + overlap guard, not on the
-  // rollup tail. Recounts the current hour (and a just-closed one until it
-  // settles) into status_timeline_hourly so the web reads ~24 rows instead of
-  // scanning a day of challenges/assignments. Run at startup too: the first runs
-  // backfill the 24h window. See statusTimeline.ts.
+  // rollup tail. Adds the last minute of rows to the current hour in
+  // status_timeline_hourly (plus one final recount per closed hour, and a capped
+  // backfill of missing hours) so the web reads ~24 rows instead of scanning a
+  // day of challenges/assignments. The first run waits
+  // STATUS_TIMELINE_STARTUP_DELAY_MS so it doesn't land on the startup rollups
+  // and leaderboard build kicked off above. See statusTimeline.ts.
   let timelineInFlight = false;
   const runStatusTimelineJob = () => {
     if (timelineInFlight) {
@@ -1016,8 +1022,10 @@ async function main() {
         timelineInFlight = false;
       });
   };
-  setInterval(runStatusTimelineJob, STATUS_TIMELINE_INTERVAL_MS);
-  runStatusTimelineJob();
+  setTimeout(() => {
+    runStatusTimelineJob();
+    setInterval(runStatusTimelineJob, STATUS_TIMELINE_INTERVAL_MS);
+  }, STATUS_TIMELINE_STARTUP_DELAY_MS);
 
   // ────────────────────────────────────────────────────────────
   // Send archetype (the /sends board). Gated by SENDS_ENABLED so it spends no
