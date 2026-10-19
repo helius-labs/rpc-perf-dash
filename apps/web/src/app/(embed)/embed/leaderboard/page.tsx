@@ -5,6 +5,7 @@ import { type MethodGeoRows } from "@/components/leaderboardShared";
 import { buildOverviewBoardData } from "@/lib/embedData";
 import { EMPTY_SAMPLE_COUNT, type SampleCount } from "@/lib/sampleCount";
 import { DB_ERROR_MESSAGE } from "@/lib/db";
+import { StaleNotice } from "@/components/ConsensusBanner";
 
 export const dynamic = "force-dynamic";
 
@@ -50,14 +51,17 @@ export default async function EmbedLeaderboardPage({
   }
 
   return (
-    <OverviewBoard
-      cube={cube}
-      presetId={filters.presetId}
-      methodRegionLatency={methodRegionLatency}
-      sampleCount={sampleCount}
-      methodCount={methodCount}
-      staleAsOf={staleAsOf}
-      embed
-    />
+    <>
+      <StaleNotice staleAsOf={staleAsOf} />
+      <OverviewBoard
+        cube={cube}
+        presetId={filters.presetId}
+        methodRegionLatency={methodRegionLatency}
+        sampleCount={sampleCount}
+        methodCount={methodCount}
+        staleAsOf={staleAsOf}
+        embed
+      />
+    </>
   );
 }

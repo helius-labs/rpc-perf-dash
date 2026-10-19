@@ -67,3 +67,23 @@ export function ConsensusBanner({
     </div>
   );
 }
+
+/**
+ * Compact stale-data label for the embeds. They have no ConsensusBanner (no
+ * consensus-health fetch, little room), but they get the same fallback cube from
+ * buildOverviewBoardData, so without this a third-party page would present
+ * day-old rankings as current. Renders nothing when the data is live.
+ */
+export function StaleNotice({ staleAsOf }: { staleAsOf: string | null }) {
+  if (!staleAsOf) return null;
+  return (
+    <div
+      className="badge warn"
+      role="status"
+      style={{ display: "block", padding: "6px 10px", margin: "0 0 8px", fontSize: 12, lineHeight: 1.4 }}
+    >
+      Live rankings paused (too few providers reporting). Showing the last complete rankings,
+      ending {formatStaleAsOf(staleAsOf)}.
+    </div>
+  );
+}

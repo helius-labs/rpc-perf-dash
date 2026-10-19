@@ -10,6 +10,7 @@ import { sql } from "drizzle-orm";
 import { unstable_cache } from "next/cache";
 import {
   GEO_REGIONS,
+  METHODOLOGY_VERSION,
   MIN_CONSENSUS_VOTERS,
   POOLED_INFRA,
   geoRegionOf,
@@ -478,9 +479,28 @@ const HEALTHY_VALID_SHARE = 0.5;
  * long, which is too short to clear the eligibility floors of a 24h window. The
  * caller tries each one until a window ranks someone.
  *
- * Reads the 1h precompute (8d retention), so the lookback is capped at 8 days.
+ * Reads the 1h precompute (8d retention). It runs during outages, when the
+ * DB is likely under load, so it has to fit the web read cap: the lookback
+ * starts at 48h (enough for a typical outage, ~65k rows) and only widens to the
+ * full 8 days when 48h has no run end. Pinning methodology_version lets the
+ * (grain, provider_id, worker_provider, connection_mode, methodology_version,
+ * window_start) index range-scan window_start instead of filtering every
+ * '__all__' row in the table.
  */
+const RUN_END_LOOKBACKS_H = [48, 192] as const;
+
 async function fetchConsensusRunEndsImpl(connectionMode: "cold" | "warm"): Promise<string[]> {
+  for (const lookbackH of RUN_END_LOOKBACKS_H) {
+    const ends = await queryConsensusRunEnds(connectionMode, lookbackH);
+    if (ends.length > 0) return ends;
+  }
+  return [];
+}
+
+async function queryConsensusRunEnds(
+  connectionMode: "cold" | "warm",
+  lookbackH: number,
+): Promise<string[]> {
   const rows = (await db().execute(sql`
     WITH per AS (
       SELECT window_start, provider_id,
@@ -489,7 +509,8 @@ async function fetchConsensusRunEndsImpl(connectionMode: "cold" | "warm"): Promi
       WHERE grain = '1h'
         AND worker_provider = ${POOLED_INFRA}
         AND connection_mode = ${connectionMode}
-        AND window_start > now() - interval '8 days'
+        AND methodology_version = ${METHODOLOGY_VERSION}
+        AND window_start > now() - make_interval(hours => ${lookbackH})
       GROUP BY window_start, provider_id
     ),
     hours AS (
