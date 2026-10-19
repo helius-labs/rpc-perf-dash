@@ -114,6 +114,7 @@ export function OverviewBoard({
   sampleCount,
   methodCount,
   embed = false,
+  staleAsOf = null,
 }: {
   /** Per-(method, geo) preset cube — blended into the board with preset defaults. */
   cube: MethodGeoRows[];
@@ -124,6 +125,10 @@ export function OverviewBoard({
   /** Embed mode: hides the Share control (all filters stay interactive). Set by
    *  the /embed/leaderboard route; omitted everywhere else. */
   embed?: boolean;
+  /** ISO end of the window the cube covers when it's the stale fallback (see
+   *  buildOverviewBoardData); null when live. Drops "last 24h" from the scope
+   *  line, since the page's consensus banner names the window instead. */
+  staleAsOf?: string | null;
 }) {
   const preset = presetById(presetId);
 
@@ -471,8 +476,8 @@ export function OverviewBoard({
             {selectedMethods.size} method{selectedMethods.size === 1 ? "" : "s"}
             {" · "}
             {selectedRegionSet.size} region{selectedRegionSet.size === 1 ? "" : "s"}
-            {" · cold start · last "}
-            {windowLabel}
+            {" · cold start"}
+            {!staleAsOf && ` · last ${windowLabel}`}
           </span>
         </div>
         {!embed && (

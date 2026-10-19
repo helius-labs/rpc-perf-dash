@@ -563,6 +563,7 @@ Read-only against the DB. Independent of all other deploys.
   project).
 - **Env vars** in Vercel project settings: `NEON_DATABASE_URL_POOLED`, `NEON_DATABASE_URL_DIRECT`. Same Neon project as the workers.
 - After deploying a methodology bump to the backend, redeploy the web app so the UI surfaces that key off the new version (consensus-integrity panel, etc.) pick it up.
+- **Stale leaderboard fallback.** When fewer than `MIN_CONSENSUS_VOTERS` providers report, every sample turns `no_consensus`, eligibility drops to zero, and the live window ranks nobody. The home board and `/embed/leaderboard` (`buildOverviewBoardData`) then serve the most recent window that does rank. It ends at the close of the last run of hours with consensus (`fetchConsensusRunEnds`, from the 1h precompute, so it looks back at most 8 days). The board labels it "24h ending <time> UTC", and the consensus banner says the rankings are not live. After providers recover, the fallback stays up until the live window clears the eligibility floors again, typically a few hours for the 24h window. Nothing to operate: it switches back on its own. The public `/api/leaderboard`, provider pages and OG cards still read the live window only.
 
 ---
 

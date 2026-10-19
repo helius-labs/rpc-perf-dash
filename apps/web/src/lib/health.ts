@@ -158,6 +158,10 @@ export interface ConsensusHealth {
 // would blame the victims instead of the culprits (alchemy/quicknode today).
 const NOT_USABLE_FAILURES = new Set([
   "quota_exhausted",
+  // A 429 on every request (e.g. a disabled Alchemy endpoint) answers nothing,
+  // so it isn't a voter either. Leaving it out let a fully rate-limited provider
+  // count as usable and kept the banner hidden while consensus was lost.
+  "rate_limited",
   "network_error",
   "http_error",
   "network_timeout",
@@ -170,6 +174,8 @@ function consensusReason(absent: boolean, topFailure: string | null): string {
   switch (topFailure) {
     case "quota_exhausted":
       return "out of credits";
+    case "rate_limited":
+      return "rate limited";
     case "network_error":
     case "http_error":
     case "network_timeout":

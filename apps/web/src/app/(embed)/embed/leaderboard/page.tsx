@@ -31,9 +31,10 @@ export default async function EmbedLeaderboardPage({
   let methodRegionLatency: MethodRegionLatency = {};
   let sampleCount: SampleCount = EMPTY_SAMPLE_COUNT;
   let methodCount = 0;
+  let staleAsOf: string | null = null;
   let error: string | null = null;
   try {
-    ({ cube, methodRegionLatency, sampleCount, methodCount } =
+    ({ cube, methodRegionLatency, sampleCount, methodCount, staleAsOf } =
       await buildOverviewBoardData(filters.windowHours));
   } catch (err) {
     console.error("[embed/leaderboard]", err);
@@ -55,6 +56,7 @@ export default async function EmbedLeaderboardPage({
       methodRegionLatency={methodRegionLatency}
       sampleCount={sampleCount}
       methodCount={methodCount}
+      staleAsOf={staleAsOf}
       embed
     />
   );

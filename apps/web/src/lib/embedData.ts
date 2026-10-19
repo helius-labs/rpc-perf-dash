@@ -13,11 +13,13 @@
  * wrap in try/catch (dashboard pages → inline banner; embed pages → error.tsx).
  */
 
-import { GEO_REGIONS } from "@rpcbench/shared";
+import { GEO_REGIONS, type GeoRegion } from "@rpcbench/shared";
+import { MIN_METHOD_COVERAGE } from "@rpcbench/shared/scoring";
 import { ALL_METHODS } from "./methods";
 import {
   fetchActiveGeos,
   fetchAggregatesForGeoByMethod,
+  fetchConsensusRunEnds,
   fetchMethodLatency,
   fetchMethodGeoLatency,
   type MethodLatencyRow,
@@ -39,6 +41,38 @@ export interface OverviewBoardData {
   methodRegionLatency: MethodRegionLatency;
   sampleCount: SampleCount;
   methodCount: number;
+  /** Set when the live window couldn't rank anyone and the cube is the last
+   *  window that could: the ISO hour boundary that window ends at. Null = live. */
+  staleAsOf: string | null;
+}
+
+/**
+ * Whether any provider clears the method-coverage gate on this cube, i.e.
+ * whether the board will rank anyone. Coverage is counted over every method in
+ * the cube with equal weight: a method counts for a provider when it is
+ * eligible in at least one geo. That mirrors blendMethodScores under the
+ * all-methods preset. A weighted preset can disagree at the margin, but losing
+ * consensus zeroes eligibility everywhere, so every preset fails together in the
+ * case this guards.
+ */
+export function isCubeRankable(
+  cube: MethodGeoRows[],
+  minCoverage: number = MIN_METHOD_COVERAGE,
+): boolean {
+  const methods = new Set(cube.map((c) => c.method));
+  if (methods.size === 0) return false;
+  const covered = new Map<string, Set<string>>();
+  for (const cell of cube) {
+    for (const r of cell.eligible) {
+      let set = covered.get(r.provider_id);
+      if (!set) covered.set(r.provider_id, (set = new Set()));
+      set.add(cell.method);
+    }
+  }
+  for (const set of covered.values()) {
+    if (set.size / methods.size >= minCoverage) return true;
+  }
+  return false;
 }
 
 /**
@@ -53,20 +87,48 @@ export async function buildOverviewBoardData(windowHours: number): Promise<Overv
   const activeGeos = await fetchActiveGeos();
   const targets = activeGeos.length > 0 ? activeGeos : [...GEO_REGIONS];
 
-  const [byGeo, sampleCount] = await Promise.all([
-    Promise.all(
-      targets.map(async (geo) => ({
-        geo,
-        byMethod: await fetchAggregatesForGeoByMethod({
-          geoRegion: geo,
-          methods: ALL_METHODS,
-          windowHours,
-          connectionMode: OVERVIEW_MODE,
-        }),
-      })),
-    ),
+  const [live, sampleCount] = await Promise.all([
+    buildCube(targets, windowHours),
     fetchSampleCount(),
   ]);
+  const base = { sampleCount, methodCount: ALL_METHODS.length };
+  if (isCubeRankable(live.cube)) return { ...live, ...base, staleAsOf: null };
+
+  // Stale fallback. The live window ranks nobody, which is what happens when
+  // fewer than MIN_CONSENSUS_VOTERS providers are reporting: every sample turns
+  // no_consensus and eligibility drops to zero, so one outage at other
+  // providers would blank the board. Serve the most recent window that does
+  // rank, labelled with when it ends, until the live window recovers. Never
+  // throws: on any failure the live (empty) board renders as before.
+  try {
+    const ends = await fetchConsensusRunEnds(OVERVIEW_MODE);
+    for (const endAt of ends) {
+      const stale = await buildCube(targets, windowHours, endAt);
+      if (isCubeRankable(stale.cube)) return { ...stale, ...base, staleAsOf: endAt };
+    }
+  } catch (err) {
+    console.error("[buildOverviewBoardData] stale fallback failed", err);
+  }
+  return { ...live, ...base, staleAsOf: null };
+}
+
+async function buildCube(
+  targets: readonly GeoRegion[],
+  windowHours: number,
+  endAt?: string,
+): Promise<Pick<OverviewBoardData, "cube" | "methodRegionLatency">> {
+  const byGeo = await Promise.all(
+    targets.map(async (geo) => ({
+      geo,
+      byMethod: await fetchAggregatesForGeoByMethod({
+        geoRegion: geo,
+        methods: ALL_METHODS,
+        windowHours,
+        connectionMode: OVERVIEW_MODE,
+        ...(endAt ? { endAt } : {}),
+      }),
+    })),
+  );
 
   const cube: MethodGeoRows[] = [];
   const methodRegionLatency: MethodRegionLatency = {};
@@ -85,7 +147,7 @@ export async function buildOverviewBoardData(windowHours: number): Promise<Overv
     }
   }
 
-  return { cube, methodRegionLatency, sampleCount, methodCount: ALL_METHODS.length };
+  return { cube, methodRegionLatency };
 }
 
 /**

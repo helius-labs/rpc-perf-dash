@@ -10,6 +10,7 @@ import { sql } from "drizzle-orm";
 import { unstable_cache } from "next/cache";
 import {
   GEO_REGIONS,
+  MIN_CONSENSUS_VOTERS,
   POOLED_INFRA,
   geoRegionOf,
   leaderboardGrainForWindow,
@@ -286,6 +287,10 @@ export interface AggregateByMethodOpts {
   windowHours: number;
   connectionMode: "cold" | "warm";
   workerProvider?: string;
+  /** ISO instant the window ends at (exclusive). Omitted → the window ends now.
+   *  Set only by the stale fallback (`buildOverviewBoardData`), always to an
+   *  hour boundary so the cache key is stable for the hour. */
+  endAt?: string;
 }
 
 /**
@@ -322,6 +327,12 @@ async function fetchAggregatesForGeoByMethodImpl(
   const methodValues = sql.raw(
     `(VALUES ${methods.map((m) => `(${esc(m)})`).join(",")}) AS mlist(method)`,
   );
+  // Live: the trailing window ending now. Stale fallback: exactly `windowHours`
+  // of whole buckets ending at the hour-aligned `endAt`.
+  const inWindow = opts.endAt
+    ? sql`window_start >= ${opts.endAt}::timestamptz - make_interval(hours => ${opts.windowHours})
+          AND window_start < ${opts.endAt}::timestamptz`
+    : sql`window_start > now() - make_interval(hours => ${opts.windowHours})`;
 
   const rows = await db().execute(sql`
     WITH agg AS (
@@ -352,7 +363,7 @@ async function fetchAggregatesForGeoByMethodImpl(
         AND worker_provider = ${wpKey}
         AND method IN (${methodInList})
         AND connection_mode = ${opts.connectionMode}
-        AND window_start > now() - make_interval(hours => ${opts.windowHours})
+        AND ${inWindow}
       GROUP BY provider_id, method
     ),
     chal AS (
@@ -363,7 +374,7 @@ async function fetchAggregatesForGeoByMethodImpl(
         AND worker_provider = ${wpKey}
         AND method IN (${methodInList})
         AND connection_mode = ${opts.connectionMode}
-        AND window_start > now() - make_interval(hours => ${opts.windowHours})
+        AND ${inWindow}
       GROUP BY method
     ),
     fails AS (
@@ -377,7 +388,7 @@ async function fetchAggregatesForGeoByMethodImpl(
           AND worker_provider = ${wpKey}
           AND method IN (${methodInList})
           AND connection_mode = ${opts.connectionMode}
-          AND window_start > now() - make_interval(hours => ${opts.windowHours})
+          AND ${inWindow}
         GROUP BY provider_id, method, failure_category
       ) f
       GROUP BY provider_id, method
@@ -445,6 +456,70 @@ export const fetchAggregatesForGeoByMethod = (
     ...opts,
     methods: [...new Set(opts.methods)].sort(),
   });
+
+/**
+ * A provider counts toward an hour's consensus when at least this share of its
+ * samples scored `correct`. A healthy provider sits far above it; once the panel
+ * drops below MIN_CONSENSUS_VOTERS every sample turns `ambiguous` (no_consensus),
+ * so the healthy providers fall to ~0 together.
+ */
+const HEALTHY_VALID_SHARE = 0.5;
+
+/**
+ * Ends of the most recent runs of hours that had consensus, newest first, as
+ * ISO hour boundaries (each run's last bucket start + 1h). A run that reaches the
+ * current hour is left out, since a window ending there is just the live window.
+ * An hour has consensus when ≥ MIN_CONSENSUS_VOTERS providers have a healthy
+ * share of correct samples in it.
+ *
+ * These are candidate end points for the stale fallback in
+ * `buildOverviewBoardData`. They are ends of runs and not just "the last good
+ * hour" because right after a recovery the newest run is only an hour or two
+ * long, which is too short to clear the eligibility floors of a 24h window. The
+ * caller tries each one until a window ranks someone.
+ *
+ * Reads the 1h precompute (8d retention), so the lookback is capped at 8 days.
+ */
+async function fetchConsensusRunEndsImpl(connectionMode: "cold" | "warm"): Promise<string[]> {
+  const rows = (await db().execute(sql`
+    WITH per AS (
+      SELECT window_start, provider_id,
+             sum(sample_count_valid)::float / NULLIF(sum(sample_count_total), 0) AS valid_share
+      FROM leaderboard_agg
+      WHERE grain = '1h'
+        AND worker_provider = ${POOLED_INFRA}
+        AND connection_mode = ${connectionMode}
+        AND window_start > now() - interval '8 days'
+      GROUP BY window_start, provider_id
+    ),
+    hours AS (
+      SELECT window_start,
+             count(*) FILTER (WHERE valid_share >= ${HEALTHY_VALID_SHARE}) >= ${MIN_CONSENSUS_VOTERS} AS healthy
+      FROM per
+      GROUP BY window_start
+    ),
+    flagged AS (
+      SELECT window_start, healthy,
+             lead(healthy) OVER (ORDER BY window_start) AS next_healthy
+      FROM hours
+    )
+    SELECT (window_start + interval '1 hour') AS end_at
+    FROM flagged
+    WHERE healthy
+      AND next_healthy IS DISTINCT FROM true
+      AND window_start < date_trunc('hour', now())
+    ORDER BY window_start DESC
+    LIMIT 3
+  `)) as unknown as Array<{ end_at: string | Date }>;
+  return rows.map((r) => new Date(r.end_at).toISOString());
+}
+
+/** Cached longer than the board itself: the answer only moves at hour boundaries. */
+export const fetchConsensusRunEnds = unstable_cache(
+  fetchConsensusRunEndsImpl,
+  ["fetchConsensusRunEnds"],
+  { revalidate: 300 },
+);
 
 /**
  * Legacy SINGLE-METHOD overall leaderboard (region-blend of one method). The
