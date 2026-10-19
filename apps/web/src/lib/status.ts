@@ -1,7 +1,8 @@
 import { sql } from "drizzle-orm";
 import { unstable_cache } from "next/cache";
-import { WORKER_PROVIDER_LABELS } from "@rpcbench/shared";
+import { POOLED_INFRA, WORKER_PROVIDER_LABELS } from "@rpcbench/shared";
 import { db } from "@/lib/db";
+import { singleFlight } from "@/lib/singleFlight";
 
 /**
  * Derive-on-read pipeline health for the /status page. No new tables: every
@@ -71,25 +72,40 @@ interface FunnelRow {
 }
 
 /**
- * 24h timeline sparkline (dispatched / claimed / sampled per 15 min). The only
- * long-window scan in /status — cached 60s and fetched separately so it never
- * blocks or freezes the live funnel + cloud matrix. History tolerates 60s
- * staleness; if revalidation stalls it degrades to a stale sparkline only.
+ * 24h timeline sparkline (dispatched / claimed / sampled per hour). The only
+ * long-window read in /status — cached 60s and fetched separately so it never
+ * blocks or freezes the live funnel + cloud matrix.
+ *
+ * Hourly, and `sampled` comes from the leaderboard precompute
+ * (leaderboard_agg, grain '1h', pooled '__all__' rows = every sample once)
+ * rather than raw `samples`. A 24h scan of raw samples is ~6M rows / ~1.8 GB,
+ * which can't finish inside the web read cap (WEB_STATEMENT_TIMEOUT in
+ * lib/db.ts). The precompute is ~65k rows for the same answer, at hourly
+ * grain and up to one rollup tick (5 min) behind. Dispatched and claimed stay
+ * on their own tables (~210k / ~640k rows a day, both indexed on the time
+ * column), bucketed hourly to match.
  */
 async function fetchTimelineImpl(): Promise<TimelinePoint[]> {
+  return singleFlight("statusTimeline", fetchTimelineQuery);
+}
+
+async function fetchTimelineQuery(): Promise<TimelinePoint[]> {
   return (await db().execute(sql`
     WITH b AS (
       SELECT generate_series(
-        date_trunc('hour', now()) - interval '24 hours',
-        date_trunc('hour', now()) + interval '15 min',
-        interval '15 min') AS ts
+        date_trunc('hour', now()) - interval '23 hours',
+        date_trunc('hour', now()),
+        interval '1 hour') AS ts
     ),
-    d AS (SELECT date_trunc('hour', generated_at) + floor(extract(minute from generated_at)/15)*interval '15 min' AS ts, count(*)::int n
-          FROM challenges WHERE generated_at > now() - interval '24 hours' GROUP BY 1),
-    c AS (SELECT date_trunc('hour', claimed_at) + floor(extract(minute from claimed_at)/15)*interval '15 min' AS ts, count(*)::int n
-          FROM challenge_assignments WHERE claimed_at > now() - interval '24 hours' GROUP BY 1),
-    s AS (SELECT date_trunc('hour', started_at) + floor(extract(minute from started_at)/15)*interval '15 min' AS ts, count(*)::int n
-          FROM samples WHERE started_at > now() - interval '24 hours' GROUP BY 1)
+    d AS (SELECT date_trunc('hour', generated_at) AS ts, count(*)::int n
+          FROM challenges WHERE generated_at >= date_trunc('hour', now()) - interval '23 hours' GROUP BY 1),
+    c AS (SELECT date_trunc('hour', claimed_at) AS ts, count(*)::int n
+          FROM challenge_assignments WHERE claimed_at >= date_trunc('hour', now()) - interval '23 hours' GROUP BY 1),
+    s AS (SELECT window_start AS ts, sum(sample_count_total)::int n
+          FROM leaderboard_agg
+          WHERE grain = '1h' AND worker_provider = ${POOLED_INFRA}
+            AND window_start >= date_trunc('hour', now()) - interval '23 hours'
+          GROUP BY 1)
     SELECT to_char(b.ts, 'MM-DD HH24:MI') AS label,
       coalesce(d.n, 0) AS dispatched, coalesce(c.n, 0) AS claimed, coalesce(s.n, 0) AS sampled
     FROM b
@@ -100,9 +116,8 @@ async function fetchTimelineImpl(): Promise<TimelinePoint[]> {
 
 /**
  * The 24h sparkline. Exported + cached 60s, and rendered behind its own Suspense
- * boundary on /status (see StatusTimelineSection) so this — the one unavoidable
- * long scan over challenges/assignments/samples — never blocks the live funnel +
- * cloud matrix from painting. History tolerates 60s staleness.
+ * boundary on /status (see StatusTimelineSection) so it never blocks the live
+ * funnel + cloud matrix from painting. History tolerates 60s staleness.
  */
 export const fetchTimeline = unstable_cache(fetchTimelineImpl, ["statusTimeline"], { revalidate: 60 });
 
