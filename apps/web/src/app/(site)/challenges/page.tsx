@@ -22,6 +22,7 @@ import { sql } from "drizzle-orm";
 import Link from "next/link";
 import type { Metadata, Route } from "next";
 import { unstable_cache } from "next/cache";
+import { singleFlight } from "@/lib/singleFlight";
 import { db, DB_ERROR_MESSAGE } from "@/lib/db";
 import { type Method } from "@rpcbench/shared";
 import { ALL_METHODS } from "@/lib/methods";
@@ -90,33 +91,55 @@ export async function generateMetadata({
   };
 }
 
-/** Total matching count — offset-independent, so it's reused across pages. */
+/**
+ * Counting stops at COUNT_CAP + 1 matches. An exact count over a 30d window
+ * (millions of rows, often with a `target` ILIKE) was the single biggest load
+ * on the DB: hundreds of copies piled up when crawlers walked the filter
+ * permutations. The pager only needs "how many pages, or more than this".
+ */
+const COUNT_CAP = 10_000;
+
+/** Total matching count, capped at COUNT_CAP + 1. Offset-independent, so it's
+ *  reused across pages. */
 async function fetchChallengeCountImpl(f: ChallengesFiltersNoOffset): Promise<number> {
-  const rows = await db().execute(sql`SELECT count(*)::int AS n FROM challenges c ${whereFor(f)}`);
-  return (rows as unknown as Array<{ n: number }>)[0]?.n ?? 0;
+  return singleFlight(`challengeCount:${JSON.stringify(f)}`, async () => {
+    const rows = await db().execute(sql`
+      SELECT count(*)::int AS n
+      FROM (SELECT 1 FROM challenges c ${whereFor(f)} LIMIT ${COUNT_CAP + 1}) capped
+    `);
+    return (rows as unknown as Array<{ n: number }>)[0]?.n ?? 0;
+  });
 }
 const fetchChallengeCount = unstable_cache(fetchChallengeCountImpl, ["challengeCount"], {
-  revalidate: 15,
+  revalidate: 60,
 });
 
 /**
  * Bucket vocabulary for the dropdown — depends only on (window, method), so it's
  * cached separately and never re-runs when paging or changing status/target.
+ *
+ * The lookback is capped at BUCKET_LOOKBACK_H: every live bucket appears many
+ * times a day, so a DISTINCT over 30 days returns the same list as one over 24h
+ * while reading ~30x the rows. Callers pass the already-capped window so the
+ * 24h/7d/30d views share one cache entry.
  */
+const BUCKET_LOOKBACK_H = 24;
 async function fetchBucketOptionsImpl(f: { method: Method | null; window: number }): Promise<string[]> {
-  const where = sql`WHERE ${sql.join(
-    [
-      sql`c.generated_at > now() - make_interval(hours => ${f.window})`,
-      f.method ? sql`c.method = ${f.method}` : null,
-      sql`c.is_honeypot = false`,
-    ].filter((x): x is NonNullable<typeof x> => x !== null),
-    sql` AND `,
-  )}`;
-  const rows = await db().execute(sql`SELECT DISTINCT bucket FROM challenges c ${where} ORDER BY bucket`);
-  return (rows as unknown as Array<{ bucket: string }>).map((r) => r.bucket);
+  return singleFlight(`challengeBuckets:${f.method ?? ""}:${f.window}`, async () => {
+    const where = sql`WHERE ${sql.join(
+      [
+        sql`c.generated_at > now() - make_interval(hours => ${f.window})`,
+        f.method ? sql`c.method = ${f.method}` : null,
+        sql`c.is_honeypot = false`,
+      ].filter((x): x is NonNullable<typeof x> => x !== null),
+      sql` AND `,
+    )}`;
+    const rows = await db().execute(sql`SELECT DISTINCT bucket FROM challenges c ${where} ORDER BY bucket`);
+    return (rows as unknown as Array<{ bucket: string }>).map((r) => r.bucket);
+  });
 }
 const fetchBucketOptions = unstable_cache(fetchBucketOptionsImpl, ["challengeBuckets"], {
-  revalidate: 30,
+  revalidate: 600,
 });
 
 function urlWith(
@@ -145,6 +168,7 @@ export default async function ChallengesPage({
   let rows: ChallengeRow[] = [];
   let sendRows: SendTxnRow[] = [];
   let totalMatching = 0;
+  let countUnknown = false;
   let bucketOptions: string[] = [];
   let scenarioOptions: string[] = [];
   let error: string | null = null;
@@ -158,10 +182,21 @@ export default async function ChallengesPage({
     } else {
       // Split so paging (offset-only change) re-runs just the row query; the count
       // and bucket-vocabulary queries are cached on offset-independent keys.
+      // Only the rows are essential: if the count or the bucket list hits the
+      // web statement timeout, the page still renders with an open-ended pager
+      // and an unfiltered bucket dropdown instead of a DB error.
       [rows, totalMatching, bucketOptions] = await Promise.all([
         fetchChallengeRows(filters),
-        fetchChallengeCount({ board, method, bucket: effectiveBucket, status, scenario, outcome, window, target }),
-        fetchBucketOptions({ method, window }),
+        fetchChallengeCount({ board, method, bucket: effectiveBucket, status, scenario, outcome, window, target })
+          .catch((err) => {
+            console.error("[/challenges] count", err);
+            countUnknown = true;
+            return 0;
+          }),
+        fetchBucketOptions({ method, window: Math.min(window, BUCKET_LOOKBACK_H) }).catch((err) => {
+          console.error("[/challenges] buckets", err);
+          return [] as string[];
+        }),
       ]);
     }
   } catch (err) {
@@ -173,13 +208,20 @@ export default async function ChallengesPage({
   // Pager — Prev / "Page P of N" / Next, shown above and below the table.
   const activeRowCount = board === "sends" ? sendRows.length : rows.length;
   const page = Math.floor(offset / PAGE_SIZE) + 1;
-  const totalPages = Math.max(1, Math.ceil(totalMatching / PAGE_SIZE));
+  // The RPC board's count stops at COUNT_CAP + 1 and may be missing (timed
+  // out). In both cases the total is open-ended: the page total reads "N+" or
+  // is dropped, and Next follows whether this page came back full.
+  const countCapped = board !== "sends" && !countUnknown && totalMatching > COUNT_CAP;
+  const countOpen = countCapped || countUnknown;
+  const totalPages = Math.max(1, Math.ceil(Math.min(totalMatching, COUNT_CAP) / PAGE_SIZE));
   const hasPrev = offset > 0;
-  const hasNext = offset + activeRowCount < totalMatching;
+  const hasNext = countOpen
+    ? activeRowCount === PAGE_SIZE
+    : offset + activeRowCount < totalMatching;
   const pagerBtn =
     "inline-flex items-center gap-1 rounded-full border px-3 py-[5px] font-geistmono text-[11.5px] transition-colors";
   const pager =
-    totalMatching > PAGE_SIZE ? (
+    (countOpen ? hasPrev || hasNext : totalMatching > PAGE_SIZE) ? (
       <div className="flex items-center gap-2">
         {hasPrev ? (
           <Link
@@ -192,7 +234,8 @@ export default async function ChallengesPage({
           <span className={`${pagerBtn} border-line text-muted opacity-40 cursor-default`}>← Prev</span>
         )}
         <span className="font-geistmono text-[11.5px] text-muted px-1 tabular-nums">
-          Page {page} of {totalPages.toLocaleString()}
+          Page {page}
+          {!countUnknown && ` of ${totalPages.toLocaleString()}${countCapped ? "+" : ""}`}
         </span>
         {hasNext ? (
           <Link
@@ -428,11 +471,16 @@ export default async function ChallengesPage({
             <span style={{ color: "#f08080" }}>DB error: {error}</span>
           ) : (
             <>
-              {totalMatching.toLocaleString()} match{totalMatching === 1 ? "" : "es"}
-              {totalMatching > 0 && (
+              {countUnknown
+                ? "Matches"
+                : countCapped
+                  ? `${COUNT_CAP.toLocaleString()}+ matches`
+                  : `${totalMatching.toLocaleString()} match${totalMatching === 1 ? "" : "es"}`}
+              {(countUnknown ? activeRowCount > 0 : totalMatching > 0) && (
                 <span className="text-fg2">
                   {" · "}
-                  {offset + 1}–{Math.min(offset + activeRowCount, totalMatching)}
+                  {offset + 1}–
+                  {countOpen ? offset + activeRowCount : Math.min(offset + activeRowCount, totalMatching)}
                 </span>
               )}
             </>

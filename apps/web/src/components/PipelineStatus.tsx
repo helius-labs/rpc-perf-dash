@@ -204,7 +204,7 @@ export function StatusTimeline({ timeline }: { timeline: TimelinePoint[] }) {
     <section className="prov-section">
       <div className="prov-section-head">
         <span className="section-kicker">Throughput · 24h</span>
-        <span className="prov-section-count">15-min buckets · red = empty</span>
+        <span className="prov-section-count">hourly buckets · red = empty</span>
       </div>
       <div className="status-spark-grid">
         {series.map((sgroup) => {
@@ -230,10 +230,29 @@ export function StatusTimeline({ timeline }: { timeline: TimelinePoint[] }) {
 }
 
 /** Async server child: fetches the 60s-cached timeline, rendered inside a
- *  <Suspense> on /status so it never blocks the live sections. */
+ *  <Suspense> on /status so it never blocks the live sections. A failed read
+ *  (e.g. the web statement timeout) renders an inline note: thrown, it would
+ *  hit the route error boundary and replace the whole page. */
 export async function StatusTimelineSection() {
-  const timeline = await fetchTimeline();
-  return <StatusTimeline timeline={timeline} />;
+  try {
+    const timeline = await fetchTimeline();
+    return <StatusTimeline timeline={timeline} />;
+  } catch (err) {
+    console.error("[/status] timeline", err);
+    return <StatusSectionUnavailable kicker="Throughput · 24h" />;
+  }
+}
+
+/** Inline stand-in for a streamed /status section whose read failed. */
+function StatusSectionUnavailable({ kicker }: { kicker: string }) {
+  return (
+    <section className="prov-section">
+      <div className="prov-section-head">
+        <span className="section-kicker">{kicker}</span>
+        <span className="prov-section-count">temporarily unavailable — retrying on next refresh</span>
+      </div>
+    </section>
+  );
 }
 
 /** Suspense fallback for the timeline while it streams. */
@@ -266,11 +285,19 @@ export function StatusTimelineSkeleton() {
  * (~30s TTL), so this block is cheap. Consensus integrity is the last section.
  */
 export async function StatusHealthSections() {
-  const [health, consensusRates, consensusHealth] = await Promise.all([
-    fetchProviderHealth(),
-    fetchConsensusRates(),
-    fetchConsensusHealth(),
-  ]);
+  let health, consensusRates, consensusHealth;
+  try {
+    [health, consensusRates, consensusHealth] = await Promise.all([
+      fetchProviderHealth(),
+      fetchConsensusRates(),
+      fetchConsensusHealth(),
+    ]);
+  } catch (err) {
+    // Same reason as StatusTimelineSection: render in place, don't throw to the
+    // route error boundary.
+    console.error("[/status] health", err);
+    return <StatusSectionUnavailable kicker="Fleet health · 15m" />;
+  }
   return (
     <>
       <ConsensusBanner data={consensusHealth} />
