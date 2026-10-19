@@ -485,14 +485,16 @@ const HEALTHY_VALID_SHARE = 0.5;
  * crowd out the real one). It never excludes a candidate, because a window
  * under half healthy can still clear the eligibility floors.
  *
- * A pass can only judge windows that fit inside its lookback. Except on the
- * last pass (`lastPass`), run ends whose window reaches back past the lookback
- * are left for the wider pass instead of being judged on a few hours.
+ * The passes (`RUN_END_LOOKBACKS_H`, by index) partition the candidates: pass
+ * i returns only run ends whose window fits inside its lookback but not inside
+ * the previous pass's, so a wider pass never repeats a narrower one's
+ * candidates. The last pass also takes windows that reach back past every
+ * lookback, judged on the hours it can see.
  *
  * Reads the 1h precompute (8d retention). It runs during outages, when the
- * DB is likely under load, so it has to fit the web read cap: callers try
- * `RUN_END_LOOKBACKS_H` in order, 48h first (enough for a typical outage, ~65k
- * rows) and the full 8 days only if no 48h candidate ranks. Pinning methodology_version lets the
+ * DB is likely under load, so it has to fit the web read cap: the 48h pass
+ * (enough for a typical outage, ~65k rows) runs first and the 8-day pass only
+ * if nothing from it ranks (see findRankableWindow). Pinning methodology_version lets the
  * (grain, provider_id, worker_provider, connection_mode, methodology_version,
  * window_start) index range-scan window_start instead of filtering every
  * '__all__' row in the table.
@@ -508,10 +510,13 @@ export interface RunEnd {
 
 async function fetchConsensusRunEndsImpl(
   connectionMode: "cold" | "warm",
-  lookbackH: number,
+  pass: number,
   windowHours: number,
-  lastPass: boolean,
 ): Promise<RunEnd[]> {
+  const lookbackH = RUN_END_LOOKBACKS_H[pass];
+  if (lookbackH === undefined) return [];
+  const prevLookbackH = pass > 0 ? RUN_END_LOOKBACKS_H[pass - 1] : undefined;
+  const lastPass = pass === RUN_END_LOOKBACKS_H.length - 1;
   // RANGE frame offsets can't be bind parameters; windowHours is an
   // allowlisted window (lib/windows.ts), floored here for safety.
   const framePreceding = sql.raw(`interval '${Math.max(0, Math.floor(windowHours) - 1)} hours'`);
@@ -549,9 +554,15 @@ async function fetchConsensusRunEndsImpl(
     WHERE healthy
       AND next_healthy IS DISTINCT FROM true
       AND window_start < date_trunc('hour', now())
-      -- Window fits inside this lookback, or this is the widest pass.
+      -- Window fits inside this lookback (or this is the widest pass) ...
       AND (${sql.raw(lastPass ? "true" : "false")}
            OR window_start - ${framePreceding} > now() - make_interval(hours => ${lookbackH}))
+      -- ... and wasn't already a candidate in the narrower pass.
+      ${
+        prevLookbackH === undefined
+          ? sql``
+          : sql`AND NOT (window_start - ${framePreceding} > now() - make_interval(hours => ${prevLookbackH}))`
+      }
     ORDER BY good DESC, window_start DESC
     LIMIT 6
   `)) as unknown as Array<{ end_at: string | Date; good: boolean }>;

@@ -16,12 +16,12 @@
 import { GEO_REGIONS, type GeoRegion } from "@rpcbench/shared";
 import { MIN_METHOD_COVERAGE } from "@rpcbench/shared/scoring";
 import { ALL_METHODS } from "./methods";
+import { findRankableWindow } from "./staleFallback";
 import {
   fetchActiveGeos,
   fetchAggregatesForGeoByMethod,
   fetchConsensusRunEnds,
   RUN_END_LOOKBACKS_H,
-  type RunEnd,
   fetchMethodLatency,
   fetchMethodGeoLatency,
   type MethodLatencyRow,
@@ -107,49 +107,19 @@ export async function buildOverviewBoardData(windowHours: number): Promise<Overv
   // rank, labelled with when it ends, until the live window recovers. Never
   // throws: if nothing ranks, the live (empty) board renders as before.
   //
-  // Candidates come from the 48h pass, then the 8-day pass. Within the probe
-  // budget, "good" windows (mostly healthy) are tried as soon as they're found
-  // and the rest only after both passes. A failed lookback query or cube build
-  // is logged and skipped rather than ending the search.
-  const tried = new Set<string>();
-  const deferred: string[] = [];
-  const probe = async (endAt: string): Promise<OverviewBoardData | null> => {
-    if (tried.has(endAt) || tried.size >= MAX_FALLBACK_PROBES) return null;
-    tried.add(endAt);
-    try {
+  // Candidates come from the 48h pass, then the 8-day pass (findRankableWindow
+  // has the search order and the probe budget).
+  const hit = await findRankableWindow({
+    passes: RUN_END_LOOKBACKS_H.length,
+    fetchPass: (pass) => fetchConsensusRunEnds(OVERVIEW_MODE, pass, windowHours),
+    probe: async (endAt) => {
       const stale = await buildCube(targets, windowHours, endAt);
       return isCubeRankable(stale.cube) ? { ...stale, ...base, staleAsOf: endAt } : null;
-    } catch (err) {
-      console.error("[buildOverviewBoardData] stale cube failed", endAt, err);
-      return null;
-    }
-  };
-  for (const [i, lookbackH] of RUN_END_LOOKBACKS_H.entries()) {
-    let ends: RunEnd[];
-    try {
-      ends = await fetchConsensusRunEnds(
-        OVERVIEW_MODE,
-        lookbackH,
-        windowHours,
-        i === RUN_END_LOOKBACKS_H.length - 1,
-      );
-    } catch (err) {
-      console.error("[buildOverviewBoardData] run ends failed", lookbackH, err);
-      continue;
-    }
-    for (const { endAt, good } of ends) {
-      if (!good) {
-        deferred.push(endAt);
-        continue;
-      }
-      const hit = await probe(endAt);
-      if (hit) return hit;
-    }
-  }
-  for (const endAt of deferred) {
-    const hit = await probe(endAt);
-    if (hit) return hit;
-  }
+    },
+    maxProbes: MAX_FALLBACK_PROBES,
+    onError: (stage, err) => console.error(`[buildOverviewBoardData] stale fallback ${stage} failed`, err),
+  });
+  if (hit) return hit;
   return { ...live, ...base, staleAsOf: null };
 }
 
