@@ -27,6 +27,7 @@ import {
 } from "./heartbeat.js";
 import { ensurePartitions } from "./partitions.js";
 import { runMaintenance } from "./maintenance.js";
+import { runStatusTimeline, STATUS_TIMELINE_INTERVAL_MS } from "./statusTimeline.js";
 import { runSendTick } from "./send/tick.js";
 import { runConfirmPoll, heartbeatConfirm } from "./send/confirm.js";
 import { runSendRollup5m, runSendHeavyRollups, runSendLeaderboard } from "./send-rollup.js";
@@ -996,6 +997,27 @@ async function main() {
   };
   setInterval(runMaintenanceJob, MAINTENANCE_INTERVAL_MS);
   runMaintenanceJob();
+
+  // /status "Throughput · 24h" counts — own interval + overlap guard, not on the
+  // rollup tail. Recounts the current hour (and a just-closed one until it
+  // settles) into status_timeline_hourly so the web reads ~24 rows instead of
+  // scanning a day of challenges/assignments. Run at startup too: the first runs
+  // backfill the 24h window. See statusTimeline.ts.
+  let timelineInFlight = false;
+  const runStatusTimelineJob = () => {
+    if (timelineInFlight) {
+      console.warn("[status-timeline] previous run still running, skipping this firing");
+      return;
+    }
+    timelineInFlight = true;
+    runStatusTimeline(db)
+      .catch((err) => console.error("[status-timeline]", (err as Error).message))
+      .finally(() => {
+        timelineInFlight = false;
+      });
+  };
+  setInterval(runStatusTimelineJob, STATUS_TIMELINE_INTERVAL_MS);
+  runStatusTimelineJob();
 
   // ────────────────────────────────────────────────────────────
   // Send archetype (the /sends board). Gated by SENDS_ENABLED so it spends no

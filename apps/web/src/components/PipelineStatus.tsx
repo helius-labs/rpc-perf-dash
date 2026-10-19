@@ -186,8 +186,8 @@ export function PipelineStatusView({ data }: { data: PipelineStatus }) {
 
 /**
  * 24h throughput sparklines. Split out of PipelineStatusView so the live funnel +
- * cloud matrix paint immediately while this — the one unavoidable long scan —
- * streams in behind a Suspense boundary (see StatusTimelineSection). Pure render
+ * cloud matrix paint immediately while this streams in behind a Suspense
+ * boundary (see StatusTimelineSection). Pure render
  * over the already-fetched timeline points.
  */
 export function StatusTimeline({ timeline }: { timeline: TimelinePoint[] }) {
