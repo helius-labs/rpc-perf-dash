@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { sql } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
 import { createDb, type DbClient } from "@rpcbench/db";
@@ -22,7 +23,16 @@ function client(): DbClient {
  * docs/operations.md § Dashboard read latency). A read that hits it is retried
  * once with WEB_SLOW_TIMEOUT_MS, at most WEB_MAX_SLOW_READS at a time per
  * instance, so valid-but-slow reads still complete and get cached while
- * runaways die. 15s + 40s stays under the function duration limit.
+ * runaways die. A query whose slow-lane run also timed out isn't escalated
+ * again for WEB_SLOW_GIVE_UP_MS.
+ *
+ * Every read in one server render also shares a WEB_REQUEST_READ_BUDGET_MS
+ * budget, anchored at the request's first read, and both lanes are clipped to
+ * what's left. Pages that read sequentially (the home board's stale fallback
+ * chain) can't add 15s + 40s per step past the function duration limit. The
+ * anchor is a React `cache()` memo, which is per request inside a server render
+ * and not memoized elsewhere (route handlers, cron), so reads there get only the
+ * per-read lanes.
  *
  * The timeout must be SET LOCAL inside a transaction: Neon's transaction pooler
  * drops session-level SETs and rejects the startup-parameter form, so this is
@@ -32,13 +42,20 @@ function client(): DbClient {
 export const WEB_FAST_TIMEOUT_MS = 15_000;
 export const WEB_SLOW_TIMEOUT_MS = 40_000;
 const WEB_MAX_SLOW_READS = 2;
+const WEB_SLOW_GIVE_UP_MS = 120_000;
+export const WEB_REQUEST_READ_BUDGET_MS = 50_000;
+
+/** Deadline for this request's reads: fixed at the first read of a server
+ *  render (React `cache` memoizes per request there). */
+const requestReadDeadline = cache((): number => Date.now() + WEB_REQUEST_READ_BUDGET_MS);
 
 type Query = Parameters<DbClient["execute"]>[0];
 type Rows = Awaited<ReturnType<DbClient["execute"]>>;
 
 function runWithTimeout(query: Query, timeoutMs: number): Promise<Rows> {
   return client().transaction(async (tx) => {
-    await tx.execute(sql.raw(`SET LOCAL statement_timeout = ${Math.floor(timeoutMs)}`));
+    // Never 0: statement_timeout = 0 means "no timeout" in Postgres.
+    await tx.execute(sql.raw(`SET LOCAL statement_timeout = ${Math.max(1, Math.floor(timeoutMs))}`));
     return tx.execute(query);
   });
 }
@@ -57,6 +74,8 @@ const boundedExecute = createBoundedReader<Query, Rows>(runWithTimeout, queryKey
   slowMs: WEB_SLOW_TIMEOUT_MS,
   maxSlow: WEB_MAX_SLOW_READS,
   knownSlowLimit: 256,
+  giveUpMs: WEB_SLOW_GIVE_UP_MS,
+  remainingMs: () => requestReadDeadline() - Date.now(),
 });
 
 /** The web app's only DB entry point: read-only `execute` under the two-lane
