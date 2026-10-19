@@ -8,6 +8,7 @@ import {
 } from "@/components/leaderboardShared";
 import { buildOverviewBoardData } from "@/lib/embedData";
 import { DB_ERROR_MESSAGE } from "@/lib/db";
+import { StaleNotice } from "@/components/ConsensusBanner";
 
 export const dynamic = "force-dynamic";
 
@@ -35,9 +36,12 @@ export default async function EmbedScorePage({
   const methodSet = new Set<string>(methods);
 
   let rows: MiniScoreRow[] = [];
+  let staleAsOf: string | null = null;
   let error: string | null = null;
   try {
-    const { cube } = await buildOverviewBoardData(filters.windowHours);
+    const data = await buildOverviewBoardData(filters.windowHours);
+    const cube = data.cube;
+    staleAsOf = data.staleAsOf;
     const active = cube.filter((c) => methodSet.has(c.method as Method));
     rows = buildPresetLeaderRows(active, {
       componentWeights: preset.weights,
@@ -63,14 +67,17 @@ export default async function EmbedScorePage({
   }
 
   return (
-    <ScoreStrip
-      rows={rows}
-      ranked={rows.some((r) => r.total > 0)}
-      methodCount={methods.length}
-      // The preset's own component weights — the rows above were scored at these,
-      // so the caption must quote them too (the non-balanced presets differ from
-      // DEFAULT_WEIGHTS on every axis).
-      weights={preset.weights}
-    />
+    <>
+      <StaleNotice staleAsOf={staleAsOf} />
+      <ScoreStrip
+        rows={rows}
+        ranked={rows.some((r) => r.total > 0)}
+        methodCount={methods.length}
+        // The preset's own component weights — the rows above were scored at these,
+        // so the caption must quote them too (the non-balanced presets differ from
+        // DEFAULT_WEIGHTS on every axis).
+        weights={preset.weights}
+      />
+    </>
   );
 }
