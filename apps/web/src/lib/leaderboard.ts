@@ -479,8 +479,15 @@ const HEALTHY_VALID_SHARE = 0.5;
  * long, which is too short to clear the eligibility floors of a 24h window. The
  * caller tries each one until a window ranks someone.
  *
- * Only run ends whose window (the `windowHours` ending there, as far as the
- * lookback reaches) had consensus in at least half its hours are returned.
+ * Each run end comes with `good`: whether the window ending there (the
+ * `windowHours` before it) had consensus in at least half its hours. It's for
+ * ordering only (good candidates first, so a one-hour recovery blip doesn't
+ * crowd out the real one). It never excludes a candidate, because a window
+ * under half healthy can still clear the eligibility floors.
+ *
+ * A pass can only judge windows that fit inside its lookback. Except on the
+ * last pass (`lastPass`), run ends whose window reaches back past the lookback
+ * are left for the wider pass instead of being judged on a few hours.
  *
  * Reads the 1h precompute (8d retention). It runs during outages, when the
  * DB is likely under load, so it has to fit the web read cap: callers try
@@ -492,11 +499,19 @@ const HEALTHY_VALID_SHARE = 0.5;
  */
 export const RUN_END_LOOKBACKS_H = [48, 192] as const;
 
+export interface RunEnd {
+  /** ISO hour boundary the candidate window ends at. */
+  endAt: string;
+  /** Window had consensus in at least half its hours (ordering hint only). */
+  good: boolean;
+}
+
 async function fetchConsensusRunEndsImpl(
   connectionMode: "cold" | "warm",
   lookbackH: number,
   windowHours: number,
-): Promise<string[]> {
+  lastPass: boolean,
+): Promise<RunEnd[]> {
   // RANGE frame offsets can't be bind parameters; windowHours is an
   // allowlisted window (lib/windows.ts), floored here for safety.
   const framePreceding = sql.raw(`interval '${Math.max(0, Math.floor(windowHours) - 1)} hours'`);
@@ -528,18 +543,19 @@ async function fetchConsensusRunEndsImpl(
       FROM hours
       WINDOW w AS (ORDER BY window_start RANGE BETWEEN ${framePreceding} PRECEDING AND CURRENT ROW)
     )
-    SELECT (window_start + interval '1 hour') AS end_at
+    SELECT (window_start + interval '1 hour') AS end_at,
+           (window_healthy * 2 >= window_hours) AS good
     FROM flagged
     WHERE healthy
       AND next_healthy IS DISTINCT FROM true
       AND window_start < date_trunc('hour', now())
-      -- Skip run ends whose window is mostly outage (e.g. a one-hour recovery
-      -- blip): they can't rank, and would crowd out a real candidate.
-      AND window_healthy * 2 >= window_hours
-    ORDER BY window_start DESC
-    LIMIT 3
-  `)) as unknown as Array<{ end_at: string | Date }>;
-  return rows.map((r) => new Date(r.end_at).toISOString());
+      -- Window fits inside this lookback, or this is the widest pass.
+      AND (${sql.raw(lastPass ? "true" : "false")}
+           OR window_start - ${framePreceding} > now() - make_interval(hours => ${lookbackH}))
+    ORDER BY good DESC, window_start DESC
+    LIMIT 6
+  `)) as unknown as Array<{ end_at: string | Date; good: boolean }>;
+  return rows.map((r) => ({ endAt: new Date(r.end_at).toISOString(), good: r.good === true }));
 }
 
 /** Cached longer than the board itself: the answer only moves at hour boundaries. */
