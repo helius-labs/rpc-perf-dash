@@ -20,6 +20,7 @@ import {
   fetchActiveGeos,
   fetchAggregatesForGeoByMethod,
   fetchConsensusRunEnds,
+  RUN_END_LOOKBACKS_H,
   fetchMethodLatency,
   fetchMethodGeoLatency,
   type MethodLatencyRow,
@@ -83,6 +84,10 @@ export function isCubeRankable(
  * one per method — the cube carries every method because any can be toggled in
  * client-side.
  */
+/** Most stale windows built per request while looking for one that ranks. Each
+ *  is a full 6-geo cube, so this bounds the fallback's DB cost. */
+const MAX_FALLBACK_PROBES = 3;
+
 export async function buildOverviewBoardData(windowHours: number): Promise<OverviewBoardData> {
   const activeGeos = await fetchActiveGeos();
   const targets = activeGeos.length > 0 ? activeGeos : [...GEO_REGIONS];
@@ -101,10 +106,16 @@ export async function buildOverviewBoardData(windowHours: number): Promise<Overv
   // rank, labelled with when it ends, until the live window recovers. Never
   // throws: on any failure the live (empty) board renders as before.
   try {
-    const ends = await fetchConsensusRunEnds(OVERVIEW_MODE);
-    for (const endAt of ends) {
-      const stale = await buildCube(targets, windowHours, endAt);
-      if (isCubeRankable(stale.cube)) return { ...stale, ...base, staleAsOf: endAt };
+    const tried = new Set<string>();
+    for (const lookbackH of RUN_END_LOOKBACKS_H) {
+      const ends = await fetchConsensusRunEnds(OVERVIEW_MODE, lookbackH, windowHours);
+      for (const endAt of ends) {
+        if (tried.has(endAt)) continue;
+        if (tried.size >= MAX_FALLBACK_PROBES) return { ...live, ...base, staleAsOf: null };
+        tried.add(endAt);
+        const stale = await buildCube(targets, windowHours, endAt);
+        if (isCubeRankable(stale.cube)) return { ...stale, ...base, staleAsOf: endAt };
+      }
     }
   } catch (err) {
     console.error("[buildOverviewBoardData] stale fallback failed", err);

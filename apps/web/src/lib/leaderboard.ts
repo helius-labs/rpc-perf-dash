@@ -479,28 +479,27 @@ const HEALTHY_VALID_SHARE = 0.5;
  * long, which is too short to clear the eligibility floors of a 24h window. The
  * caller tries each one until a window ranks someone.
  *
+ * Only run ends whose window (the `windowHours` ending there, as far as the
+ * lookback reaches) had consensus in at least half its hours are returned.
+ *
  * Reads the 1h precompute (8d retention). It runs during outages, when the
- * DB is likely under load, so it has to fit the web read cap: the lookback
- * starts at 48h (enough for a typical outage, ~65k rows) and only widens to the
- * full 8 days when 48h has no run end. Pinning methodology_version lets the
+ * DB is likely under load, so it has to fit the web read cap: callers try
+ * `RUN_END_LOOKBACKS_H` in order, 48h first (enough for a typical outage, ~65k
+ * rows) and the full 8 days only if no 48h candidate ranks. Pinning methodology_version lets the
  * (grain, provider_id, worker_provider, connection_mode, methodology_version,
  * window_start) index range-scan window_start instead of filtering every
  * '__all__' row in the table.
  */
-const RUN_END_LOOKBACKS_H = [48, 192] as const;
+export const RUN_END_LOOKBACKS_H = [48, 192] as const;
 
-async function fetchConsensusRunEndsImpl(connectionMode: "cold" | "warm"): Promise<string[]> {
-  for (const lookbackH of RUN_END_LOOKBACKS_H) {
-    const ends = await queryConsensusRunEnds(connectionMode, lookbackH);
-    if (ends.length > 0) return ends;
-  }
-  return [];
-}
-
-async function queryConsensusRunEnds(
+async function fetchConsensusRunEndsImpl(
   connectionMode: "cold" | "warm",
   lookbackH: number,
+  windowHours: number,
 ): Promise<string[]> {
+  // RANGE frame offsets can't be bind parameters; windowHours is an
+  // allowlisted window (lib/windows.ts), floored here for safety.
+  const framePreceding = sql.raw(`interval '${Math.max(0, Math.floor(windowHours) - 1)} hours'`);
   const rows = (await db().execute(sql`
     WITH per AS (
       SELECT window_start, provider_id,
@@ -521,14 +520,22 @@ async function queryConsensusRunEnds(
     ),
     flagged AS (
       SELECT window_start, healthy,
-             lead(healthy) OVER (ORDER BY window_start) AS next_healthy
+             lead(healthy) OVER (ORDER BY window_start) AS next_healthy,
+             -- Hours (with data, inside the lookback) in the window that would
+             -- end at this hour, and how many of them had consensus.
+             count(*) OVER w AS window_hours,
+             count(*) FILTER (WHERE healthy) OVER w AS window_healthy
       FROM hours
+      WINDOW w AS (ORDER BY window_start RANGE BETWEEN ${framePreceding} PRECEDING AND CURRENT ROW)
     )
     SELECT (window_start + interval '1 hour') AS end_at
     FROM flagged
     WHERE healthy
       AND next_healthy IS DISTINCT FROM true
       AND window_start < date_trunc('hour', now())
+      -- Skip run ends whose window is mostly outage (e.g. a one-hour recovery
+      -- blip): they can't rank, and would crowd out a real candidate.
+      AND window_healthy * 2 >= window_hours
     ORDER BY window_start DESC
     LIMIT 3
   `)) as unknown as Array<{ end_at: string | Date }>;
