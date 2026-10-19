@@ -16,6 +16,7 @@
 import Link from "next/link";
 import type { Route } from "next";
 import { useEffect, useRef, useState } from "react";
+import { filterLinkRel } from "@/lib/crawl";
 
 export interface MethodOption {
   method: string;
@@ -128,6 +129,7 @@ export function MethodFilter({ options, selected, variant = "pill", multi = fals
                 >
                   <Link
                     href={(o.toggleHref ?? o.href) as Route}
+                    rel={filterLinkRel(o.toggleHref ?? o.href)}
                     scroll={false}
                     aria-label={(active ? "Remove " : "Add ") + o.method}
                     className="flex items-center pl-2.5 pr-1.5 py-[6px] shrink-0"
@@ -145,6 +147,7 @@ export function MethodFilter({ options, selected, variant = "pill", multi = fals
                   </Link>
                   <Link
                     href={o.href as Route}
+                    rel={filterLinkRel(o.href)}
                     scroll={false}
                     onClick={() => setOpen(false)}
                     className={
@@ -161,6 +164,7 @@ export function MethodFilter({ options, selected, variant = "pill", multi = fals
               <Link
                 key={o.method}
                 href={o.href as Route}
+                rel={filterLinkRel(o.href)}
                 scroll={false}
                 onClick={() => setOpen(false)}
                 role="option"
