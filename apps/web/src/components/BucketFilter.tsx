@@ -31,6 +31,7 @@
 import Link from "next/link";
 import type { Route } from "next";
 import type { ReactNode } from "react";
+import { filterLinkRel } from "@/lib/crawl";
 
 interface Props {
   /** Distinct bucket strings observed for the current (method, window). */
@@ -97,7 +98,7 @@ function Pill({
   children: ReactNode;
 }) {
   return (
-    <Link href={href as Route} className={active ? PILL_ACTIVE : PILL_INACTIVE}>
+    <Link href={href as Route} rel={filterLinkRel(href)} className={active ? PILL_ACTIVE : PILL_INACTIVE}>
       {children}
     </Link>
   );

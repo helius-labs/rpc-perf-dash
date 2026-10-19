@@ -23,6 +23,7 @@ import Link from "next/link";
 import type { Metadata, Route } from "next";
 import { unstable_cache } from "next/cache";
 import { singleFlight } from "@/lib/singleFlight";
+import { filterLinkRel } from "@/lib/crawl";
 import { db, DB_ERROR_MESSAGE } from "@/lib/db";
 import { type Method } from "@rpcbench/shared";
 import { ALL_METHODS } from "@/lib/methods";
@@ -226,6 +227,7 @@ export default async function ChallengesPage({
         {hasPrev ? (
           <Link
             href={urlWith(params, { offset: String(Math.max(0, offset - PAGE_SIZE)) }) as Route}
+            rel={filterLinkRel(urlWith(params, { offset: String(Math.max(0, offset - PAGE_SIZE)) }))}
             className={`${pagerBtn} border-line2 text-fg2 hover:text-fg hover:border-fg2`}
           >
             ← Prev
@@ -240,6 +242,7 @@ export default async function ChallengesPage({
         {hasNext ? (
           <Link
             href={urlWith(params, { offset: String(offset + PAGE_SIZE) }) as Route}
+            rel={filterLinkRel(urlWith(params, { offset: String(offset + PAGE_SIZE) }))}
             className={`${pagerBtn} border-line2 text-fg2 hover:text-fg hover:border-fg2`}
           >
             Next →
@@ -457,6 +460,7 @@ export default async function ChallengesPage({
         {target && (
           <Link
             href={urlWith(params, { target: null, offset: null }) as Route}
+            rel={filterLinkRel(urlWith(params, { target: null, offset: null }))}
             className="text-[11px] text-muted underline"
           >
             clear
