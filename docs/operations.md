@@ -33,8 +33,11 @@ the obvious downstream failure.
 1. **DB migrations** (`pnpm db:migrate`) — generator + workers expect the new
    schema. Migration must be idempotent (use `IF NOT EXISTS`, `ON CONFLICT`,
    `IF EXISTS` on drops).
-2. **Generator** (`cdk deploy RpcBenchGenerator --exclusively`) — writes the
-   new challenge format. Must redeploy BEFORE workers: a worker running old code
+2. **Generator** (`SENDS_ENABLED=true cdk deploy RpcBenchGenerator --exclusively`)
+   — writes the new challenge format. Keep `SENDS_ENABLED=true` on every
+   generator deploy (see § Transaction sends): the stack reads it from the
+   deploying shell and defaults to `false`, so a plain `cdk deploy` silently
+   turns the sends benchmark off. Must redeploy BEFORE workers: a worker running old code
    against the new schema would error, and a new-code worker reading old-format
    challenges would misclassify.
 3. **Workers** — all four deploy paths. AWS / TSW / CF / GCP (any order between
@@ -294,9 +297,12 @@ wrangler login                           # Cloudflare (Workers + Containers)
 # 1. DB
 pnpm db:migrate
 
-# 2. Generator (us-east-2 home region)
+# 2. Generator (us-east-2 home region). SENDS_ENABLED=true is REQUIRED: the
+#    stack takes it from this shell and defaults to false, so leaving it off
+#    disables the /sends benchmark in prod. Run `cdk diff` first: the only
+#    expected change is the container image.
 cd infra/cdk
-cdk deploy RpcBenchGenerator --profile "$AWS_PROFILE" --exclusively --require-approval never
+SENDS_ENABLED=true cdk deploy RpcBenchGenerator --profile "$AWS_PROFILE" --exclusively --require-approval never
 cd ../..
 
 # 3. AWS workers — ONE region (A+B lanes) per cdk deploy. Deploying all three
@@ -606,7 +612,16 @@ Companion: `expireStaleChallenges` + `expireStaleAssignments` crons run every mi
 The send archetype (migration 0002, `packages/send`, generator send lane +
 confirm poll, worker send branch) is gated by **`SENDS_ENABLED`**. When
 unset/false: the generator emits no send challenges and runs no confirm poll, the
-worker send lane idles, and **no SOL is spent**. The read board is unaffected
+worker send lane idles, and **no SOL is spent**.
+
+**The flag is a deploy-time pass-through, not a stored setting.**
+`infra/cdk/lib/generator-stack.ts` reads `process.env.SENDS_ENABLED ?? "false"`
+from the shell that runs `cdk deploy`, so every generator deploy has to set it
+again: `SENDS_ENABLED=true cdk deploy RpcBenchGenerator …`. Otherwise the deploy
+flips prod to `false` and the board stops collecting without any error. The
+same applies to the other `SEND_*` / `HARVEST_*` pass-throughs in that file if
+prod ever runs non-default values. A `cdk diff RpcBenchGenerator` before
+deploying shows it as an `Environment` change on the task definition. The read board is unaffected
 either way. **There is no separate confirm service** — confirmation is a poll
 loop folded into the generator (it's already a leader-elected singleton).
 
