@@ -30,8 +30,8 @@ export default async function StatusPage() {
         <h1 className="status-title">Pipeline status</h1>
       </header>
       <PipelineStatusView data={data} />
-      {/* The 24h timeline is the one heavy scan — stream it so the live funnel
-          + cloud matrix above paint immediately. */}
+      {/* The 24h timeline streams in on its own so the live funnel + cloud
+          matrix above paint immediately, and a failed read stays inline. */}
       <Suspense fallback={<StatusTimelineSkeleton />}>
         <StatusTimelineSection />
       </Suspense>

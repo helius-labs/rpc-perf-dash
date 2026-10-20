@@ -1,13 +1,16 @@
 import { sql } from "drizzle-orm";
 import { unstable_cache } from "next/cache";
-import { POOLED_INFRA, WORKER_PROVIDER_LABELS } from "@rpcbench/shared";
+import { WORKER_PROVIDER_LABELS } from "@rpcbench/shared";
 import { db } from "@/lib/db";
 import { singleFlight } from "@/lib/singleFlight";
+import type { TimelineRow } from "@/lib/statusTimeline";
 
 /**
- * Derive-on-read pipeline health for the /status page. No new tables: every
- * signal here is computed from the existing timestamp columns on `challenges`,
- * `challenge_assignments`, `samples`, and the heartbeat tables.
+ * Pipeline health for the /status page. The live funnel and cloud matrix are
+ * derived on read from the timestamp columns on `challenges`,
+ * `challenge_assignments`, `samples`, and the heartbeat tables. The 24h
+ * timeline is the exception: it reads hourly counts the generator precomputes
+ * (`status_timeline_hourly`, see fetchTimeline).
  *
  * The design treats the system as a FUNNEL — generator dispatches → challenges
  * carry a valid TTL → workers claim → workers write samples. A healthy pipeline
@@ -45,13 +48,6 @@ export interface CloudRow {
   lastSampleIso: string | null;
 }
 
-export interface TimelinePoint {
-  label: string;
-  dispatched: number;
-  claimed: number;
-  sampled: number;
-}
-
 export interface PipelineStatus {
   overall: StageState;
   stages: PipelineStage[];
@@ -72,46 +68,63 @@ interface FunnelRow {
 }
 
 /**
- * 24h timeline sparkline (dispatched / claimed / sampled per hour). The only
- * long-window read in /status — cached 60s and fetched separately so it never
- * blocks or freezes the live funnel + cloud matrix.
+ * 24h timeline sparkline (dispatched / claimed / sampled per hour), read from
+ * `status_timeline_hourly`: ~24 rows by primary key.
  *
- * Hourly, and `sampled` comes from the leaderboard precompute
- * (leaderboard_agg, grain '1h', pooled '__all__' rows = every sample once)
- * rather than raw `samples`. A 24h scan of raw samples is ~6M rows / ~1.8 GB,
- * which can't finish inside the web read cap (WEB_FAST_TIMEOUT_MS in
- * lib/db.ts). The precompute is ~65k rows for the same answer, at hourly
- * grain and up to one rollup tick (5 min) behind. Dispatched and claimed stay
- * on their own tables (~210k / ~640k rows a day, both indexed on the time
- * column), bucketed hourly to match.
+ * The generator keeps that table current on its own 60s interval
+ * (apps/generator/src/statusTimeline.ts). Counting here instead meant a 24h
+ * range scan of `challenges` and `challenge_assignments` (~210k / ~640k rows,
+ * both update-heavy, so the scans hit the heap) on every cache miss, which cold
+ * ran past the web read lanes (lib/db.ts). `sampled` is counted from `samples`
+ * by the same job, so the series no longer depends on the leaderboard rollup.
+ * The open hour is counted up to ~1 min behind now, plus this 60s cache.
+ *
+ * Each row carries computed_at and whether it is counted to the end of the
+ * hour; timelineView (lib/statusTimeline.ts) uses them at render time to draw
+ * uncounted or stalled hours as no-data rather than as empty hours. If the
+ * window has no rows at all (the table exists but the generator job isn't
+ * running yet), this throws so the section shows "temporarily unavailable".
  */
-async function fetchTimelineImpl(): Promise<TimelinePoint[]> {
+async function fetchTimelineImpl(): Promise<TimelineRow[]> {
   return singleFlight("statusTimeline", fetchTimelineQuery);
 }
 
-async function fetchTimelineQuery(): Promise<TimelinePoint[]> {
-  return (await db().execute(sql`
+async function fetchTimelineQuery(): Promise<TimelineRow[]> {
+  const rows = (await db().execute(sql`
     WITH b AS (
       SELECT generate_series(
         date_trunc('hour', now()) - interval '23 hours',
         date_trunc('hour', now()),
         interval '1 hour') AS ts
-    ),
-    d AS (SELECT date_trunc('hour', generated_at) AS ts, count(*)::int n
-          FROM challenges WHERE generated_at >= date_trunc('hour', now()) - interval '23 hours' GROUP BY 1),
-    c AS (SELECT date_trunc('hour', claimed_at) AS ts, count(*)::int n
-          FROM challenge_assignments WHERE claimed_at >= date_trunc('hour', now()) - interval '23 hours' GROUP BY 1),
-    s AS (SELECT window_start AS ts, sum(sample_count_total)::int n
-          FROM leaderboard_agg
-          WHERE grain = '1h' AND worker_provider = ${POOLED_INFRA}
-            AND window_start >= date_trunc('hour', now()) - interval '23 hours'
-          GROUP BY 1)
+    )
     SELECT to_char(b.ts, 'MM-DD HH24:MI') AS label,
-      coalesce(d.n, 0) AS dispatched, coalesce(c.n, 0) AS claimed, coalesce(s.n, 0) AS sampled
+      coalesce(t.dispatched, 0) AS dispatched,
+      coalesce(t.claimed, 0)    AS claimed,
+      coalesce(t.sampled, 0)    AS sampled,
+      (extract(epoch from t.computed_at) * 1000)::float8           AS computed_ms,
+      coalesce(t.counted_to >= b.ts + interval '1 hour', false)    AS complete
     FROM b
-    LEFT JOIN d ON d.ts = b.ts LEFT JOIN c ON c.ts = b.ts LEFT JOIN s ON s.ts = b.ts
+    LEFT JOIN status_timeline_hourly t ON t.hour_start = b.ts
     ORDER BY b.ts
-  `)) as unknown as TimelinePoint[];
+  `)) as unknown as Array<{
+    label: string;
+    dispatched: number;
+    claimed: number;
+    sampled: number;
+    computed_ms: number | null;
+    complete: boolean;
+  }>;
+  if (rows.every((r) => r.computed_ms == null)) {
+    throw new Error("status_timeline_hourly has no rows for the last 24h; is the generator's status-timeline job running?");
+  }
+  return rows.map((r) => ({
+    label: r.label,
+    dispatched: r.dispatched,
+    claimed: r.claimed,
+    sampled: r.sampled,
+    computedMs: r.computed_ms == null ? null : Number(r.computed_ms),
+    complete: r.complete,
+  }));
 }
 
 /**
@@ -195,10 +208,9 @@ async function fetchPipelineStatusImpl(): Promise<PipelineStatus> {
     last_sample: string | Date | null;
   }>;
 
-  // The 24h sparkline (fetchTimeline) is NOT fetched here — it's the one
-  // unavoidable long scan, so /status renders it behind its own Suspense
-  // boundary (StatusTimelineSection) instead of blocking the live funnel +
-  // cloud matrix on it.
+  // The 24h sparkline (fetchTimeline) is NOT fetched here: /status renders it
+  // behind its own Suspense boundary (StatusTimelineSection) so a slow or failed
+  // timeline read never blocks the live funnel + cloud matrix.
 
   // ── Stage states ────────────────────────────────────────────────────────
   const perMin = (n: number) => (n / 5).toFixed(0);

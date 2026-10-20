@@ -1,11 +1,11 @@
 import {
   type PipelineStatus,
   type StageState,
-  type TimelinePoint,
   humanizeAge,
   brokeAtUtc,
   fetchTimeline,
 } from "@/lib/status";
+import { type TimelinePoint, timelineView } from "@/lib/statusTimeline";
 import { LiveAge } from "@/components/LiveAge";
 import { ProviderHealth } from "@/components/ProviderHealth";
 import { ConsensusIntegrity } from "@/components/ConsensusIntegrity";
@@ -25,6 +25,7 @@ const STATE_BADGE: Record<StageState, string> = {
   down: "bad",
   unknown: "",
 };
+const NO_DATA_COLOR = "#3a3a3d";
 const STATE_COLOR: Record<StageState, string> = {
   ok: "#6bf08c",
   warn: "#ffb84d",
@@ -32,24 +33,42 @@ const STATE_COLOR: Record<StageState, string> = {
   unknown: "#6A6A68",
 };
 
-/** Inline SVG sparkline. Bars so empty (zero) buckets read as gaps at a glance. */
+/** Inline SVG sparkline. Bars so empty (zero) buckets read as gaps at a glance.
+ *  A null value is an hour with no counts: drawn as a faint hatched full-height
+ *  bar, distinct from a counted zero (the dark red stub). */
 function Sparkline({
+  id,
   values,
   color,
   width = 520,
   height = 34,
 }: {
-  values: number[];
+  /** Unique per page: names the no-data hatch pattern. */
+  id: string;
+  values: Array<number | null>;
   color: string;
   width?: number;
   height?: number;
 }) {
-  const max = Math.max(1, ...values);
+  const max = Math.max(1, ...values.map((v) => v ?? 0));
   const n = values.length;
   const bw = width / n;
+  const hatch = `spark-nodata-${id}`;
   return (
     <svg width="100%" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" className="status-spark">
+      <defs>
+        <pattern id={hatch} width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+          <line x1="0" y1="0" x2="0" y2="4" stroke={NO_DATA_COLOR} strokeWidth="1.5" />
+        </pattern>
+      </defs>
       {values.map((v, i) => {
+        if (v === null) {
+          return (
+            <rect key={i} x={i * bw} y={0} width={Math.max(0.5, bw - 0.5)} height={height} fill={`url(#${hatch})`}>
+              <title>no data</title>
+            </rect>
+          );
+        }
         const h = v === 0 ? 1 : Math.max(1, (v / max) * (height - 2));
         return (
           <rect
@@ -186,11 +205,18 @@ export function PipelineStatusView({ data }: { data: PipelineStatus }) {
 
 /**
  * 24h throughput sparklines. Split out of PipelineStatusView so the live funnel +
- * cloud matrix paint immediately while this — the one unavoidable long scan —
- * streams in behind a Suspense boundary (see StatusTimelineSection). Pure render
- * over the already-fetched timeline points.
+ * cloud matrix paint immediately while this streams in behind a Suspense
+ * boundary (see StatusTimelineSection). Pure render over timelineView's points:
+ * hours without trustworthy counts render as no-data, and `staleForMs` (the
+ * counting job has stalled) adds a "last updated" note.
  */
-export function StatusTimeline({ timeline }: { timeline: TimelinePoint[] }) {
+export function StatusTimeline({
+  timeline,
+  staleForMs,
+}: {
+  timeline: TimelinePoint[];
+  staleForMs: number | null;
+}) {
   const series: Array<{
     key: keyof Pick<TimelinePoint, "dispatched" | "claimed" | "sampled">;
     label: string;
@@ -204,19 +230,26 @@ export function StatusTimeline({ timeline }: { timeline: TimelinePoint[] }) {
     <section className="prov-section">
       <div className="prov-section-head">
         <span className="section-kicker">Throughput · 24h</span>
-        <span className="prov-section-count">hourly buckets · red = empty</span>
+        <span className="prov-section-count">
+          hourly buckets · red = empty · hatched = no data
+          {staleForMs !== null && (
+            <span style={{ color: STATE_COLOR.warn }}>
+              {" "}· counts last updated {humanizeAge(staleForMs / 1000)} ago
+            </span>
+          )}
+        </span>
       </div>
       <div className="status-spark-grid">
         {series.map((sgroup) => {
-          const values = timeline.map((t) => t[sgroup.key]);
-          const total = values.reduce((a, b) => a + b, 0);
+          const values = timeline.map((t) => (t.hasData ? t[sgroup.key] : null));
+          const total = values.reduce<number>((a, b) => a + (b ?? 0), 0);
           return (
             <div key={sgroup.key} className="status-spark-row">
               <div className="status-spark-meta">
                 <span style={{ color: sgroup.color }}>●</span> {sgroup.label}
                 <span className="status-aux-muted"> · {total.toLocaleString()} in 24h</span>
               </div>
-              <Sparkline values={values} color={sgroup.color} />
+              <Sparkline id={sgroup.key} values={values} color={sgroup.color} />
             </div>
           );
         })}
@@ -229,14 +262,15 @@ export function StatusTimeline({ timeline }: { timeline: TimelinePoint[] }) {
   );
 }
 
-/** Async server child: fetches the 60s-cached timeline, rendered inside a
- *  <Suspense> on /status so it never blocks the live sections. A failed read
- *  (e.g. the web statement timeout) renders an inline note: thrown, it would
- *  hit the route error boundary and replace the whole page. */
+/** Async server child: fetches the 60s-cached timeline rows and judges them
+ *  against the clock at render, inside a <Suspense> on /status so it never
+ *  blocks the live sections. A failed read (e.g. the web statement timeout, or
+ *  no counts yet) renders an inline note: thrown, it would hit the route error
+ *  boundary and replace the whole page. */
 export async function StatusTimelineSection() {
   try {
-    const timeline = await fetchTimeline();
-    return <StatusTimeline timeline={timeline} />;
+    const { points, staleForMs } = timelineView(await fetchTimeline(), Date.now());
+    return <StatusTimeline timeline={points} staleForMs={staleForMs} />;
   } catch (err) {
     console.error("[/status] timeline", err);
     return <StatusSectionUnavailable kicker="Throughput · 24h" />;
