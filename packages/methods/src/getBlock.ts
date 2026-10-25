@@ -34,6 +34,7 @@ import {
   type ChallengeContext,
   type Correctness,
   type MethodHandlers,
+  type RpcClient,
   buffersEqual,
 } from "@rpcbench/shared";
 import { STALE_TIP_LAG_SLOTS } from "./freshness.js";
@@ -156,7 +157,13 @@ export async function deriveBlockChallenge(
     if (!found) return null;
     slot = found.slot;
   } else {
-    const picked = pickSlotForAge(tip, age);
+    let slotsPerHour = 0n;
+    if (age !== "tip_minus_5") {
+      const measured = await utilitySlotsPerHour(ctx.utility).catch(() => null);
+      if (measured === null) return null;
+      slotsPerHour = measured;
+    }
+    const picked = pickSlotForAge(tip, age, slotsPerHour);
     if (picked === null) return null;
     try {
       if ((await probeBand(picked)) === null) return null;
@@ -188,12 +195,29 @@ export async function deriveBlockChallenge(
   };
 }
 
-function pickSlotForAge(
+const SLOT_RATE_TTL_MS = 10 * 60 * 1000;
+const slotRates = new WeakMap<RpcClient, { at: number; slotsPerHour: bigint }>();
+
+export async function utilitySlotsPerHour(utility: RpcClient, now: number = Date.now()): Promise<bigint | null> {
+  const cached = slotRates.get(utility);
+  if (cached && now - cached.at < SLOT_RATE_TTL_MS) return cached.slotsPerHour;
+  const samples = await utility.call<{ numSlots: number; samplePeriodSecs: number }[]>(
+    "getRecentPerformanceSamples",
+    [10],
+  );
+  const slots = (samples ?? []).reduce((sum, sample) => sum + sample.numSlots, 0);
+  const seconds = (samples ?? []).reduce((sum, sample) => sum + sample.samplePeriodSecs, 0);
+  if (slots <= 0 || seconds <= 0) return null;
+  const slotsPerHour = BigInt(Math.round((slots * 3600) / seconds));
+  slotRates.set(utility, { at: now, slotsPerHour });
+  return slotsPerHour;
+}
+
+export function pickSlotForAge(
   tip: bigint,
   age: "tip_minus_5" | "last_hour" | "last_24h" | "archival",
+  slotsPerHour: bigint,
 ): bigint | null {
-  // Solana ~2.5 slots/sec.
-  const slotsPerHour = 9000n;
   const slotsPerDay = slotsPerHour * 24n;
   const rand = (lo: bigint, hi: bigint) => {
     if (hi <= lo) return null;
