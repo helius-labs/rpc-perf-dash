@@ -16,6 +16,7 @@
  * still pull FloatingTooltip into their client bundle — a static import).
  */
 
+import { formatAsOf } from "@/lib/formatAsOf";
 import { DEFAULT_WEIGHTS, type ScoringWeights } from "@rpcbench/shared/scoring";
 import {
   ScoreFormula,
@@ -192,6 +193,11 @@ export function ScoreStrip({
                 {!eligible && r.failing_reason ? (
                   <span className="font-geistmono text-[9px] not-italic uppercase tracking-[0.06em] text-muted leading-tight mt-0.5">
                     {r.failing_reason}
+                  </span>
+                ) : null}
+                {r.as_of ? (
+                  <span className="font-geistmono text-[9px] font-normal not-italic uppercase tracking-[0.06em] text-muted leading-tight mt-0.5">
+                    last updated {formatAsOf(r.as_of)}
                   </span>
                 ) : null}
               </span>

@@ -14,15 +14,20 @@
  */
 
 import { GEO_REGIONS } from "@rpcbench/shared";
+import { MIN_METHOD_COVERAGE } from "@rpcbench/shared/scoring";
 import { ALL_METHODS } from "./methods";
 import {
   buildMethodGeoCube,
   fetchActiveGeos,
   fetchMethodLatency,
   fetchMethodGeoLatency,
+  fetchStaleCandidates,
   withProviderFallback,
+  type CubeWindow,
+  type MethodGeoLatencyRow,
   type MethodLatencyRow,
 } from "./leaderboard";
+import { staleWindowHours, type StaleCandidate } from "./staleFallback";
 import { fetchSampleCount, type SampleCount } from "./sampleCount";
 import { type MethodGeoRows } from "@/components/leaderboardShared";
 import { type MethodRegionLatency } from "@/components/IndexLeaderboard";
@@ -89,7 +94,8 @@ export async function buildOverviewBoardData(windowHours: number): Promise<Overv
  * The <MethodRegionTabs> `byInfra` feed: for each infra key ("all" + each active
  * worker_provider) the per-method p50/p95 rows (cold+warm) and the raw
  * method×geo cube rows for the expandable region drill-down. Pre-fetches every
- * infra so the table's Infra dropdown switches client-side.
+ * infra so the table's Infra dropdown switches client-side. Providers with no
+ * live latency come from their last healthy window (`providerAsOf` per infra).
  */
 export async function buildLatencyTableData({
   infraKeys,
@@ -100,18 +106,77 @@ export async function buildLatencyTableData({
   windowHours: number;
   tableProviders: { id: string; name: string }[];
 }): Promise<Record<string, InfraTableData>> {
-  const [mlByInfra, mglByInfra] = await Promise.all([
-    Promise.all(
-      infraKeys.map((k) =>
-        fetchMethodLatency({ windowHours, ...(k !== "all" ? { workerProvider: k } : {}) }),
-      ),
-    ),
-    Promise.all(
-      infraKeys.map((k) =>
-        fetchMethodGeoLatency({ windowHours, ...(k !== "all" ? { workerProvider: k } : {}) }),
-      ),
-    ),
-  ]);
+  const fetchInfra = (key: string, w?: CubeWindow) => {
+    const o = {
+      windowHours: w?.windowHours ?? windowHours,
+      ...(key !== "all" ? { workerProvider: key } : {}),
+      ...(w?.endAt ? { endAt: w.endAt } : {}),
+      ...(w?.grain ? { grain: w.grain } : {}),
+    };
+    return Promise.all([fetchMethodLatency(o), fetchMethodGeoLatency(o)]);
+  };
+  const live = await Promise.all(infraKeys.map((k) => fetchInfra(k)));
+  const mlByInfra = live.map(([ml]) => ml);
+  const mglByInfra = live.map(([, mgl]) => mgl as MethodGeoLatencyRow[]);
+  const asOfByInfra = infraKeys.map((): Record<string, string> => ({}));
+
+  // Stale fallback, as on the board (withProviderFallback): a provider with no
+  // latency in the live window (down, or no consensus so nothing is correct)
+  // gets its rows from its own most recent healthy window. The table has no
+  // ranking gate, so the newest candidate is used as is.
+  // "Has latency" = cold p50s for at least the board's method-coverage share
+  // of methods. A handful of methods can still get correct samples without a
+  // full panel, so "any row" would keep a provider live with a mostly blank
+  // column.
+  const hasLatency = (ml: MethodLatencyRow[], id: string) =>
+    new Set(
+      ml
+        .filter((r) => r.provider_id === id && r.connection_mode === OVERVIEW_MODE && r.p50 != null)
+        .map((r) => r.method),
+    ).size >=
+    MIN_METHOD_COVERAGE * ALL_METHODS.length;
+  const missing = infraKeys.map((_, i) =>
+    tableProviders.map((p) => p.id).filter((id) => !hasLatency(mlByInfra[i]!, id)),
+  );
+  if (missing.some((ids) => ids.length > 0)) {
+    const candidates = await fetchStaleCandidates(OVERVIEW_MODE, windowHours, (stage, err) =>
+      console.error(`[buildLatencyTableData] stale fallback ${stage} failed`, err),
+    );
+    // (infra, window) → providers to take from it, so providers that went dark
+    // together share one fetch.
+    const groups = new Map<string, { i: number; c: StaleCandidate; ids: string[] }>();
+    missing.forEach((ids, i) => {
+      for (const id of ids) {
+        const c = candidates(id)[0];
+        if (!c) continue;
+        const key = `${i}|${c.grain}|${c.endAt}`;
+        const g = groups.get(key) ?? { i, c, ids: [] };
+        g.ids.push(id);
+        groups.set(key, g);
+      }
+    });
+    await Promise.all(
+      [...groups.values()].map(async ({ i, c, ids }) => {
+        let ml: MethodLatencyRow[];
+        let mgl: MethodGeoLatencyRow[];
+        try {
+          [ml, mgl] = await fetchInfra(infraKeys[i]!, {
+            windowHours: staleWindowHours(windowHours, c.grain),
+            endAt: c.endAt,
+            grain: c.grain,
+          });
+        } catch (err) {
+          console.error(`[buildLatencyTableData] stale fallback ${c.grain}|${c.endAt} failed`, err);
+          return;
+        }
+        const found = ids.filter((id) => hasLatency(ml, id));
+        const take = new Set(found);
+        mlByInfra[i] = [...mlByInfra[i]!.filter((r) => !take.has(r.provider_id)), ...ml.filter((r) => take.has(r.provider_id))];
+        mglByInfra[i] = [...mglByInfra[i]!.filter((r) => !take.has(r.provider_id)), ...mgl.filter((r) => take.has(r.provider_id))];
+        for (const id of found) asOfByInfra[i]![id] = c.endAt;
+      }),
+    );
+  }
 
   const buildMethodRows = (ml: MethodLatencyRow[]): BreakdownRow[] =>
     [...ALL_METHODS]
@@ -144,6 +209,7 @@ export async function buildLatencyTableData({
     byInfra[key] = {
       methodRows: buildMethodRows(mlByInfra[i] ?? []),
       cubeRows: (mglByInfra[i] ?? []) as CubeRow[],
+      providerAsOf: asOfByInfra[i] ?? {},
     };
   });
   return byInfra;

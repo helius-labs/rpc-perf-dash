@@ -12,6 +12,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { GEO_REGIONS, GEO_REGION_LABELS, type GeoRegion, type Method } from "@rpcbench/shared/types";
+import { formatAsOf } from "@/lib/formatAsOf";
 import { brandColorFor, colorFor } from "@/lib/providerColors";
 import { ExportButtons } from "./ExportButtons";
 import { MethodSelectPill } from "./MethodSelectPill";
@@ -51,6 +52,9 @@ export interface CubeRow {
 export interface InfraTableData {
   methodRows: BreakdownRow[];
   cubeRows: CubeRow[];
+  /** Providers whose rows come from their last healthy window (provider id →
+   *  ISO window end); absent = live. */
+  providerAsOf: Record<string, string>;
 }
 /** One option in the table's Infra dropdown (`all` = pooled across clouds). */
 export interface InfraOption {
@@ -380,7 +384,7 @@ export function MethodRegionTabs({
     () => new Set((byInfra[tableInfra] ?? byInfra.all)?.methodRows.map((r) => r.key) ?? []),
   );
 
-  const active = byInfra[tableInfra] ?? byInfra.all ?? { methodRows: [], cubeRows: [] };
+  const active = byInfra[tableInfra] ?? byInfra.all ?? { methodRows: [], cubeRows: [], providerAsOf: {} };
   const methodRows = active.methodRows;
   const cubeRows = active.cubeRows;
   const infraLabel =
@@ -708,6 +712,11 @@ export function MethodRegionTabs({
                     />
                     {p.name}
                   </span>
+                  {active.providerAsOf[p.id] && (
+                    <span className="block normal-case tracking-normal text-[9.5px] font-normal">
+                      last updated {formatAsOf(active.providerAsOf[p.id]!)}
+                    </span>
+                  )}
                 </th>
               ))}
             </tr>

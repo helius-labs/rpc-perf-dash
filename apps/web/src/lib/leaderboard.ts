@@ -157,140 +157,6 @@ export function eligibilityFloors(windowHours: number) {
   };
 }
 
-export interface AggregateOpts {
-  geoRegion: GeoRegion;
-  windowHours: number;
-  connectionMode: "cold" | "warm";
-  workerProvider?: string;
-  method: Method;
-}
-
-async function fetchAggregatesForGeoImpl(opts: AggregateOpts): Promise<RowAgg[]> {
-  // All windows read the leaderboard precompute (leaderboard_agg, grain '1h'/'1d'),
-  // refreshed every 5 min by the rollup tick — reading raw `samples` would scan
-  // the multi-million-row current-day partition per geo and mode. Rates and
-  // win-counts are exact; percentiles are weight-averaged across hourly buckets
-  // (a benign approximation).
-  const floor = eligibilityFloors(opts.windowHours);
-  return fetchAggregatesFromPrecompute(opts, floor);
-}
-
-/**
- * Leaderboard read off the precompute. Sums the precomputed time-bucket rows
- * over the window: rates and win/challenge counts are exact (summed num/den),
- * while percentiles and stddev are weight-averaged across time buckets — a
- * benign approximation, since each row already pooled regions + buckets at
- * write time. Returns the same RowAgg shape as the exact path.
- */
-async function fetchAggregatesFromPrecompute(
-  opts: AggregateOpts,
-  floor: ReturnType<typeof eligibilityFloors>,
-): Promise<RowAgg[]> {
-  const grain = leaderboardGrainForWindow(opts.windowHours);
-  const aggTable = sql.raw("leaderboard_agg");
-  const chalTable = sql.raw("leaderboard_challenges");
-  const failTable = sql.raw("leaderboard_failures");
-  const wpKey = opts.workerProvider ?? POOLED_INFRA;
-
-  const rows = await db().execute(sql`
-    WITH agg AS (
-      SELECT
-        provider_id,
-        round(sum(latency_p50_correct::bigint * sample_count_valid)::numeric
-              / NULLIF(sum(sample_count_valid) FILTER (WHERE latency_p50_correct IS NOT NULL), 0))::int AS p50_ms,
-        round(sum(latency_p95_correct::bigint * sample_count_valid)::numeric
-              / NULLIF(sum(sample_count_valid) FILTER (WHERE latency_p95_correct IS NOT NULL), 0))::int AS p95_ms,
-        round(sum(latency_p99_correct::bigint * sample_count_valid)::numeric
-              / NULLIF(sum(sample_count_valid) FILTER (WHERE latency_p99_correct IS NOT NULL), 0))::int AS p99_ms,
-        (sum(latency_stddev * sample_count_valid)
-              / NULLIF(sum(sample_count_valid) FILTER (WHERE latency_stddev IS NOT NULL), 0))::real AS stddev_ms,
-        sum(sample_count_valid)::int  AS sample_count_valid,
-        sum(sample_count_total)::int  AS sample_count_total,
-        sum(sample_count_failed)::int AS sample_count_failed,
-        sum(honeypot_pass_count)::int AS honeypot_pass_count,
-        sum(honeypot_total)::int      AS honeypot_total,
-        (sum(success_num)::real      / NULLIF((sum(sample_count_total) - sum(nofault_excluded_count))::real, 0))::real AS success_rate,
-        (sum(correctness_num)::real  / NULLIF(sum(correctness_den)::real, 0))::real    AS correctness_rate,
-        (sum(completeness_num)::real / NULLIF(sum(completeness_den)::real, 0))::real   AS completeness_rate,
-        round(sum(freshness_p95_lag::bigint * sample_count_total)::numeric
-              / NULLIF(sum(sample_count_total) FILTER (WHERE freshness_p95_lag IS NOT NULL), 0))::int AS freshness_p95_lag,
-        sum(n_wins)::int AS n_wins
-      FROM ${aggTable}
-      WHERE grain = ${grain}
-        AND geo = ${opts.geoRegion}
-        AND worker_provider = ${wpKey}
-        AND method = ${opts.method}
-        AND connection_mode = ${opts.connectionMode}        AND window_start > now() - make_interval(hours => ${opts.windowHours})
-      GROUP BY provider_id
-    ),
-    chal AS (
-      SELECT coalesce(sum(n_challenges), 0)::int AS n_challenges_with_winner
-      FROM ${chalTable}
-      WHERE grain = ${grain}
-        AND geo = ${opts.geoRegion}
-        AND worker_provider = ${wpKey}
-        AND method = ${opts.method}
-        AND connection_mode = ${opts.connectionMode}        AND window_start > now() - make_interval(hours => ${opts.windowHours})
-    ),
-    fails AS (
-      -- Per-provider failure breakdown for the SAME filter, summed across time
-      -- buckets and collapsed to one JSON array per provider (desc by count).
-      -- Counts come from the scf-predicate companion, so they sum to the agg's
-      -- sample_count_failed → the breakdown explains the missing success %.
-      SELECT provider_id,
-             jsonb_agg(jsonb_build_object('category', failure_category, 'n', n) ORDER BY n DESC) AS failure_breakdown
-      FROM (
-        SELECT provider_id, failure_category, sum(n)::int AS n
-        FROM ${failTable}
-        WHERE grain = ${grain}
-          AND geo = ${opts.geoRegion}
-          AND worker_provider = ${wpKey}
-          AND method = ${opts.method}
-          AND connection_mode = ${opts.connectionMode}          AND window_start > now() - make_interval(hours => ${opts.windowHours})
-        GROUP BY provider_id, failure_category
-      ) f
-      GROUP BY provider_id
-    )
-    SELECT
-      p.id   AS provider_id,
-      a.p50_ms, a.p95_ms, a.p99_ms, a.stddev_ms,
-      coalesce(a.sample_count_valid, 0)  AS sample_count_valid,
-      coalesce(a.sample_count_total, 0)  AS sample_count_total,
-      coalesce(a.sample_count_failed, 0) AS sample_count_failed,
-      a.success_rate, a.correctness_rate, a.completeness_rate,
-      a.freshness_p95_lag,
-      coalesce(a.honeypot_pass_count, 0) AS honeypot_pass_count,
-      coalesce(a.honeypot_total, 0)      AS honeypot_total,
-      coalesce(a.n_wins, 0)              AS n_wins,
-      coalesce(fa.failure_breakdown, '[]'::jsonb) AS failure_breakdown,
-      (SELECT n_challenges_with_winner FROM chal) AS n_challenges_with_winner,
-      (coalesce(a.sample_count_valid, 0) >= ${floor.minValid}
-        AND coalesce(a.success_rate, 0)     >= ${floor.minReliability}
-        AND coalesce(a.correctness_rate, 0) >= ${floor.minCorrectness}
-        AND wilson_lower_bound(coalesce(a.honeypot_pass_count, 0), coalesce(a.honeypot_total, 0), 1.96)
-              >= ${floor.minHoneypotLb}) AS eligible,
-      CASE
-        WHEN coalesce(a.sample_count_valid, 0) < ${floor.minValid}     THEN 'insufficient_samples'
-        WHEN coalesce(a.success_rate, 0)     < ${floor.minReliability}  THEN 'reliability_below_threshold'
-        WHEN coalesce(a.correctness_rate, 0) < ${floor.minCorrectness}  THEN 'correctness_below_threshold'
-        WHEN wilson_lower_bound(coalesce(a.honeypot_pass_count, 0), coalesce(a.honeypot_total, 0), 1.96)
-              < ${floor.minHoneypotLb}                                  THEN 'honeypot_pass_below_threshold'
-        ELSE NULL
-      END AS failing_reason
-    FROM (SELECT id FROM providers WHERE benchmarked = true) p
-    LEFT JOIN agg a ON a.provider_id = p.id
-    LEFT JOIN fails fa ON fa.provider_id = p.id
-  `);
-
-  return rows as unknown as RowAgg[];
-}
-
-export const fetchAggregatesForGeo = unstable_cache(
-  fetchAggregatesForGeoImpl,
-  ["fetchAggregatesForGeo"],
-  { revalidate: CACHE_TTL_S },
-);
-
 export interface AggregateByMethodOpts {
   geoRegion: GeoRegion;
   methods: readonly Method[];
@@ -298,7 +164,7 @@ export interface AggregateByMethodOpts {
   connectionMode: "cold" | "warm";
   workerProvider?: string;
   /** ISO instant the window ends at (exclusive). Omitted → the window ends now.
-   *  Set only by the stale fallback (`buildOverviewBoardData`), always to a
+   *  Set only by the stale fallback (`withProviderFallback`), always to a
    *  bucket boundary so the cache key is stable for the bucket. */
   endAt?: string;
   /** Precompute grain to read. Omitted → leaderboardGrainForWindow(windowHours).
@@ -307,10 +173,14 @@ export interface AggregateByMethodOpts {
 }
 
 /**
- * Multi-method variant of `fetchAggregatesForGeo`: one query per geo returning
- * the full RowAgg (incl. failure_breakdown) for EVERY requested method, keyed by
- * method. Used by the preset method-blend (Overview cube + `fetchRankedPreset`)
- * so Balanced (45 methods × 6 geos) is 6 queries, not 270.
+ * Leaderboard aggregates per geo, read off the precompute (leaderboard_agg,
+ * grain '1h'/'1d', refreshed every 5 min by the rollup tick — reading raw
+ * `samples` would scan the multi-million-row current-day partition): one query
+ * per geo returning the full RowAgg (incl. failure_breakdown) for EVERY
+ * requested method, keyed by method, so Balanced (45 methods × 6 geos) is 6
+ * queries, not 270. Rates and win/challenge counts are exact (summed num/den);
+ * percentiles and stddev are weight-averaged across time buckets, a benign
+ * approximation. Every board builds its cube from this (`buildMethodGeoCube`).
  *
  * Methods are a fixed `Method` enum, so we inline them as an escaped literal
  * `IN (...)` list — never `= ANY(${array})`, which the Neon pooler
@@ -543,6 +413,25 @@ export const fetchProviderRunEnds = unstable_cache(
   { revalidate: 300 },
 );
 
+/**
+ * Each provider's candidate stale windows, newest first (see `staleCandidates`).
+ * A failed run-end lookup is reported via `onError` and yields no candidates
+ * for that grain.
+ */
+export async function fetchStaleCandidates(
+  connectionMode: "cold" | "warm",
+  windowHours: number,
+  onError: (stage: string, err: unknown) => void,
+): Promise<(providerId: string) => StaleCandidate[]> {
+  const runEnds = (grain: StaleCandidate["grain"]) =>
+    fetchProviderRunEnds(connectionMode, grain).catch((err: unknown): RunEnd[] => {
+      onError(`run ends ${grain}`, err);
+      return [];
+    });
+  const [hourly, daily] = await Promise.all([runEnds("1h"), runEnds("1d")]);
+  return (id) => staleCandidates(id, windowHours, hourly, daily);
+}
+
 /** One window a stale-fallback cube is built over (see `findStaleProviderCubes`). */
 export interface CubeWindow {
   windowHours: number;
@@ -584,15 +473,10 @@ export async function findStaleProviderCubes(opts: {
   const rankedBy = opts.rankedBy ?? ((cube: MethodGeoRows[]) => rankableProviders(cube));
   const onError = (stage: string, err: unknown) =>
     console.error(`[${opts.label}] stale fallback ${stage} failed`, err);
-  const runEnds = (grain: StaleCandidate["grain"]) =>
-    fetchProviderRunEnds(opts.connectionMode, grain).catch((err: unknown): RunEnd[] => {
-      onError(`run ends ${grain}`, err);
-      return [];
-    });
-  const [hourly, daily] = await Promise.all([runEnds("1h"), runEnds("1d")]);
+  const candidates = await fetchStaleCandidates(opts.connectionMode, opts.windowHours, onError);
   const found = await findProviderWindows<{ cube: MethodGeoRows[]; ranked: Set<string> }>({
     providers: opts.providers,
-    candidates: (id) => staleCandidates(id, opts.windowHours, hourly, daily),
+    candidates,
     build: async (c) => {
       const cube = await opts.build({
         windowHours: staleWindowHours(opts.windowHours, c.grain),
@@ -799,8 +683,15 @@ export interface MethodLatencyRow {
 async function fetchMethodLatencyImpl(opts: {
   windowHours: number;
   workerProvider?: string;
+  /** Stale fallback: window ends here (bucket boundary), read off `grain`. */
+  endAt?: string;
+  grain?: "1h" | "1d";
 }): Promise<MethodLatencyRow[]> {
-  const grain = leaderboardGrainForWindow(opts.windowHours);
+  const grain = opts.grain ?? leaderboardGrainForWindow(opts.windowHours);
+  const inWindow = opts.endAt
+    ? sql`window_start >= ${opts.endAt}::timestamptz - make_interval(hours => ${opts.windowHours})
+          AND window_start < ${opts.endAt}::timestamptz`
+    : sql`window_start > now() - make_interval(hours => ${opts.windowHours})`;
   const aggTable = sql.raw("leaderboard_agg");
   const wpKey = opts.workerProvider ?? POOLED_INFRA;
   const rows = await db().execute(sql`
@@ -816,7 +707,7 @@ async function fetchMethodLatencyImpl(opts: {
     WHERE grain = ${grain}
       AND worker_provider = ${wpKey}
       AND provider_id IN (SELECT id FROM providers WHERE benchmarked = true)
-      AND window_start > now() - make_interval(hours => ${opts.windowHours})
+      AND ${inWindow}
     GROUP BY method, provider_id, connection_mode
   `);
   return rows as unknown as MethodLatencyRow[];
@@ -854,8 +745,15 @@ export interface MethodGeoLatencyRow {
 async function fetchMethodGeoLatencyImpl(opts: {
   windowHours: number;
   workerProvider?: string;
+  /** Stale fallback: window ends here (bucket boundary), read off `grain`. */
+  endAt?: string;
+  grain?: "1h" | "1d";
 }): Promise<MethodGeoLatencyRow[]> {
-  const grain = leaderboardGrainForWindow(opts.windowHours);
+  const grain = opts.grain ?? leaderboardGrainForWindow(opts.windowHours);
+  const inWindow = opts.endAt
+    ? sql`window_start >= ${opts.endAt}::timestamptz - make_interval(hours => ${opts.windowHours})
+          AND window_start < ${opts.endAt}::timestamptz`
+    : sql`window_start > now() - make_interval(hours => ${opts.windowHours})`;
   const aggTable = sql.raw("leaderboard_agg");
   const wpKey = opts.workerProvider ?? POOLED_INFRA;
   const rows = await db().execute(sql`
@@ -872,7 +770,7 @@ async function fetchMethodGeoLatencyImpl(opts: {
     WHERE grain = ${grain}
       AND worker_provider = ${wpKey}
       AND provider_id IN (SELECT id FROM providers WHERE benchmarked = true)
-      AND window_start > now() - make_interval(hours => ${opts.windowHours})
+      AND ${inWindow}
     GROUP BY geo, method, provider_id, connection_mode
   `);
   return rows as unknown as MethodGeoLatencyRow[];
