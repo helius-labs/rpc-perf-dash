@@ -36,17 +36,18 @@ export default async function EmbedScorePage({
   const methodSet = new Set<string>(methods);
 
   let rows: MiniScoreRow[] = [];
-  let staleAsOf: string | null = null;
+  let providerAsOf: Record<string, string> = {};
   let error: string | null = null;
   try {
     const data = await buildOverviewBoardData(filters.windowHours);
     const cube = data.cube;
-    staleAsOf = data.staleAsOf;
+    providerAsOf = data.providerAsOf;
     const active = cube.filter((c) => methodSet.has(c.method as Method));
     rows = buildPresetLeaderRows(active, {
       componentWeights: preset.weights,
       methodWeights: equalMethodWeights([...methods]),
       regionWeights: preset.regionWeights,
+      providerAsOf,
     }).map((r) => ({
       provider_id: r.provider_id,
       provider_name: r.provider_name,
@@ -68,7 +69,7 @@ export default async function EmbedScorePage({
 
   return (
     <>
-      <StaleNotice staleAsOf={staleAsOf} />
+      <StaleNotice providerAsOf={providerAsOf} />
       <ScoreStrip
         rows={rows}
         ranked={rows.some((r) => r.total > 0)}
