@@ -13,6 +13,7 @@ import {
   type InfraTableData,
 } from "@/components/MethodRegionTabs";
 import { DB_ERROR_MESSAGE } from "@/lib/db";
+import { StaleNotice } from "@/components/ConsensusBanner";
 
 export const dynamic = "force-dynamic";
 
@@ -99,6 +100,10 @@ export default async function EmbedLatencyTablePage({
       : undefined;
 
   return (
+    <>
+    {/* Same stale label as the other embeds; the pooled view lists every
+        provider whose column comes from an earlier window. */}
+    <StaleNotice providerAsOf={byInfra.all?.providerAsOf ?? {}} />
     <MethodRegionTabs
       providers={tableProviders}
       byInfra={byInfra}
@@ -112,5 +117,6 @@ export default async function EmbedLatencyTablePage({
       initialInfra={initialInfra}
       embed
     />
+    </>
   );
 }

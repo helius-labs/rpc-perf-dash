@@ -22,12 +22,13 @@ import {
   fetchMethodLatency,
   fetchMethodGeoLatency,
   fetchStaleCandidates,
+  MAX_FALLBACK_BUILDS,
   withProviderFallback,
   type CubeWindow,
   type MethodGeoLatencyRow,
   type MethodLatencyRow,
 } from "./leaderboard";
-import { staleWindowHours, type StaleCandidate } from "./staleFallback";
+import { findProviderWindows, staleWindowHours, type StaleCandidate } from "./staleFallback";
 import { fetchSampleCount, type SampleCount } from "./sampleCount";
 import { type MethodGeoRows } from "@/components/leaderboardShared";
 import { type MethodRegionLatency } from "@/components/IndexLeaderboard";
@@ -117,13 +118,12 @@ export async function buildLatencyTableData({
   };
   const live = await Promise.all(infraKeys.map((k) => fetchInfra(k)));
   const mlByInfra = live.map(([ml]) => ml);
-  const mglByInfra = live.map(([, mgl]) => mgl as MethodGeoLatencyRow[]);
+  const mglByInfra = live.map(([, mgl]) => mgl);
   const asOfByInfra = infraKeys.map((): Record<string, string> => ({}));
 
   // Stale fallback, as on the board (withProviderFallback): a provider with no
   // latency in the live window (down, or no consensus so nothing is correct)
-  // gets its rows from its own most recent healthy window. The table has no
-  // ranking gate, so the newest candidate is used as is.
+  // gets its rows from its own most recent window that has latency.
   // "Has latency" = cold p50s for at least the board's method-coverage share
   // of methods. A handful of methods can still get correct samples without a
   // full panel, so "any row" would keep a provider live with a mostly blank
@@ -138,16 +138,33 @@ export async function buildLatencyTableData({
   const missing = infraKeys.map((_, i) =>
     tableProviders.map((p) => p.id).filter((id) => !hasLatency(mlByInfra[i]!, id)),
   );
-  if (missing.some((ids) => ids.length > 0)) {
-    const candidates = await fetchStaleCandidates(OVERVIEW_MODE, windowHours, (stage, err) =>
-      console.error(`[buildLatencyTableData] stale fallback ${stage} failed`, err),
-    );
-    // (infra, window) → providers to take from it, so providers that went dark
-    // together share one fetch.
+  const needed = [...new Set(missing.flat())];
+  if (needed.length > 0) {
+    const onError = (stage: string, err: unknown) =>
+      console.error(`[buildLatencyTableData] stale fallback ${stage} failed`, err);
+    const candidates = await fetchStaleCandidates(OVERVIEW_MODE, windowHours, onError);
+    const staleWindow = (c: StaleCandidate): CubeWindow => ({
+      windowHours: staleWindowHours(windowHours, c.grain),
+      endAt: c.endAt,
+      grain: c.grain,
+    });
+    // Each provider's window is picked on the pooled view, walking its
+    // candidates newest first with the same build cap as the board.
+    const found = await findProviderWindows<Awaited<ReturnType<typeof fetchInfra>>>({
+      providers: needed,
+      candidates,
+      build: (c) => fetchInfra("all", staleWindow(c)),
+      ranks: ([ml], id) => hasLatency(ml, id),
+      maxBuilds: MAX_FALLBACK_BUILDS,
+      onError,
+    });
+    // Then each infra takes its own rows from that window: (infra, window) →
+    // providers, so providers that went dark together share one fetch. The
+    // chosen windows are at most MAX_FALLBACK_BUILDS, which bounds the fetches.
     const groups = new Map<string, { i: number; c: StaleCandidate; ids: string[] }>();
     missing.forEach((ids, i) => {
       for (const id of ids) {
-        const c = candidates(id)[0];
+        const c = found.get(id)?.candidate;
         if (!c) continue;
         const key = `${i}|${c.grain}|${c.endAt}`;
         const g = groups.get(key) ?? { i, c, ids: [] };
@@ -160,20 +177,17 @@ export async function buildLatencyTableData({
         let ml: MethodLatencyRow[];
         let mgl: MethodGeoLatencyRow[];
         try {
-          [ml, mgl] = await fetchInfra(infraKeys[i]!, {
-            windowHours: staleWindowHours(windowHours, c.grain),
-            endAt: c.endAt,
-            grain: c.grain,
-          });
+          [ml, mgl] =
+            infraKeys[i] === "all" ? found.get(ids[0]!)!.window : await fetchInfra(infraKeys[i]!, staleWindow(c));
         } catch (err) {
-          console.error(`[buildLatencyTableData] stale fallback ${c.grain}|${c.endAt} failed`, err);
+          onError(`${infraKeys[i]} ${c.grain}|${c.endAt}`, err);
           return;
         }
-        const found = ids.filter((id) => hasLatency(ml, id));
-        const take = new Set(found);
+        // A cloud with no rows for a provider in that window stays blank.
+        const take = new Set(ids.filter((id) => hasLatency(ml, id)));
         mlByInfra[i] = [...mlByInfra[i]!.filter((r) => !take.has(r.provider_id)), ...ml.filter((r) => take.has(r.provider_id))];
         mglByInfra[i] = [...mglByInfra[i]!.filter((r) => !take.has(r.provider_id)), ...mgl.filter((r) => take.has(r.provider_id))];
-        for (const id of found) asOfByInfra[i]![id] = c.endAt;
+        for (const id of take) asOfByInfra[i]![id] = c.endAt;
       }),
     );
   }

@@ -441,8 +441,9 @@ export interface CubeWindow {
 }
 
 /** Most stale windows built per request while looking for providers' windows.
- *  Each is up to a 6-geo cube, so this bounds the fallback's DB cost. */
-const MAX_FALLBACK_BUILDS = 4;
+ *  Each is up to a 6-geo cube (or, for the latency table, 2 queries per infra),
+ *  so this bounds the fallback's DB cost. */
+export const MAX_FALLBACK_BUILDS = 4;
 
 export interface StaleProviderCube {
   cube: MethodGeoRows[];
