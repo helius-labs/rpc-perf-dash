@@ -241,7 +241,13 @@ export function OverviewBoard({
   }, [cube, selectedMethods, componentWeights, regionWeights, providerAsOf]);
 
   const winner = useMemo<RankedProvider | null>(() => {
-    const top = presetRows.find((r) => r.coverage_ok && r.total > 0) ?? presetRows[0];
+    // Prefer the best live row, so a provider that's down now doesn't get the
+    // animated #1 logo (which carries no date). When every row is stale, fall
+    // back to #1; the banner explains.
+    const top =
+      presetRows.find((r) => r.coverage_ok && r.total > 0 && !r.as_of) ??
+      presetRows.find((r) => r.coverage_ok && r.total > 0) ??
+      presetRows[0];
     if (!top) return null;
     return {
       id: top.provider_id,

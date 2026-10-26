@@ -86,7 +86,8 @@ export function StaleNotice({ providerAsOf }: { providerAsOf: Record<string, str
       style={{ display: "block", padding: "6px 10px", margin: "0 0 8px", fontSize: 12, lineHeight: 1.4 }}
     >
       Live rankings paused for some providers (too few reporting). They&apos;re shown with their
-      most recent valid results, the oldest ending {oldest}.
+      most recent valid results, the oldest ending {oldest}. Rows from different dates competed
+      against different panels, so compare them loosely.
     </div>
   );
 }
