@@ -273,6 +273,33 @@ that, it shows with a "below thresholds" note. Under a preset, that gate is
 applied per (method, region) before the blend, and the coverage gate above is
 applied to the blended result.
 
+### When a provider is down: its last valid window
+
+If the live window can't rank a provider, it isn't dropped. That happens when the
+provider is down, or when fewer than 3 providers are reporting, so no answer
+(Helius's included) can be judged correct. Instead it's shown, and ranked, from
+its own most recent window that clears the gates above. The row is labelled "last
+updated <window end>" (`as_of` in `/api/leaderboard`), and different providers'
+windows can end at different times. It goes back to live as soon as the live
+window ranks it again.
+
+What that means for reading the board:
+
+- **An outage freezes a provider's rank instead of removing it.** Failures during
+  the outage don't count against it while it's frozen. The "last updated" label
+  and the outage banner are what tell readers it's stale. The gates themselves
+  don't change: the stale window has to pass them like a live one.
+- **Rows from different dates were scored against different panels.** Latency
+  (L) and win rate (W) are relative to the best provider in each (method, region),
+  so a stale row reflects whoever was competing in its window. W is the most
+  affected: fewer providers split the wins in a window from after others went
+  down, so W runs high, while a provider that dropped out earlier, against a
+  fuller panel, looks relatively worse. When the board mixes dates, compare those
+  rows loosely.
+- **Window length.** Candidate windows come from hourly data going back 8 days,
+  then from daily data going back 31 days. A daily window covers whole days, so
+  the 1h and 6h views show a 24h window for providers on that path.
+
 ## Projection & equivalence
 
 Before comparing answers, we boil each response down to just the parts that

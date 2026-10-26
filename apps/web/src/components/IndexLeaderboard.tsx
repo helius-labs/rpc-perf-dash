@@ -24,6 +24,7 @@ import {
 import { GEO_REGIONS, GEO_REGION_LABELS, type GeoRegion, type Method } from "@rpcbench/shared/types";
 import { slugForProviderId, websiteForProviderId } from "@rpcbench/shared/providers";
 import { brandColorFor } from "@/lib/providerColors";
+import { formatAsOf } from "@/lib/formatAsOf";
 import { FloatingTooltip } from "./FloatingTooltip";
 import {
   FailureBreakdownList,
@@ -89,6 +90,8 @@ interface IndexRow {
   coverageOk: boolean;
   coveragePct: number;
   exclusionReason: string | null;
+  /** ISO end of the stale window this row comes from; null when live. */
+  asOf: string | null;
 }
 
 function fmtMs(v: number | null): React.ReactNode {
@@ -162,6 +165,11 @@ const IndexLeaderboardRow = memo(function IndexLeaderboardRow({
         </span>
         <span className="idx-name" style={leaderColor ? { color: leaderColor } : undefined}>
           {p.name}
+          {p.asOf && (
+            <span className="block font-geistmono font-normal not-italic text-[9.5px] sm:text-[10px] tracking-[0.12em] uppercase text-muted leading-snug">
+              last updated {formatAsOf(p.asOf)}
+            </span>
+          )}
         </span>
         {/* Collapsed relative metrics — readable at a glance without expanding. */}
         <span className="idx-rowstats">
@@ -519,6 +527,7 @@ export function IndexLeaderboard({
         coverageOk: r.coverage_ok,
         coveragePct: r.coverage_pct,
         exclusionReason: r.exclusion_reason,
+        asOf: r.as_of,
       };
     });
   }, [rows, regionWeights]);

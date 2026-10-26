@@ -29,6 +29,7 @@ import { LatencyChart } from "@/components/LatencyChart";
 import { Tooltip } from "@/components/Tooltip";
 import { explainAntiGamingFlags } from "@/lib/antiGamingFlags";
 import { describeFailure } from "@/lib/failureLabels";
+import { formatAsOf } from "@/lib/formatAsOf";
 import { ogImagePath, DEFAULT_SHARE_FILTERS } from "@/lib/share";
 import { canonicalUrl, pageSeo, NOINDEX, type AnySearchParams } from "@/lib/seo";
 
@@ -270,7 +271,12 @@ export default async function ProviderPage({ params }: { params: Promise<{ id: s
       </Link>
 
       <div className="idx-head prov-head">
-        <span className="section-kicker">01 · Provider · live</span>
+        {/* Rank, score and region scores come from fetchRankedPreset, which
+            falls back to this provider's last window that ranked it while it's
+            down; say so instead of "live". */}
+        <span className="section-kicker">
+          01 · Provider · {row?.as_of ? `last updated ${formatAsOf(row.as_of)}` : "live"}
+        </span>
         {provider.website && (
           <a
             href={provider.website}

@@ -159,6 +159,9 @@ export interface PresetLeaderRow {
   per_geo: Partial<Record<GeoRegion, PerGeoScore | null>>;
   /** Per-method blended-region score + that method's real p50/p95. */
   per_method: Record<string, { total: number; p50: number | null; p95: number | null } | null>;
+  /** ISO end of the stale window this provider's rows come from (the
+   *  per-provider fallback, see withProviderFallback); null when live. */
+  as_of: string | null;
 }
 
 /** Per-(method, geo) rows for the preset blend: `rows` (all providers, for
@@ -585,6 +588,8 @@ export function buildPresetLeaderRows(
     methodWeights: MethodWeights;
     regionWeights: Partial<RegionWeights>;
     minCoverage?: number;
+    /** Providers whose cube rows come from a stale window → that window's end. */
+    providerAsOf?: Readonly<Record<string, string>>;
   },
 ): PresetLeaderRow[] {
   const { componentWeights, methodWeights, regionWeights } = opts;
@@ -770,6 +775,7 @@ export function buildPresetLeaderRows(
         .sort((a, b) => b.n - a.n),
       per_geo,
       per_method,
+      as_of: opts.providerAsOf?.[provider.id] ?? null,
     };
   }).sort((a, b) => {
     // Ranked (gate-cleared) first by score desc; insufficient-coverage last.

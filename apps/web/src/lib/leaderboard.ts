@@ -11,7 +11,6 @@ import { unstable_cache } from "next/cache";
 import {
   GEO_REGIONS,
   METHODOLOGY_VERSION,
-  MIN_CONSENSUS_VOTERS,
   POOLED_INFRA,
   geoRegionOf,
   leaderboardGrainForWindow,
@@ -41,6 +40,16 @@ import {
   type RowAgg,
 } from "@/components/leaderboardShared";
 import { equalMethodWeights, methodWeightsFor, presetById } from "@/lib/workloadPresets";
+import { BENCHMARKED_PROVIDERS } from "@rpcbench/shared/providers";
+import {
+  findProviderWindows,
+  mergeProviderCubes,
+  rankableProviders,
+  staleCandidates,
+  staleWindowHours,
+  type RunEnd,
+  type StaleCandidate,
+} from "@/lib/staleFallback";
 
 /**
  * Cache TTL for all server-side data fetchers. Rollups refresh on the
@@ -289,9 +298,12 @@ export interface AggregateByMethodOpts {
   connectionMode: "cold" | "warm";
   workerProvider?: string;
   /** ISO instant the window ends at (exclusive). Omitted → the window ends now.
-   *  Set only by the stale fallback (`buildOverviewBoardData`), always to an
-   *  hour boundary so the cache key is stable for the hour. */
+   *  Set only by the stale fallback (`buildOverviewBoardData`), always to a
+   *  bucket boundary so the cache key is stable for the bucket. */
   endAt?: string;
+  /** Precompute grain to read. Omitted → leaderboardGrainForWindow(windowHours).
+   *  The stale fallback sets '1d' to reach windows older than the 1h retention. */
+  grain?: "1h" | "1d";
 }
 
 /**
@@ -318,7 +330,7 @@ async function fetchAggregatesForGeoByMethodImpl(
   if (methods.length === 0) return [];
 
   const floor = eligibilityFloors(opts.windowHours);
-  const grain = leaderboardGrainForWindow(opts.windowHours);
+  const grain = opts.grain ?? leaderboardGrainForWindow(opts.windowHours);
   const aggTable = sql.raw("leaderboard_agg");
   const chalTable = sql.raw("leaderboard_challenges");
   const failTable = sql.raw("leaderboard_failures");
@@ -329,7 +341,7 @@ async function fetchAggregatesForGeoByMethodImpl(
     `(VALUES ${methods.map((m) => `(${esc(m)})`).join(",")}) AS mlist(method)`,
   );
   // Live: the trailing window ending now. Stale fallback: exactly `windowHours`
-  // of whole buckets ending at the hour-aligned `endAt`.
+  // of whole buckets ending at the bucket-aligned `endAt`.
   const inWindow = opts.endAt
     ? sql`window_start >= ${opts.endAt}::timestamptz - make_interval(hours => ${opts.windowHours})
           AND window_start < ${opts.endAt}::timestamptz`
@@ -459,122 +471,202 @@ export const fetchAggregatesForGeoByMethod = (
   });
 
 /**
- * A provider counts toward an hour's consensus when at least this share of its
- * samples scored `correct`. A healthy provider sits far above it; once the panel
- * drops below MIN_CONSENSUS_VOTERS every sample turns `ambiguous` (no_consensus),
- * so the healthy providers fall to ~0 together.
+ * A provider counts as healthy in a precompute bucket when at least this share
+ * of its samples scored valid. Valid needs a consensus to be judged against, so
+ * once the panel drops below MIN_CONSENSUS_VOTERS every provider, Helius
+ * included, falls to ~0 together.
  */
 const HEALTHY_VALID_SHARE = 0.5;
 
+/** How far back each grain is searched: its retention in rollup.ts. */
+const RUN_END_LOOKBACK = { "1h": "8 days", "1d": "31 days" } as const;
+
 /**
- * Ends of the most recent runs of hours that had consensus, newest first, as
- * ISO hour boundaries (each run's last bucket start + 1h). A run that reaches the
- * current hour is left out, since a window ending there is just the live window.
- * An hour has consensus when ≥ MIN_CONSENSUS_VOTERS providers have a healthy
- * share of correct samples in it.
+ * Per provider, the ends of its most recent runs of healthy buckets (at most 3,
+ * newest first), as ISO bucket boundaries (each run's last bucket start + one
+ * bucket). Only completed buckets count, so a run still going ends at the start
+ * of the current bucket.
  *
- * These are candidate end points for the stale fallback in
+ * These are candidate end points for the per-provider stale fallback in
  * `buildOverviewBoardData`. They are ends of runs and not just "the last good
- * hour" because right after a recovery the newest run is only an hour or two
- * long, which is too short to clear the eligibility floors of a 24h window. The
- * caller tries each one until a window ranks someone.
+ * bucket" because right after a recovery the newest run is only an hour or two
+ * long, which is too short to clear the eligibility floors of a 24h window.
  *
- * Each run end comes with `good`: whether the window ending there (the
- * `windowHours` before it) had consensus in at least half its hours. It's for
- * ordering only (good candidates first, so a one-hour recovery blip doesn't
- * crowd out the real one). It never excludes a candidate, because a window
- * under half healthy can still clear the eligibility floors.
- *
- * The passes (`RUN_END_LOOKBACKS_H`, by index) partition the candidates: pass
- * i returns only run ends whose window fits inside its lookback but not inside
- * the previous pass's, so a wider pass never repeats a narrower one's
- * candidates. The last pass also takes windows that reach back past every
- * lookback, judged on the hours it can see.
- *
- * Reads the 1h precompute (8d retention). It runs during outages, when the
- * DB is likely under load, so it has to fit the web read cap: the 48h pass
- * (enough for a typical outage, ~65k rows) runs first and the 8-day pass only
- * if nothing from it ranks (see findRankableWindow). Pinning methodology_version lets the
- * (grain, provider_id, worker_provider, connection_mode, methodology_version,
- * window_start) index range-scan window_start instead of filtering every
- * '__all__' row in the table.
+ * The 1h grain only reaches back 8 days, so an outage longer than that has no
+ * 1h candidates left; the 1d grain (31 days) covers it. Pinning
+ * methodology_version lets the (grain, provider_id, worker_provider,
+ * connection_mode, methodology_version, window_start) index range-scan
+ * window_start instead of filtering every '__all__' row in the table.
  */
-export const RUN_END_LOOKBACKS_H = [48, 192] as const;
-
-export interface RunEnd {
-  /** ISO hour boundary the candidate window ends at. */
-  endAt: string;
-  /** Window had consensus in at least half its hours (ordering hint only). */
-  good: boolean;
-}
-
-async function fetchConsensusRunEndsImpl(
+async function fetchProviderRunEndsImpl(
   connectionMode: "cold" | "warm",
-  pass: number,
-  windowHours: number,
+  grain: "1h" | "1d",
 ): Promise<RunEnd[]> {
-  const lookbackH = RUN_END_LOOKBACKS_H[pass];
-  if (lookbackH === undefined) return [];
-  const prevLookbackH = pass > 0 ? RUN_END_LOOKBACKS_H[pass - 1] : undefined;
-  const lastPass = pass === RUN_END_LOOKBACKS_H.length - 1;
-  // RANGE frame offsets can't be bind parameters; windowHours is an
-  // allowlisted window (lib/windows.ts), floored here for safety.
-  const framePreceding = sql.raw(`interval '${Math.max(0, Math.floor(windowHours) - 1)} hours'`);
+  const unit = grain === "1h" ? "hour" : "day";
+  const step = sql.raw(`interval '1 ${unit}'`);
+  const lookback = sql.raw(`interval '${RUN_END_LOOKBACK[grain]}'`);
   const rows = (await db().execute(sql`
     WITH per AS (
       SELECT window_start, provider_id,
              sum(sample_count_valid)::float / NULLIF(sum(sample_count_total), 0) AS valid_share
       FROM leaderboard_agg
-      WHERE grain = '1h'
+      WHERE grain = ${grain}
         AND worker_provider = ${POOLED_INFRA}
         AND connection_mode = ${connectionMode}
         AND methodology_version = ${METHODOLOGY_VERSION}
-        AND window_start > now() - make_interval(hours => ${lookbackH})
+        AND window_start > now() - ${lookback}
+        AND window_start < date_trunc(${sql.raw(`'${unit}'`)}, now())
       GROUP BY window_start, provider_id
     ),
-    hours AS (
-      SELECT window_start,
-             count(*) FILTER (WHERE valid_share >= ${HEALTHY_VALID_SHARE}) >= ${MIN_CONSENSUS_VOTERS} AS healthy
+    healthy AS (
+      SELECT provider_id, window_start,
+             lead(window_start) OVER (PARTITION BY provider_id ORDER BY window_start) AS next_start
       FROM per
-      GROUP BY window_start
+      WHERE valid_share >= ${HEALTHY_VALID_SHARE}
     ),
-    flagged AS (
-      SELECT window_start, healthy,
-             lead(healthy) OVER (ORDER BY window_start) AS next_healthy,
-             -- Hours (with data, inside the lookback) in the window that would
-             -- end at this hour, and how many of them had consensus.
-             count(*) OVER w AS window_hours,
-             count(*) FILTER (WHERE healthy) OVER w AS window_healthy
-      FROM hours
-      WINDOW w AS (ORDER BY window_start RANGE BETWEEN ${framePreceding} PRECEDING AND CURRENT ROW)
+    ends AS (
+      SELECT provider_id, window_start + ${step} AS end_at,
+             row_number() OVER (PARTITION BY provider_id ORDER BY window_start DESC) AS rn
+      FROM healthy
+      WHERE next_start IS DISTINCT FROM window_start + ${step}
     )
-    SELECT (window_start + interval '1 hour') AS end_at,
-           (window_healthy * 2 >= window_hours) AS good
-    FROM flagged
-    WHERE healthy
-      AND next_healthy IS DISTINCT FROM true
-      AND window_start < date_trunc('hour', now())
-      -- Window fits inside this lookback (or this is the widest pass) ...
-      AND (${sql.raw(lastPass ? "true" : "false")}
-           OR window_start - ${framePreceding} > now() - make_interval(hours => ${lookbackH}))
-      -- ... and wasn't already a candidate in the narrower pass.
-      ${
-        prevLookbackH === undefined
-          ? sql``
-          : sql`AND NOT (window_start - ${framePreceding} > now() - make_interval(hours => ${prevLookbackH}))`
-      }
-    ORDER BY good DESC, window_start DESC
-    LIMIT 6
-  `)) as unknown as Array<{ end_at: string | Date; good: boolean }>;
-  return rows.map((r) => ({ endAt: new Date(r.end_at).toISOString(), good: r.good === true }));
+    SELECT provider_id, end_at FROM ends WHERE rn <= 3
+    ORDER BY provider_id, end_at DESC
+  `)) as unknown as Array<{ provider_id: string; end_at: string | Date }>;
+  return rows.map((r) => ({ provider_id: r.provider_id, endAt: new Date(r.end_at).toISOString() }));
 }
 
-/** Cached longer than the board itself: the answer only moves at hour boundaries. */
-export const fetchConsensusRunEnds = unstable_cache(
-  fetchConsensusRunEndsImpl,
-  ["fetchConsensusRunEnds"],
+/** Cached longer than the board itself: the answer only moves at bucket boundaries. */
+export const fetchProviderRunEnds = unstable_cache(
+  fetchProviderRunEndsImpl,
+  ["fetchProviderRunEnds"],
   { revalidate: 300 },
 );
+
+/** One window a stale-fallback cube is built over (see `findStaleProviderCubes`). */
+export interface CubeWindow {
+  windowHours: number;
+  /** Omitted → the live window ending now. */
+  endAt?: string;
+  grain?: StaleCandidate["grain"];
+}
+
+/** Most stale windows built per request while looking for providers' windows.
+ *  Each is up to a 6-geo cube, so this bounds the fallback's DB cost. */
+const MAX_FALLBACK_BUILDS = 4;
+
+export interface StaleProviderCube {
+  cube: MethodGeoRows[];
+  /** ISO end of the window the cube covers. */
+  endAt: string;
+}
+
+/**
+ * The per-provider stale fallback. For each of `providers` (ones the live
+ * window can't rank: down, or fewer than MIN_CONSENSUS_VOTERS providers
+ * reporting so every sample is no_consensus), the cube of its own most recent
+ * window that `rankedBy` says ranks it. Stale data beats an empty row, so every
+ * surface keeps every provider, labelled with its window's end, until it
+ * recovers. Never throws: a provider with no such window is left out.
+ */
+export async function findStaleProviderCubes(opts: {
+  providers: readonly string[];
+  windowHours: number;
+  connectionMode: "cold" | "warm";
+  build: (w: CubeWindow) => Promise<MethodGeoRows[]>;
+  /** Providers this cube ranks. Defaults to the method-coverage gate. */
+  rankedBy?: (cube: MethodGeoRows[]) => Set<string>;
+  /** Log prefix for the caller. */
+  label: string;
+}): Promise<Map<string, StaleProviderCube>> {
+  const out = new Map<string, StaleProviderCube>();
+  if (opts.providers.length === 0) return out;
+  const rankedBy = opts.rankedBy ?? ((cube: MethodGeoRows[]) => rankableProviders(cube));
+  const onError = (stage: string, err: unknown) =>
+    console.error(`[${opts.label}] stale fallback ${stage} failed`, err);
+  const runEnds = (grain: StaleCandidate["grain"]) =>
+    fetchProviderRunEnds(opts.connectionMode, grain).catch((err: unknown): RunEnd[] => {
+      onError(`run ends ${grain}`, err);
+      return [];
+    });
+  const [hourly, daily] = await Promise.all([runEnds("1h"), runEnds("1d")]);
+  const found = await findProviderWindows<{ cube: MethodGeoRows[]; ranked: Set<string> }>({
+    providers: opts.providers,
+    candidates: (id) => staleCandidates(id, opts.windowHours, hourly, daily),
+    build: async (c) => {
+      const cube = await opts.build({
+        windowHours: staleWindowHours(opts.windowHours, c.grain),
+        endAt: c.endAt,
+        grain: c.grain,
+      });
+      return { cube, ranked: rankedBy(cube) };
+    },
+    ranks: (w, id) => w.ranked.has(id),
+    maxBuilds: MAX_FALLBACK_BUILDS,
+    onError,
+  });
+  for (const [id, { candidate, window }] of found) {
+    out.set(id, { cube: window.cube, endAt: candidate.endAt });
+  }
+  return out;
+}
+
+/**
+ * Builds the live cube and swaps in each unranked provider's stale window (see
+ * `findStaleProviderCubes`). `providerAsOf`: provider id → ISO end of the
+ * window its rows come from; a provider not in it is live.
+ */
+export async function withProviderFallback(opts: {
+  windowHours: number;
+  connectionMode: "cold" | "warm";
+  build: (w: CubeWindow) => Promise<MethodGeoRows[]>;
+  rankedBy?: (cube: MethodGeoRows[]) => Set<string>;
+  label: string;
+}): Promise<{ cube: MethodGeoRows[]; providerAsOf: Record<string, string> }> {
+  const live = await opts.build({ windowHours: opts.windowHours });
+  const liveRanked = (opts.rankedBy ?? ((cube: MethodGeoRows[]) => rankableProviders(cube)))(live);
+  const stale = await findStaleProviderCubes({
+    ...opts,
+    providers: BENCHMARKED_PROVIDERS.map((p) => p.id).filter((id) => !liveRanked.has(id)),
+  });
+  const providerAsOf: Record<string, string> = {};
+  for (const [id, { endAt }] of stale) providerAsOf[id] = endAt;
+  const cubes = new Map([...stale].map(([id, { cube }]) => [id, cube]));
+  return { cube: mergeProviderCubes(live, cubes), providerAsOf };
+}
+
+/**
+ * Per-(method, geo) cube for `methods` over `geos` on one window: rows for every
+ * provider plus the eligible subset. The live window when `w` has no `endAt`.
+ */
+export async function buildMethodGeoCube(opts: {
+  geos: readonly GeoRegion[];
+  methods: readonly Method[];
+  connectionMode: "cold" | "warm";
+  workerProvider?: string;
+  w: CubeWindow;
+}): Promise<MethodGeoRows[]> {
+  const byGeo = await Promise.all(
+    opts.geos.map(async (geo) => {
+      const byMethod = await fetchAggregatesForGeoByMethod({
+        geoRegion: geo,
+        methods: opts.methods,
+        windowHours: opts.w.windowHours,
+        connectionMode: opts.connectionMode,
+        ...(opts.workerProvider ? { workerProvider: opts.workerProvider } : {}),
+        ...(opts.w.endAt ? { endAt: opts.w.endAt } : {}),
+        ...(opts.w.grain ? { grain: opts.w.grain } : {}),
+      });
+      return byMethod.map(({ method, rows }): MethodGeoRows => ({
+        method,
+        geo,
+        rows,
+        eligible: rows.filter((r) => r.eligible === true && r.p50_ms != null && r.p95_ms != null),
+      }));
+    }),
+  );
+  return byGeo.flat();
+}
 
 /**
  * Legacy SINGLE-METHOD overall leaderboard (region-blend of one method). The
@@ -590,7 +682,7 @@ export async function fetchRankedOverall(opts?: {
    *  passes the sharer's tuned weights so the card matches the on-screen board.
    *  The region blend always uses DEFAULT_REGION_WEIGHTS. */
   weights?: ScoringWeights;
-}): Promise<OverallLeaderRow[]> {
+}): Promise<Array<OverallLeaderRow & { as_of: string | null }>> {
   const windowHours = opts?.windowHours ?? 24;
   const connectionMode = opts?.connectionMode ?? "cold";
   const method: Method = opts?.method ?? "getTransaction";
@@ -598,20 +690,28 @@ export async function fetchRankedOverall(opts?: {
 
   const geos = await fetchActiveGeos();
   const targets = geos.length > 0 ? geos : GEO_REGIONS;
-  const perGeo = await Promise.all(
-    targets.map(async (geo) => {
-      const rows = await fetchAggregatesForGeo({ geoRegion: geo, windowHours, connectionMode, method });
-      const eligible = rows.filter(
-        (r) => r.eligible === true && r.p95_ms !== null && r.p50_ms !== null,
-      );
-      return { geo, rows, eligible, scored: scorePerGeo({ eligible }, weights) };
-    }),
-  );
+  // A provider ranks here when it's eligible in at least one geo, which is the
+  // default coverage gate on a one-method cube.
+  const { cube, providerAsOf } = await withProviderFallback({
+    windowHours,
+    connectionMode,
+    label: "fetchRankedOverall",
+    build: (w) => buildMethodGeoCube({ geos: targets, methods: [method], connectionMode, w }),
+  });
+  const perGeo = cube.map(({ geo, rows, eligible }) => ({
+    geo,
+    rows,
+    eligible,
+    scored: scorePerGeo({ eligible }, weights),
+  }));
 
   const map = new Map<GeoRegion, ScoredProvider[]>();
   for (const o of perGeo) map.set(o.geo, o.scored);
   const blended = blendRegionScores(map, DEFAULT_REGION_WEIGHTS);
-  return buildOverallLeaderRows(blended, perGeo, DEFAULT_REGION_WEIGHTS);
+  return buildOverallLeaderRows(blended, perGeo, DEFAULT_REGION_WEIGHTS).map((r) => ({
+    ...r,
+    as_of: providerAsOf[r.provider_id] ?? null,
+  }));
 }
 
 /**
@@ -654,26 +754,25 @@ export async function fetchRankedPreset(opts?: {
     presetGeos.has(g),
   );
 
-  const cube: MethodGeoRows[] = [];
-  await Promise.all(
-    targets.map(async (geo) => {
-      const byMethod = await fetchAggregatesForGeoByMethod({
-        geoRegion: geo,
+  const scoreOpts = { componentWeights, methodWeights, regionWeights };
+  const { cube, providerAsOf } = await withProviderFallback({
+    windowHours,
+    connectionMode,
+    label: "fetchRankedPreset",
+    build: (w) =>
+      buildMethodGeoCube({
+        geos: targets,
         methods,
-        windowHours,
         connectionMode,
         ...(opts?.workerProvider ? { workerProvider: opts.workerProvider } : {}),
-      });
-      for (const { method, rows } of byMethod) {
-        const eligible = rows.filter(
-          (r) => r.eligible === true && r.p50_ms != null && r.p95_ms != null,
-        );
-        cube.push({ method, geo, rows, eligible });
-      }
-    }),
-  );
+        w,
+      }),
+    // Exactly this preset's coverage gate, not the equal-weight approximation.
+    rankedBy: (c) =>
+      new Set(buildPresetLeaderRows(c, scoreOpts).filter((r) => r.coverage_ok).map((r) => r.provider_id)),
+  });
 
-  return buildPresetLeaderRows(cube, { componentWeights, methodWeights, regionWeights });
+  return buildPresetLeaderRows(cube, { ...scoreOpts, providerAsOf });
 }
 
 export interface MethodLatencyRow {
@@ -852,6 +951,64 @@ export const fetchRankedLatency = unstable_cache(
   ["fetchRankedLatency"],
   { revalidate: CACHE_TTL_S },
 );
+
+/**
+ * `fetchRankedLatency` plus the per-provider stale fallback, for the latency
+ * share card: a provider with no live latency gets p50/p95 from its own most
+ * recent window that ranked it (`findStaleProviderCubes`), pooled over the
+ * selected geos by sample_count_valid. That matches the live query's weighting
+ * as long as every bucket with valid samples has a percentile (true for the
+ * precompute, which only writes correct-latency percentiles where valid > 0);
+ * percentiles are a weighted mean either way, not a true pooled percentile. The
+ * card doesn't show the window's end.
+ */
+export async function fetchRankedLatencyWithFallback(
+  opts: Parameters<typeof fetchRankedLatencyImpl>[0],
+): Promise<RankedLatencyRow[]> {
+  const live = await fetchRankedLatency(opts);
+  const liveIds = new Set(live.filter((r) => r.p50 != null && r.p95 != null).map((r) => r.provider_id));
+  const missing = BENCHMARKED_PROVIDERS.filter((p) => !liveIds.has(p.id));
+  if (missing.length === 0) return live;
+
+  const geos = opts.regions.length > 0 ? [...new Set(opts.regions)].sort() : [...GEO_REGIONS];
+  const stale = await findStaleProviderCubes({
+    providers: missing.map((p) => p.id),
+    windowHours: opts.windowHours,
+    connectionMode: opts.mode,
+    label: "fetchRankedLatencyWithFallback",
+    build: (w) =>
+      buildMethodGeoCube({
+        geos,
+        methods: [opts.method as Method],
+        connectionMode: opts.mode,
+        ...(opts.workerProvider ? { workerProvider: opts.workerProvider } : {}),
+        w,
+      }),
+    // Eligible in any selected geo for this method.
+    rankedBy: (cube) => new Set(cube.flatMap((c) => c.eligible.map((r) => r.provider_id))),
+  });
+
+  const out = live.filter((r) => liveIds.has(r.provider_id));
+  for (const p of missing) {
+    const found = stale.get(p.id);
+    if (!found) continue;
+    let w = 0;
+    let p50 = 0;
+    let p95 = 0;
+    for (const cell of found.cube) {
+      for (const r of cell.rows) {
+        if (r.provider_id !== p.id || r.p50_ms == null || r.p95_ms == null) continue;
+        w += r.sample_count_valid;
+        p50 += r.p50_ms * r.sample_count_valid;
+        p95 += r.p95_ms * r.sample_count_valid;
+      }
+    }
+    if (w > 0) {
+      out.push({ provider_id: p.id, provider_name: p.name, p50: Math.round(p50 / w), p95: Math.round(p95 / w) });
+    }
+  }
+  return out;
+}
 
 // ---------------------------------------------------------------------------
 // Score-over-time series (section 02 chart's "Score" metric).

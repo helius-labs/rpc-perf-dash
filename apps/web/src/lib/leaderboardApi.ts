@@ -25,9 +25,10 @@ import {
 } from "@rpcbench/shared/scoring";
 import {
   CACHE_TTL_S,
-  fetchAggregatesForGeo,
+  buildMethodGeoCube,
   fetchRankedOverall,
   fetchRankedPreset,
+  withProviderFallback,
 } from "@/lib/leaderboard";
 import {
   buildSingleLeaderRows,
@@ -52,8 +53,11 @@ export interface LeaderboardParams {
   eligibleOnly: boolean;
 }
 
-export type RankedRegionRow = SingleLeaderRow & { rank: number | null };
-export type RankedOverallRow = OverallLeaderRow & { rank: number | null };
+/** Every row carries `as_of`: null when it's from the live window, else the ISO
+ *  end of the provider's own most recent window that ranked it (the
+ *  per-provider stale fallback, see withProviderFallback). */
+export type RankedRegionRow = SingleLeaderRow & { rank: number | null; as_of: string | null };
+export type RankedOverallRow = OverallLeaderRow & { rank: number | null; as_of: string | null };
 export type RankedPresetRow = PresetLeaderRow & { rank: number | null };
 
 export interface LeaderboardResponse {
@@ -123,18 +127,26 @@ async function fetchLeaderboardImpl(
     if (eligibleOnly) ranked = ranked.filter((row) => row.rank != null);
     rows = ranked;
   } else {
-    const agg = await fetchAggregatesForGeo({
-      geoRegion: region,
+    // One (method, geo) cell. Stale candidates come from the pooled-infra
+    // precompute even when `infra` is set; the stale window itself is read for
+    // `infra`.
+    const { cube, providerAsOf } = await withProviderFallback({
       windowHours,
       connectionMode,
-      method,
-      // Omit entirely when pooled — AggregateOpts.workerProvider is optional
-      // under exactOptionalPropertyTypes, so it must be absent, not `undefined`.
-      ...(infra !== undefined ? { workerProvider: infra } : {}),
+      label: "api/leaderboard",
+      build: (w) =>
+        buildMethodGeoCube({
+          geos: [region],
+          methods: [method],
+          connectionMode,
+          // Omit entirely when pooled — workerProvider is optional under
+          // exactOptionalPropertyTypes, so it must be absent, not `undefined`.
+          ...(infra !== undefined ? { workerProvider: infra } : {}),
+          w,
+        }),
     });
-    const eligible = agg.filter(
-      (x) => x.eligible === true && x.p50_ms != null && x.p95_ms != null,
-    );
+    const agg = cube[0]?.rows ?? [];
+    const eligible = cube[0]?.eligible ?? [];
     const scored = scorePerGeo({ eligible }, DEFAULT_WEIGHTS);
     const { rows: leaderRows } = buildSingleLeaderRows({
       geo: region,
@@ -146,6 +158,7 @@ async function fetchLeaderboardImpl(
     let ranked: RankedRegionRow[] = leaderRows.map((row) => ({
       ...row,
       rank: row.eligible ? ++r : null,
+      as_of: providerAsOf[row.provider_id] ?? null,
     }));
     eligibleCount = r;
     if (eligibleOnly) ranked = ranked.filter((row) => row.rank != null);

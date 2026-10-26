@@ -9,7 +9,8 @@
     "bootstrap": "tsx src/bootstrap.ts",
     "seed-honeypots": "tsx src/seed-honeypots.ts",
     "benchmark": "tsx src/benchmark.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test src/*.test.ts"
   },
   "dependencies": {
     "@rpcbench/db": "workspace:*",

@@ -13,17 +13,14 @@
  * wrap in try/catch (dashboard pages → inline banner; embed pages → error.tsx).
  */
 
-import { GEO_REGIONS, type GeoRegion } from "@rpcbench/shared";
-import { MIN_METHOD_COVERAGE } from "@rpcbench/shared/scoring";
+import { GEO_REGIONS } from "@rpcbench/shared";
 import { ALL_METHODS } from "./methods";
-import { findRankableWindow } from "./staleFallback";
 import {
+  buildMethodGeoCube,
   fetchActiveGeos,
-  fetchAggregatesForGeoByMethod,
-  fetchConsensusRunEnds,
-  RUN_END_LOOKBACKS_H,
   fetchMethodLatency,
   fetchMethodGeoLatency,
+  withProviderFallback,
   type MethodLatencyRow,
 } from "./leaderboard";
 import { fetchSampleCount, type SampleCount } from "./sampleCount";
@@ -43,38 +40,10 @@ export interface OverviewBoardData {
   methodRegionLatency: MethodRegionLatency;
   sampleCount: SampleCount;
   methodCount: number;
-  /** Set when the live window couldn't rank anyone and the cube is the last
-   *  window that could: the ISO hour boundary that window ends at. Null = live. */
-  staleAsOf: string | null;
-}
-
-/**
- * Whether any provider clears the method-coverage gate on this cube, i.e.
- * whether the board will rank anyone. Coverage is counted over every method in
- * the cube with equal weight: a method counts for a provider when it is
- * eligible in at least one geo. That mirrors blendMethodScores under the
- * all-methods preset. A weighted preset can disagree at the margin, but losing
- * consensus zeroes eligibility everywhere, so every preset fails together in the
- * case this guards.
- */
-export function isCubeRankable(
-  cube: MethodGeoRows[],
-  minCoverage: number = MIN_METHOD_COVERAGE,
-): boolean {
-  const methods = new Set(cube.map((c) => c.method));
-  if (methods.size === 0) return false;
-  const covered = new Map<string, Set<string>>();
-  for (const cell of cube) {
-    for (const r of cell.eligible) {
-      let set = covered.get(r.provider_id);
-      if (!set) covered.set(r.provider_id, (set = new Set()));
-      set.add(cell.method);
-    }
-  }
-  for (const set of covered.values()) {
-    if (set.size / methods.size >= minCoverage) return true;
-  }
-  return false;
+  /** Providers the live window couldn't rank, shown from their own most recent
+   *  window that could: provider id → ISO end of that window. A provider not in
+   *  the map is live. */
+  providerAsOf: Record<string, string>;
 }
 
 /**
@@ -84,81 +53,36 @@ export function isCubeRankable(
  * count, and the total method count. One multi-method query per geo (≤6), not
  * one per method — the cube carries every method because any can be toggled in
  * client-side.
+ *
+ * Providers the live window can't rank come from their own most recent window
+ * that does (withProviderFallback), listed in `providerAsOf`.
  */
-/** Most stale windows built per request while looking for one that ranks. Each
- *  is a full 6-geo cube, so this bounds the fallback's DB cost. */
-const MAX_FALLBACK_PROBES = 3;
-
 export async function buildOverviewBoardData(windowHours: number): Promise<OverviewBoardData> {
   const activeGeos = await fetchActiveGeos();
   const targets = activeGeos.length > 0 ? activeGeos : [...GEO_REGIONS];
 
-  const [live, sampleCount] = await Promise.all([
-    buildCube(targets, windowHours),
+  const [{ cube, providerAsOf }, sampleCount] = await Promise.all([
+    withProviderFallback({
+      windowHours,
+      connectionMode: OVERVIEW_MODE,
+      label: "buildOverviewBoardData",
+      build: (w) =>
+        buildMethodGeoCube({ geos: targets, methods: ALL_METHODS, connectionMode: OVERVIEW_MODE, w }),
+    }),
     fetchSampleCount(),
   ]);
-  const base = { sampleCount, methodCount: ALL_METHODS.length };
-  if (isCubeRankable(live.cube)) return { ...live, ...base, staleAsOf: null };
 
-  // Stale fallback. The live window ranks nobody, which is what happens when
-  // fewer than MIN_CONSENSUS_VOTERS providers are reporting: every sample turns
-  // no_consensus and eligibility drops to zero, so one outage at other
-  // providers would blank the board. Serve the most recent window that does
-  // rank, labelled with when it ends, until the live window recovers. Never
-  // throws: if nothing ranks, the live (empty) board renders as before.
-  //
-  // Candidates come from the 48h pass, then the 8-day pass (findRankableWindow
-  // has the search order and the probe budget).
-  const hit = await findRankableWindow({
-    passes: RUN_END_LOOKBACKS_H.length,
-    fetchPass: (pass) => fetchConsensusRunEnds(OVERVIEW_MODE, pass, windowHours),
-    probe: async (endAt) => {
-      const stale = await buildCube(targets, windowHours, endAt);
-      return isCubeRankable(stale.cube) ? { ...stale, ...base, staleAsOf: endAt } : null;
-    },
-    maxProbes: MAX_FALLBACK_PROBES,
-    onError: (stage, err) => console.error(`[buildOverviewBoardData] stale fallback ${stage} failed`, err),
-  });
-  if (hit) return hit;
-  return { ...live, ...base, staleAsOf: null };
-}
-
-async function buildCube(
-  targets: readonly GeoRegion[],
-  windowHours: number,
-  endAt?: string,
-): Promise<Pick<OverviewBoardData, "cube" | "methodRegionLatency">> {
-  const byGeo = await Promise.all(
-    targets.map(async (geo) => ({
-      geo,
-      byMethod: await fetchAggregatesForGeoByMethod({
-        geoRegion: geo,
-        methods: ALL_METHODS,
-        windowHours,
-        connectionMode: OVERVIEW_MODE,
-        ...(endAt ? { endAt } : {}),
-      }),
-    })),
-  );
-
-  const cube: MethodGeoRows[] = [];
   const methodRegionLatency: MethodRegionLatency = {};
-  for (const { geo, byMethod } of byGeo) {
-    for (const { method, rows } of byMethod) {
-      const eligible = rows.filter(
-        (r) => r.eligible === true && r.p50_ms !== null && r.p95_ms !== null,
-      );
-      cube.push({ method, geo, rows, eligible });
-      for (const r of rows) {
-        ((methodRegionLatency[r.provider_id] ??= {})[method] ??= {})[geo] = {
-          p50: r.p50_ms,
-          p95: r.p95_ms,
-        };
-      }
+  for (const { method, geo, rows } of cube) {
+    for (const r of rows) {
+      ((methodRegionLatency[r.provider_id] ??= {})[method] ??= {})[geo] = {
+        p50: r.p50_ms,
+        p95: r.p95_ms,
+      };
     }
   }
 
-  return { cube, methodRegionLatency };
+  return { cube, methodRegionLatency, sampleCount, methodCount: ALL_METHODS.length, providerAsOf };
 }
 
 /**

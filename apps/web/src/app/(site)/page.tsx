@@ -65,11 +65,11 @@ export default async function OverviewPage({
   let methodRegionLatency: MethodRegionLatency = {};
   let sampleCount: SampleCount = EMPTY_SAMPLE_COUNT;
   let methodCount = 0;
-  let staleAsOf: string | null = null;
+  let providerAsOf: Record<string, string> = {};
   let error: string | null = null;
 
   try {
-    ({ cube, methodRegionLatency, sampleCount, methodCount, staleAsOf } =
+    ({ cube, methodRegionLatency, sampleCount, methodCount, providerAsOf } =
       await buildOverviewBoardData(windowHours));
   } catch (err) {
     console.error("[/]", err);
@@ -84,7 +84,7 @@ export default async function OverviewPage({
 
   return (
     <div>
-      <ConsensusBanner data={consensusHealth} staleAsOf={staleAsOf} />
+      <ConsensusBanner data={consensusHealth} providerAsOf={providerAsOf} />
       {error && (
         <div className="badge bad" style={{ display: "block", padding: 12, marginBottom: 16 }}>
           DB error: {error}
@@ -100,7 +100,7 @@ export default async function OverviewPage({
         methodRegionLatency={methodRegionLatency}
         sampleCount={sampleCount}
         methodCount={methodCount}
-        staleAsOf={staleAsOf}
+        providerAsOf={providerAsOf}
       />
 
       {/* Deep-dive CTA into /performance. */}

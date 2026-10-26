@@ -32,10 +32,10 @@ export default async function EmbedLeaderboardPage({
   let methodRegionLatency: MethodRegionLatency = {};
   let sampleCount: SampleCount = EMPTY_SAMPLE_COUNT;
   let methodCount = 0;
-  let staleAsOf: string | null = null;
+  let providerAsOf: Record<string, string> = {};
   let error: string | null = null;
   try {
-    ({ cube, methodRegionLatency, sampleCount, methodCount, staleAsOf } =
+    ({ cube, methodRegionLatency, sampleCount, methodCount, providerAsOf } =
       await buildOverviewBoardData(filters.windowHours));
   } catch (err) {
     console.error("[embed/leaderboard]", err);
@@ -52,14 +52,14 @@ export default async function EmbedLeaderboardPage({
 
   return (
     <>
-      <StaleNotice staleAsOf={staleAsOf} />
+      <StaleNotice providerAsOf={providerAsOf} />
       <OverviewBoard
         cube={cube}
         presetId={filters.presetId}
         methodRegionLatency={methodRegionLatency}
         sampleCount={sampleCount}
         methodCount={methodCount}
-        staleAsOf={staleAsOf}
+        providerAsOf={providerAsOf}
         embed
       />
     </>

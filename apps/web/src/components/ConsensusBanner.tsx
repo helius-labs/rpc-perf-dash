@@ -1,17 +1,10 @@
 import type { ConsensusHealth } from "@/lib/health";
+import { formatAsOf } from "@/lib/formatAsOf";
 
-/** "Oct 18, 14:00 UTC" — the stale window's end, shown in UTC so every viewer
- *  reads the same instant. */
-function formatStaleAsOf(iso: string): string {
-  const d = new Date(iso);
-  const date = d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
-  const time = d.toLocaleTimeString("en-US", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-    timeZone: "UTC",
-  });
-  return `${date}, ${time} UTC`;
+/** The oldest window end in a providerAsOf map, formatted; null when empty. */
+function oldestAsOf(providerAsOf: Record<string, string>): string | null {
+  const ends = Object.values(providerAsOf).sort();
+  return ends[0] ? formatAsOf(ends[0]) : null;
 }
 
 /**
@@ -21,24 +14,30 @@ function formatStaleAsOf(iso: string): string {
  * stop updating — this makes the cause obvious (which providers are down and
  * WHY) instead of leaving it buried in per-provider failure categories.
  *
- * `staleAsOf` (from buildOverviewBoardData) means the board below is the last
- * window that ranked, not the live one; the banner says so, including during
- * the recovery hours when consensus is back but the live window hasn't
- * re-qualified yet.
+ * `providerAsOf` (from buildOverviewBoardData) lists the providers the board
+ * below shows from their own last window that ranked, not the live one; the
+ * banner says so, including during the recovery hours when consensus is back
+ * but the live window hasn't re-qualified yet. Each row carries its own
+ * "last updated" time.
  *
  * Renders nothing when the panel is healthy and the board is live, so it's
  * safe to drop at the top of any page.
  */
 export function ConsensusBanner({
   data,
-  staleAsOf = null,
+  providerAsOf = {},
 }: {
   data: ConsensusHealth;
-  staleAsOf?: string | null;
+  providerAsOf?: Record<string, string>;
 }) {
-  if (!data.degraded && !staleAsOf) return null;
+  const staleCount = Object.keys(providerAsOf).length;
+  if (!data.degraded && staleCount === 0) return null;
   const reasons = data.down.map((d) => `${d.name} (${d.reason})`).join(", ");
-  const asOf = staleAsOf ? formatStaleAsOf(staleAsOf) : null;
+  const staleNote =
+    "shown with their most recent valid results, marked \u201clast updated\u201d on each row";
+  // Rows from different dates were scored against different panels (see
+  // methodology § "When a provider is down").
+  const mixNote = " Rows from different dates competed against different panels, so compare them loosely.";
 
   if (!data.degraded) {
     return (
@@ -47,8 +46,11 @@ export function ConsensusBanner({
         role="status"
         style={{ display: "block", padding: "12px 14px", margin: "0 0 16px", lineHeight: 1.5 }}
       >
-        <strong>Live rankings are rebuilding</strong> after a consensus outage. Showing the last
-        complete rankings, ending {asOf}, until the live window has enough samples again.
+        <strong>
+          {staleCount} provider{staleCount === 1 ? " has" : "s have"} no live ranking yet.
+        </strong>{" "}
+        {staleCount === 1 ? "It's" : "They're"} {staleNote}, until the live window has enough
+        samples again.{mixNote}
       </div>
     );
   }
@@ -61,8 +63,8 @@ export function ConsensusBanner({
     >
       <strong>Consensus degraded — {data.usable}/{data.total} providers reporting</strong>{" "}
       (rankings need ≥{data.minVoters}).{reasons ? ` Down: ${reasons}.` : ""}{" "}
-      {asOf
-        ? `Showing the last complete rankings, ending ${asOf}, until at least ${data.minVoters} providers recover.`
+      {staleCount > 0
+        ? `Providers without live rankings are ${staleNote}, until at least ${data.minVoters} providers recover.${mixNote}`
         : `Rankings are paused until at least ${data.minVoters} providers recover.`}
     </div>
   );
@@ -74,16 +76,18 @@ export function ConsensusBanner({
  * buildOverviewBoardData, so without this a third-party page would present
  * day-old rankings as current. Renders nothing when the data is live.
  */
-export function StaleNotice({ staleAsOf }: { staleAsOf: string | null }) {
-  if (!staleAsOf) return null;
+export function StaleNotice({ providerAsOf }: { providerAsOf: Record<string, string> }) {
+  const oldest = oldestAsOf(providerAsOf);
+  if (!oldest) return null;
   return (
     <div
       className="badge warn"
       role="status"
       style={{ display: "block", padding: "6px 10px", margin: "0 0 8px", fontSize: 12, lineHeight: 1.4 }}
     >
-      Live rankings paused (too few providers reporting). Showing the last complete rankings,
-      ending {formatStaleAsOf(staleAsOf)}.
+      Live rankings paused for some providers (too few reporting). They&apos;re shown with their
+      most recent valid results, the oldest ending {oldest}. Rows from different dates competed
+      against different panels, so compare them loosely.
     </div>
   );
 }

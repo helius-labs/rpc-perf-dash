@@ -13,7 +13,7 @@
 import { ImageResponse } from "next/og";
 import { GEO_REGION_LABELS, GEO_REGIONS, type GeoRegion } from "@rpcbench/shared/types";
 import { DEFAULT_REGION_WEIGHTS, type RegionWeights } from "@rpcbench/shared/scoring";
-import { fetchRankedLatency, fetchRankedPreset } from "@/lib/leaderboard";
+import { fetchRankedLatencyWithFallback, fetchRankedPreset } from "@/lib/leaderboard";
 import { apiPath } from "@/lib/basePath";
 import { brandColorFor, colorFor, logoFor } from "@/lib/providerColors";
 import { parseShareParams } from "@/lib/share";
@@ -90,7 +90,7 @@ export async function GET(req: Request) {
     // Normalize regions before the cache boundary so caller order doesn't
     // fragment the unstable_cache key (the cached fn keys on this raw argument).
     const regions = [...new Set(filters.regions)].sort();
-    const lat = await fetchRankedLatency({
+    const lat = await fetchRankedLatencyWithFallback({
       method,
       mode: filters.mode,
       regions,
