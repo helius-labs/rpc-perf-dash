@@ -114,7 +114,7 @@ export function OverviewBoard({
   sampleCount,
   methodCount,
   embed = false,
-  staleAsOf = null,
+  providerAsOf = {},
 }: {
   /** Per-(method, geo) preset cube — blended into the board with preset defaults. */
   cube: MethodGeoRows[];
@@ -125,10 +125,10 @@ export function OverviewBoard({
   /** Embed mode: hides the Share control (all filters stay interactive). Set by
    *  the /embed/leaderboard route; omitted everywhere else. */
   embed?: boolean;
-  /** ISO end of the window the cube covers when it's the stale fallback (see
-   *  buildOverviewBoardData); null when live. Drops "last 24h" from the scope
-   *  line, since the page's consensus banner names the window instead. */
-  staleAsOf?: string | null;
+  /** Providers shown from their own last window that ranked (see
+   *  buildOverviewBoardData): provider id → ISO end of that window. Each such
+   *  row is labelled "last updated"; absent = live. */
+  providerAsOf?: Record<string, string>;
 }) {
   const preset = presetById(presetId);
 
@@ -236,8 +236,9 @@ export function OverviewBoard({
       componentWeights,
       methodWeights: equalMethodWeights([...selectedMethods]),
       regionWeights,
+      providerAsOf,
     });
-  }, [cube, selectedMethods, componentWeights, regionWeights]);
+  }, [cube, selectedMethods, componentWeights, regionWeights, providerAsOf]);
 
   const winner = useMemo<RankedProvider | null>(() => {
     const top = presetRows.find((r) => r.coverage_ok && r.total > 0) ?? presetRows[0];
@@ -477,7 +478,7 @@ export function OverviewBoard({
             {" · "}
             {selectedRegionSet.size} region{selectedRegionSet.size === 1 ? "" : "s"}
             {" · cold start"}
-            {!staleAsOf && ` · last ${windowLabel}`}
+            {` · last ${windowLabel}`}
           </span>
         </div>
         {!embed && (

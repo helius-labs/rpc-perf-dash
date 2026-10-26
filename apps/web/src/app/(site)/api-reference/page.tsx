@@ -111,7 +111,9 @@ const ENDPOINTS: EndpointSpec[] = [
                    "win_sub": 89.0, "reliability_sub": 99.4,
                    "correctness_sub": 100, "freshness_sub": 91.0 } },
       "per_method": { "getTransaction": { "total": 94.0, "p50": 41, "p95": 110 } },
-      "caveat_flags": [], "caveat_explanation": ""
+      "caveat_flags": [], "caveat_explanation": "",
+      "as_of": null            // null = live window; else ISO end of this provider's
+                               // most recent window that ranked it (shown while it's down)
     }
   ]
 }`,
