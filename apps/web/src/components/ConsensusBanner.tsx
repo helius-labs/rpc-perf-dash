@@ -35,6 +35,9 @@ export function ConsensusBanner({
   const reasons = data.down.map((d) => `${d.name} (${d.reason})`).join(", ");
   const staleNote =
     "shown with their most recent valid results, marked \u201clast updated\u201d on each row";
+  // Rows from different dates were scored against different panels (see
+  // methodology § "When a provider is down").
+  const mixNote = " Rows from different dates competed against different panels, so compare them loosely.";
 
   if (!data.degraded) {
     return (
@@ -47,7 +50,7 @@ export function ConsensusBanner({
           {staleCount} provider{staleCount === 1 ? " has" : "s have"} no live ranking yet.
         </strong>{" "}
         {staleCount === 1 ? "It's" : "They're"} {staleNote}, until the live window has enough
-        samples again.
+        samples again.{mixNote}
       </div>
     );
   }
@@ -61,7 +64,7 @@ export function ConsensusBanner({
       <strong>Consensus degraded — {data.usable}/{data.total} providers reporting</strong>{" "}
       (rankings need ≥{data.minVoters}).{reasons ? ` Down: ${reasons}.` : ""}{" "}
       {staleCount > 0
-        ? `Providers without live rankings are ${staleNote}, until at least ${data.minVoters} providers recover.`
+        ? `Providers without live rankings are ${staleNote}, until at least ${data.minVoters} providers recover.${mixNote}`
         : `Rankings are paused until at least ${data.minVoters} providers recover.`}
     </div>
   );

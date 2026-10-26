@@ -956,8 +956,11 @@ export const fetchRankedLatency = unstable_cache(
  * `fetchRankedLatency` plus the per-provider stale fallback, for the latency
  * share card: a provider with no live latency gets p50/p95 from its own most
  * recent window that ranked it (`findStaleProviderCubes`), pooled over the
- * selected geos the same way (sample_count_valid-weighted). The card doesn't
- * show the window's end.
+ * selected geos by sample_count_valid. That matches the live query's weighting
+ * as long as every bucket with valid samples has a percentile (true for the
+ * precompute, which only writes correct-latency percentiles where valid > 0);
+ * percentiles are a weighted mean either way, not a true pooled percentile. The
+ * card doesn't show the window's end.
  */
 export async function fetchRankedLatencyWithFallback(
   opts: Parameters<typeof fetchRankedLatencyImpl>[0],

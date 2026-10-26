@@ -478,7 +478,10 @@ export function OverviewBoard({
             {" · "}
             {selectedRegionSet.size} region{selectedRegionSet.size === 1 ? "" : "s"}
             {" · cold start"}
-            {` · last ${windowLabel}`}
+            {/* Stale rows each cover their own window, not the last one. */}
+            {Object.keys(providerAsOf).length === 0
+              ? ` · last ${windowLabel}`
+              : ` · ${windowLabel} windows`}
           </span>
         </div>
         {!embed && (
