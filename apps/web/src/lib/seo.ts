@@ -63,10 +63,20 @@ export const INDEX: Metadata["robots"] = { index: true, follow: true };
 
 /**
  * `follow: true` on purpose — unlike /api-reference and the embeds, which are
- * deliberate dead ends. A filtered view still links to the clean pages we DO
- * want crawled; dropping follow would strand those links.
+ * deliberate dead ends. Used for clean pages we don't want ranking (e.g.
+ * /performance) but whose links should still be crawled.
  */
 export const NOINDEX: Metadata["robots"] = { index: false, follow: true };
+
+/**
+ * For filtered (parameterized) views. `follow: false` because their links are
+ * mostly more filter permutations: with `follow`, each crawled view led to ~90
+ * more on /challenges, an unbounded crawl of unique, uncached renders that
+ * saturated the DB on 2026-10-19. The clean pages these views also link to are
+ * still reached from the nav on every indexable page. See lib/crawl.ts for the
+ * matching per-link rel.
+ */
+export const NOINDEX_NOFOLLOW: Metadata["robots"] = { index: false, follow: false };
 
 /**
  * Shape of `searchParams` for a route that doesn't declare its own — i.e. one
@@ -118,7 +128,7 @@ export function pageSeo(
   params?: object,
 ): Pick<Metadata, "robots" | "alternates"> {
   return {
-    robots: params && hasQuery(params) ? NOINDEX : INDEX,
+    robots: params && hasQuery(params) ? NOINDEX_NOFOLLOW : INDEX,
     alternates: { canonical: canonicalUrl(path) },
   };
 }

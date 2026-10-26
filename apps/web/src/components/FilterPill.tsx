@@ -12,6 +12,7 @@ import { useLinkStatus } from "next/link";
 import { useRouter } from "next/navigation";
 import type { Route } from "next";
 import type { ReactNode } from "react";
+import { filterLinkRel } from "@/lib/crawl";
 
 function PillBody({ active, children }: { active: boolean; children: ReactNode }) {
   const { pending } = useLinkStatus();
@@ -65,6 +66,7 @@ export function FilterPill({
   return (
     <Link
       href={href as Route}
+      rel={filterLinkRel(href)}
       scroll={false}
       prefetch={false}
       onPointerEnter={() => router.prefetch(href as Route)}
