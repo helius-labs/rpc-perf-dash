@@ -19,9 +19,9 @@ import {
   type CloudPair,
 } from "./chartData";
 import {
+  buildMethodGeoCube,
   fetchScoreSeries,
-  fetchAggregatesForGeo,
-  fetchAggregatesForGeoByMethod,
+  withProviderFallback,
   type ScoreSeries,
 } from "./leaderboard";
 import {
@@ -37,6 +37,9 @@ export interface PerfSlice {
   scoreboard:
     | { kind: "cube"; cube: MethodGeoRows[] }
     | { kind: "prebuilt"; prebuiltRows: MiniScoreRow[] };
+  /** Scoreboard providers shown from their own last ranking window → its ISO
+   *  end; absent = live. The latency/score series stay live-only. */
+  providerAsOf: Record<string, string>;
 }
 
 /**
@@ -100,49 +103,55 @@ export async function buildPerfSlice(opts: PerfSliceOpts): Promise<PerfSlice> {
   // Branch on the DEDUPED count: `?methods=getBlock,getBlock` is one method, and
   // must not escalate a cheap single-method request into the per-geo cube
   // fan-out (one leaderboard_agg query per geo) on a fresh cache key.
+  // Both paths go through the per-provider stale fallback (withProviderFallback):
+  // a provider the live window can't rank is scored from its own most recent
+  // window that ranks it, listed in `providerAsOf`.
   let scoreboard: PerfSlice["scoreboard"];
+  let providerAsOf: Record<string, string>;
   if (sortedMethods.length > 1) {
     const targets = selectedGeos.length > 0 ? selectedGeos : activeGeos;
-    const built: MethodGeoRows[] = [];
-    await Promise.all(
-      targets.map(async (geo) => {
-        const byMethod = await fetchAggregatesForGeoByMethod({
-          geoRegion: geo,
+    let cube: MethodGeoRows[];
+    ({ cube, providerAsOf } = await withProviderFallback({
+      windowHours,
+      connectionMode: mode,
+      label: "buildPerfSlice",
+      build: (w) =>
+        buildMethodGeoCube({
+          geos: targets,
           methods: sortedMethods,
-          windowHours,
           connectionMode: mode,
           ...(wp ? { workerProvider: wp } : {}),
-        });
-        for (const { method, rows } of byMethod) {
-          const eligible = rows.filter(
-            (r) => r.eligible === true && r.p50_ms != null && r.p95_ms != null,
-          );
-          built.push({ method, geo, rows, eligible });
-        }
-      }),
-    );
-    scoreboard = { kind: "cube", cube: built };
-  } else {
-    const selectedSet = new Set(selectedGeos);
-    const regionRows = await Promise.all(
-      activeGeos.map(async (g) => ({
-        geo: g,
-        rows: await fetchAggregatesForGeo({
-          geoRegion: g,
-          windowHours,
-          connectionMode: mode,
-          method: selectedMethod,
-          ...(wp ? { workerProvider: wp } : {}),
+          w,
         }),
-      })),
-    );
-    const filtered =
-      selectedGeos.length > 0 ? regionRows.filter((o) => selectedSet.has(o.geo)) : regionRows;
+    }));
+    scoreboard = { kind: "cube", cube };
+  } else {
+    // Ranked here = eligible in at least one geo, the default gate on a
+    // one-method cube.
+    const geos = selectedGeos.length > 0 ? activeGeos.filter((g) => selectedGeos.includes(g)) : activeGeos;
+    let cube: MethodGeoRows[];
+    ({ cube, providerAsOf } = await withProviderFallback({
+      windowHours,
+      connectionMode: mode,
+      label: "buildPerfSlice",
+      build: (w) =>
+        buildMethodGeoCube({
+          geos,
+          methods: [selectedMethod],
+          connectionMode: mode,
+          ...(wp ? { workerProvider: wp } : {}),
+          w,
+        }),
+    }));
     // Scored at the builder's default component weights. PerfScoreboard passes
     // the SAME weights to ScoreStrip (`weights={DEFAULT_WEIGHTS}`) so the
     // breakdown tooltip's formula matches these numbers — change one, change both.
-    scoreboard = { kind: "prebuilt", prebuiltRows: buildMiniScoreRows(filtered, null) };
+    const rows = buildMiniScoreRows(cube.map(({ geo, rows }) => ({ geo, rows })), null);
+    scoreboard = {
+      kind: "prebuilt",
+      prebuiltRows: rows.map((r) => ({ ...r, as_of: providerAsOf[r.provider_id] ?? null })),
+    };
   }
 
-  return { series, scoreSeries, scoreboard };
+  return { series, scoreSeries, scoreboard, providerAsOf };
 }

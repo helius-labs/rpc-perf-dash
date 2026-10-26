@@ -801,6 +801,9 @@ export interface MiniScoreRow {
    *  only by boards whose axes are the RPC 5-axis model (the sends strip has its
    *  own 2-axis model, so it omits this and gets no breakdown tooltip). */
   subs?: PerGeoScore;
+  /** ISO end of the stale window this row comes from (per-provider fallback);
+   *  null/absent when live. */
+  as_of?: string | null;
 }
 
 /**

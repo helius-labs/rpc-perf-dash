@@ -13,6 +13,7 @@ import {
   type InfraTableData,
 } from "@/components/MethodRegionTabs";
 import { DB_ERROR_MESSAGE } from "@/lib/db";
+import { StaleNotice } from "@/components/ConsensusBanner";
 
 export const dynamic = "force-dynamic";
 
@@ -99,18 +100,23 @@ export default async function EmbedLatencyTablePage({
       : undefined;
 
   return (
-    <MethodRegionTabs
-      providers={tableProviders}
-      byInfra={byInfra}
-      infraOptions={infraOptions}
-      selectedMethod={selectedMethod}
-      windowHours={filters.windowHours}
-      defaultProviderIds={defaultProviderIds}
-      initialTab={initialTab}
-      initialMode={initialMode}
-      initialPercentile={initialPercentile}
-      initialInfra={initialInfra}
-      embed
-    />
+    <>
+      {/* Same stale label as the other embeds; the pooled view lists every
+          provider whose column comes from an earlier window. */}
+      <StaleNotice providerAsOf={byInfra.all?.providerAsOf ?? {}} />
+      <MethodRegionTabs
+        providers={tableProviders}
+        byInfra={byInfra}
+        infraOptions={infraOptions}
+        selectedMethod={selectedMethod}
+        windowHours={filters.windowHours}
+        defaultProviderIds={defaultProviderIds}
+        initialTab={initialTab}
+        initialMode={initialMode}
+        initialPercentile={initialPercentile}
+        initialInfra={initialInfra}
+        embed
+      />
+    </>
   );
 }

@@ -443,7 +443,7 @@ export function PerfExplorer({
   // whole component being replaced by a placeholder box).
   const scoreboardProps = displaySlice
     ? displaySlice.scoreboard.kind === "cube"
-      ? { cube: displaySlice.scoreboard.cube }
+      ? { cube: displaySlice.scoreboard.cube, providerAsOf: displaySlice.providerAsOf }
       : { prebuiltRows: displaySlice.scoreboard.prebuiltRows }
     : undefined;
 

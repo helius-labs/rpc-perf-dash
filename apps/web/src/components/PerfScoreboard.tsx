@@ -46,6 +46,7 @@ const COMPONENT_WEIGHTS = DEFAULT_WEIGHTS;
 
 export function PerfScoreboard({
   cube,
+  providerAsOf,
   prebuiltRows,
   selectedMethods,
   regions,
@@ -57,6 +58,9 @@ export function PerfScoreboard({
 }: {
   /** Multi-method path: per-(method, geo) cube, re-blended client-side. */
   cube?: MethodGeoRows[];
+  /** Cube providers scored from their own last ranking window → its ISO end
+   *  (prebuilt rows carry `as_of` themselves). */
+  providerAsOf?: Record<string, string>;
   /** Single-method path: server-computed rows, rendered as-is. */
   prebuiltRows?: MiniScoreRow[];
   selectedMethods: Method[];
@@ -94,10 +98,12 @@ export function PerfScoreboard({
       componentWeights: COMPONENT_WEIGHTS,
       methodWeights,
       regionWeights: DEFAULT_REGION_WEIGHTS,
+      ...(providerAsOf ? { providerAsOf } : {}),
     }).map((r) => ({
       provider_id: r.provider_id,
       provider_name: r.provider_name,
       total: r.total,
+      as_of: r.as_of,
       failing_reason: r.total > 0 ? null : r.exclusion_reason,
       // Sub-scores for the strip's breakdown tooltip. Spread-omit (not a ternary
       // to undefined) — the repo builds with exactOptionalPropertyTypes.
@@ -114,7 +120,7 @@ export function PerfScoreboard({
           }
         : {}),
     }));
-  }, [cube, prebuiltRows, methodWeights]);
+  }, [cube, providerAsOf, prebuiltRows, methodWeights]);
 
   const ranked = rows.some((r) => r.total > 0);
 

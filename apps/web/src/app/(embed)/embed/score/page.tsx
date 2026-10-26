@@ -53,6 +53,7 @@ export default async function EmbedScorePage({
       provider_name: r.provider_name,
       total: r.total,
       failing_reason: r.total > 0 ? null : r.exclusion_reason,
+      as_of: r.as_of,
     }));
   } catch (err) {
     console.error("[embed/score]", err);
