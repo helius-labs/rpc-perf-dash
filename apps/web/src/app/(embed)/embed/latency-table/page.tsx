@@ -101,22 +101,22 @@ export default async function EmbedLatencyTablePage({
 
   return (
     <>
-    {/* Same stale label as the other embeds; the pooled view lists every
-        provider whose column comes from an earlier window. */}
-    <StaleNotice providerAsOf={byInfra.all?.providerAsOf ?? {}} />
-    <MethodRegionTabs
-      providers={tableProviders}
-      byInfra={byInfra}
-      infraOptions={infraOptions}
-      selectedMethod={selectedMethod}
-      windowHours={filters.windowHours}
-      defaultProviderIds={defaultProviderIds}
-      initialTab={initialTab}
-      initialMode={initialMode}
-      initialPercentile={initialPercentile}
-      initialInfra={initialInfra}
-      embed
-    />
+      {/* Same stale label as the other embeds; the pooled view lists every
+          provider whose column comes from an earlier window. */}
+      <StaleNotice providerAsOf={byInfra.all?.providerAsOf ?? {}} />
+      <MethodRegionTabs
+        providers={tableProviders}
+        byInfra={byInfra}
+        infraOptions={infraOptions}
+        selectedMethod={selectedMethod}
+        windowHours={filters.windowHours}
+        defaultProviderIds={defaultProviderIds}
+        initialTab={initialTab}
+        initialMode={initialMode}
+        initialPercentile={initialPercentile}
+        initialInfra={initialInfra}
+        embed
+      />
     </>
   );
 }
